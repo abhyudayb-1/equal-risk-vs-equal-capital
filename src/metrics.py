@@ -263,11 +263,27 @@ def _as_window(start: Window | str | pd.Timestamp, end) -> Window:
     collide in practice -- no window is named like a date -- and the name form is
     what keeps call sites from re-typing the dates that config already owns.
     """
+    if isinstance(start, tuple):
+        if end is not None:
+            raise ValueError(
+                "pass either a (start, end) tuple or two separate arguments, not both; "
+                f"got start={start!r} and end={end!r}"
+            )
+        return start
     if end is None and isinstance(start, str) and start in CRISIS_WINDOWS:
         return start
-    if end is None and isinstance(start, tuple):
-        return start
     return (start, end)
+
+
+def window_label(start: pd.Timestamp, end: pd.Timestamp | None) -> str:
+    """A stable row label for a window that has no name in config.
+
+    Without this, every ad-hoc ``(start, end)`` window falls back to the strategy
+    name, so a table built over several of them collides on the index and rows
+    silently overwrite each other. Naming by dates keeps the label unique and
+    readable.
+    """
+    return f"{start.date()} to {'open' if end is None else end.date()}"
 
 
 def slice_to_window(
@@ -326,6 +342,23 @@ def slice_to_window(
             f"{'open' if window_end is None else window_end.date()}"
         )
 
+    # Decided here, where the *unsliced* series is still available. After the cut
+    # there is no way to tell a window the data covered fully from one it merely
+    # overlapped, and a partial window quoted as a full one is a wrong finding
+    # rather than a missing one.
+    covered = bool(
+        result.returns.index[0] <= window_start
+        and (window_end is None or result.returns.index[-1] >= window_end)
+    )
+    if not covered:
+        log.warning(
+            "%s to %s is only partially covered by %s (data runs %s to %s); the row "
+            "will be marked fully_covered=False.",
+            window_start.date(), "open" if window_end is None else window_end.date(),
+            result.strategy, result.returns.index[0].date(),
+            result.returns.index[-1].date(),
+        )
+
     sliced = BacktestResult(
         weights=result.weights.loc[kept],
         risk_contributions=result.risk_contributions.loc[kept],
@@ -341,10 +374,7 @@ def slice_to_window(
             # Decided here, where the *unsliced* series is still available. After
             # the cut there is no way to tell a window the data covered fully
             # from one it merely overlapped.
-            "fully_covered": bool(
-                result.returns.index[0] <= window_start
-                and (window_end is None or result.returns.index[-1] >= window_end)
-            ),
+            "fully_covered": covered,
         },
     )
     sliced.validate()
@@ -385,7 +415,15 @@ def summarize_window(
     declared_end = result.meta.get("window_end")
 
     if name is None:
-        name = result.meta.get("window") or result.strategy
+        # Order matters: the config name if there is one, else the dates, and
+        # only a nameless result falls back to the strategy. Reaching for the
+        # strategy earlier is what made two different windows share a row label.
+        if result.meta.get("window"):
+            name = result.meta["window"]
+        elif declared_start is not None:
+            name = window_label(declared_start, declared_end)
+        else:
+            name = result.strategy
 
     row = summarize(returns, periods_per_year, name=name,
                     annual_risk_free_rate=annual_risk_free_rate)

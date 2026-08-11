@@ -235,6 +235,59 @@ def test_summarize_window() -> None:
     )
 
 
+def test_rows_do_not_collide() -> None:
+    """Every window must produce a distinct row label.
+
+    Found by building the step 24 table over ad-hoc date ranges rather than
+    config keys: unnamed windows all fell back to the strategy name, so
+    ``set_index("name")`` collapsed them and rows silently overwrote each other.
+    A crisis table that quietly loses two of its rows is worse than one that
+    fails.
+    """
+    print("row labelling:")
+    full = make_fake_result()
+    windows = [
+        ("2022-01-03", "2022-10-12"),
+        ("2020-02-19", "2020-03-23"),
+        config.REGIME_SHIFT_WINDOW,
+    ]
+    names = [metrics.summarize_window(full, w)["name"] for w in windows]
+
+    check(f"three unnamed windows give three distinct labels: {names}", len(set(names)) == 3)
+    check(
+        "a named window still uses its config key",
+        metrics.summarize_window(full, "GFC (2008)")["name"] == "GFC (2008)",
+    )
+    check(
+        "an unsliced result is still labelled by its strategy",
+        metrics.summarize_window(full)["name"] == full.strategy,
+    )
+    check(
+        "an open end is labelled as open rather than as a date",
+        "open" in metrics.summarize_window(full, config.REGIME_SHIFT_WINDOW)["name"],
+    )
+
+    table = pd.DataFrame(
+        [metrics.summarize_window(full, w) for w in windows]
+    ).set_index("name")
+    check("the assembled table keeps all three rows", len(table) == 3)
+
+
+def test_ambiguous_window_arguments_raise() -> None:
+    print("argument handling:")
+    full = make_fake_result()
+    expect_raises(
+        "passing both a tuple and an end raises a clear error, not a pandas TypeError",
+        ValueError,
+        lambda: metrics.slice_to_window(full, ("2022-01-03", "2022-10-12"), "2022-10-12"),
+    )
+    check(
+        "a partially covered window is flagged rather than silently trusted",
+        metrics.slice_to_window(full, ("2024-06-01", "2026-12-31")).meta["fully_covered"]
+        is False,
+    )
+
+
 def test_drawdown_floor_survives_slicing() -> None:
     """The port's peak floor, asserted where it actually matters.
 
@@ -263,5 +316,7 @@ if __name__ == "__main__":
     test_slice_result_keeps_the_contract()
     test_naive_slice_would_break()
     test_summarize_window()
+    test_rows_do_not_collide()
+    test_ambiguous_window_arguments_raise()
     test_drawdown_floor_survives_slicing()
     print(f"\n{_checks} checks passed")
