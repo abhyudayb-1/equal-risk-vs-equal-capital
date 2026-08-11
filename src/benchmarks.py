@@ -27,12 +27,16 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+import cvxpy as cp
 import numpy as np
 import pandas as pd
 
 from .config import (
+    ANNUAL_RISK_FREE_RATE,
     COV_EWMA_HALFLIFE_DAYS,
     COV_WARMUP_TRADING_DAYS,
+    MAX_SHARPE_LOOKBACK_DAYS,
+    MIN_EIGENVALUE,
     SIXTY_FORTY_WEIGHTS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE,
@@ -171,12 +175,39 @@ def fixed_weight(
         np.tile(w, (len(rebalance), 1)), index=rebalance, columns=tickers
     )
     risk_contributions = pd.DataFrame(rc_rows, index=rebalance, columns=tickers)
-    leverage = pd.Series(1.0, index=rebalance, name="leverage")
+
+    return _unlevered_result(
+        weights,
+        risk_contributions,
+        returns,
+        strategy,
+        {
+            "solver_failures": 0,
+            "target_weights": dict(target),
+            "cov_estimator": getattr(estimate_cov, "__name__", repr(estimate_cov)),
+        },
+    )
+
+
+def _unlevered_result(
+    weights: pd.DataFrame,
+    risk_contributions: pd.DataFrame,
+    returns: pd.DataFrame,
+    strategy: str,
+    meta: dict,
+) -> BacktestResult:
+    """Accrue daily returns for an unlevered allocation and seal the contract.
+
+    Shared by every benchmark in this module so the one-day alignment below is
+    written once. It is the subtle part: getting it wrong is a look-ahead bug
+    that still produces a plausible equity curve.
+    """
+    leverage = pd.Series(1.0, index=weights.index, name="leverage")
 
     # Decision at t earns the return from t to t+1. Dropping the shift would let
     # the allocation collect the move of the very day it was chosen on.
     applied = weights.reindex(returns.index).ffill().shift(1)
-    daily = (applied * returns).sum(axis=1)
+    daily = (applied * returns[weights.columns]).sum(axis=1)
     daily = daily.loc[applied.dropna(how="any").index].rename("returns")
 
     result = BacktestResult(
@@ -184,13 +215,7 @@ def fixed_weight(
         risk_contributions=risk_contributions,
         leverage=leverage,
         returns=daily,
-        meta={
-            "strategy": strategy,
-            "target_vol": None,  # unlevered by construction
-            "solver_failures": 0,
-            "target_weights": dict(target),
-            "cov_estimator": getattr(estimate_cov, "__name__", repr(estimate_cov)),
-        },
+        meta={"strategy": strategy, "target_vol": None, **meta},
     )
     result.validate()
     return result
@@ -263,6 +288,192 @@ def sixty_forty(
     )
 
 
+def _nearest_psd(cov: np.ndarray) -> np.ndarray:
+    """Symmetrise and clip negative eigenvalues.
+
+    A stand-in for the PSD repair in ``src.covariance`` (Person A, TASKS.md step
+    15), scoped to what cvxpy needs: ``cp.quad_form`` rejects a matrix that is
+    indefinite by even a rounding error, and an EWMA estimate off a short window
+    routinely lands there. Clipping rather than ``cp.psd_wrap`` on purpose --
+    wrapping tells the solver to trust a matrix that may genuinely be indefinite,
+    which converts a loud failure into a quiet wrong answer.
+    """
+    symmetric = 0.5 * (cov + cov.T)
+    eigvals, eigvecs = np.linalg.eigh(symmetric)
+    if eigvals.min() >= MIN_EIGENVALUE:
+        return symmetric
+    return eigvecs @ np.diag(np.clip(eigvals, MIN_EIGENVALUE, None)) @ eigvecs.T
+
+
+def _tangency_weights(mean_excess: np.ndarray, cov: np.ndarray) -> np.ndarray | None:
+    """Long-only maximum-Sharpe weights, or ``None`` if no such portfolio exists.
+
+    Maximising ``(mu' w) / sqrt(w' S w)`` subject to ``sum(w) = 1, w >= 0`` is not
+    convex as written. The standard change of variable ``y = w / (mu' w)`` turns
+    it into a QP that is::
+
+        minimise   y' S y
+        subject to mu' y = 1,  y >= 0
+
+    after which ``w = y / sum(y)`` is non-negative and sums to 1 by construction.
+    The substitution requires ``mu' w > 0`` for some feasible w -- i.e. at least
+    one asset with a positive trailing excess return. When every sleeve has lost
+    money over the lookback, no long-only portfolio has a positive expected
+    excess return, the constraint set is empty, and there is genuinely no
+    tangency portfolio. That is a real state of the world, not a solver bug, and
+    it happened across this universe in 2022; the caller substitutes minimum
+    variance and records it.
+    """
+    if not (mean_excess > 0).any():
+        return None
+
+    n = len(mean_excess)
+    y = cp.Variable(n, nonneg=True)
+    problem = cp.Problem(
+        cp.Minimize(cp.quad_form(y, cp.Constant(cov))), [mean_excess @ y == 1.0]
+    )
+    problem.solve()
+
+    if problem.status not in ("optimal", "optimal_inaccurate") or y.value is None:
+        return None
+
+    total = float(y.value.sum())
+    if not np.isfinite(total) or total <= 0.0:
+        return None
+    return np.asarray(y.value, dtype="float64") / total
+
+
+def _min_variance_weights(cov: np.ndarray) -> np.ndarray | None:
+    """Long-only minimum-variance weights -- the fallback when no tangency exists."""
+    n = cov.shape[0]
+    w = cp.Variable(n, nonneg=True)
+    problem = cp.Problem(cp.Minimize(cp.quad_form(w, cp.Constant(cov))), [cp.sum(w) == 1.0])
+    problem.solve()
+    if problem.status not in ("optimal", "optimal_inaccurate") or w.value is None:
+        return None
+    return np.asarray(w.value, dtype="float64")
+
+
+def _clean_weights(w: np.ndarray) -> np.ndarray:
+    """Clip solver dust to zero and renormalise onto the simplex.
+
+    Interior-point solvers return values like ``-3e-13``, which the contract's
+    long-only check tolerates but which would propagate a negative capital weight
+    into a chart. Renormalising after the clip keeps the row summing to 1.
+    """
+    w = np.clip(np.asarray(w, dtype="float64"), 0.0, None)
+    total = w.sum()
+    if not np.isfinite(total) or total <= 0.0:
+        raise ValueError("solver returned weights that do not sum to anything positive")
+    return w / total
+
+
+def max_sharpe(
+    returns: pd.DataFrame,
+    lookback_days: int = MAX_SHARPE_LOOKBACK_DAYS,
+    cov_estimator: CovEstimator | None = None,
+    annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
+    warmup_trading_days: int = COV_WARMUP_TRADING_DAYS,
+    strategy: str = "Max Sharpe",
+) -> BacktestResult:
+    """Rolling long-only tangency portfolio, re-solved at every rebalance.
+
+    The most demanding benchmark in the set, and the most flattering to itself:
+    it optimises Sharpe directly on the trailing window, so it is the comparator
+    that shows how much of an in-sample optimum survives out of sample. It is
+    also the one that most needs the one-day shift in :func:`_unlevered_result`,
+    because an optimiser fed today's close and paid today's return would look
+    extraordinary.
+
+    Expected returns are the trailing ``lookback_days`` mean, annualised, in
+    excess of ``annual_risk_free_rate``. Covariance comes from ``cov_estimator``
+    over all history at or before the rebalance date -- the same estimate the
+    other benchmarks use, so the strategies differ in their objective rather
+    than in what they were shown.
+
+    Sample means are a notoriously noisy input to an optimiser; that is a
+    property of the benchmark being modelled, not a defect here, and it is part
+    of what the comparison is meant to expose.
+
+    Notes
+    -----
+    Two states are counted in ``meta`` rather than hidden. ``tangency_fallbacks``
+    is the number of rebalances with no positive trailing excess return anywhere
+    in the universe, where minimum variance is substituted; ``solver_failures``
+    is the number where cvxpy itself did not converge and the previous
+    allocation was carried forward.
+    """
+    if returns.empty:
+        raise ValueError("cannot backtest an empty return frame")
+    if lookback_days < 2:
+        raise ValueError(f"lookback_days must be at least 2, got {lookback_days}")
+
+    returns = returns.sort_index()
+    tickers = list(returns.columns)
+    estimate_cov = cov_estimator or _ewma_cov
+    rebalance = month_end_rebalance_dates(returns.index, warmup_trading_days)
+
+    daily_rf = (1.0 + annual_risk_free_rate) ** (1.0 / TRADING_DAYS_PER_YEAR) - 1.0
+
+    weight_rows, rc_rows = [], []
+    fallbacks = failures = 0
+    previous: np.ndarray | None = None
+
+    for date in rebalance:
+        trailing = asof_slice(returns, date)
+        cov = _nearest_psd(estimate_cov(trailing))
+
+        window = trailing.iloc[-lookback_days:]
+        mean_excess = (
+            window.to_numpy(dtype="float64").mean(axis=0) - daily_rf
+        ) * TRADING_DAYS_PER_YEAR
+
+        w = _tangency_weights(mean_excess, cov)
+        if w is None:
+            # No long-only portfolio has a positive expected excess return over
+            # the window. Minimum variance is the defensible substitute: it is
+            # the one point on the frontier that does not depend on the means.
+            w = _min_variance_weights(cov)
+            if w is None:
+                failures += 1
+                if previous is None:
+                    raise RuntimeError(
+                        f"cvxpy failed on the first rebalance ({date.date()}) with no "
+                        "previous allocation to carry forward"
+                    )
+                log.warning("cvxpy did not converge at %s; carrying the previous "
+                            "allocation forward.", date.date())
+                w = previous
+            else:
+                fallbacks += 1
+                log.info("No positive trailing excess return at %s; using minimum "
+                         "variance.", date.date())
+
+        w = _clean_weights(w)
+        previous = w
+        weight_rows.append(w)
+        rc_rows.append(risk_contribution_fractions(w, cov))
+
+    if fallbacks:
+        log.warning(
+            "%d of %d rebalances had no tangency portfolio and fell back to minimum "
+            "variance.", fallbacks, len(rebalance),
+        )
+
+    return _unlevered_result(
+        pd.DataFrame(weight_rows, index=rebalance, columns=tickers),
+        pd.DataFrame(rc_rows, index=rebalance, columns=tickers),
+        returns,
+        strategy,
+        {
+            "solver_failures": failures,
+            "tangency_fallbacks": fallbacks,
+            "lookback_days": lookback_days,
+            "cov_estimator": getattr(estimate_cov, "__name__", repr(estimate_cov)),
+        },
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     # Imported here, not at module scope: src/ must never depend on tests/.
     from tests.fixtures import make_fake_returns
@@ -270,7 +481,7 @@ if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     fake = make_fake_returns()
 
-    for result in (equal_weight(fake), sixty_forty(fake)):
+    for result in (equal_weight(fake), sixty_forty(fake), max_sharpe(fake)):
         print(f"\n{result.strategy}")
         print(f"  rebalances : {len(result.weights)}  "
               f"({result.weights.index[0].date()} -> {result.weights.index[-1].date()})")
@@ -284,5 +495,5 @@ if __name__ == "__main__":  # pragma: no cover
         })
         print(comparison.round(4).to_string())
 
-    print(f"\nBoth results validated against the contract "
+    print(f"\nAll results validated against the contract "
           f"({UNIVERSE} universe, {len(fake)} daily observations).")
