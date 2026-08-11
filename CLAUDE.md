@@ -21,6 +21,29 @@ section and the "Data reality check" in TASKS.md before writing anything about 2
 order — every step names one owner, one branch, and a "done when". Read the relevant step before
 starting work; the step text is the spec.
 
+## Where the build is
+
+**Check `git log --oneline` and `gh pr list` before trusting this section — it goes stale, they do
+not.** As of the last edit, Phase 0 and steps 8–11 and 13 were on `main`, with step 12 (`max_sharpe`)
+still in an open PR.
+
+Next up: **steps 14–17** for Person A — EWMA covariance, shrinkage and PSD repair, risk
+contributions, and the SLSQP ERC solver — then **18–20** for Person B.
+
+Step 19 is the highest-value test in the project: Person B's independent convex log-barrier oracle,
+asserting Person A's SLSQP solver to `ERC_AGREEMENT_TOLERANCE`. It must be written **from the
+maths, not by reading step 17** — two independent derivations are the entire point, and peeking
+collapses them into one.
+
+To resume in a new session: read `TASKS.md`, find the lowest-numbered unfinished step for your
+owner, and build it. Nothing else needs reconstructing — the contract in `src/types.py` and the
+fixtures make each step independently buildable.
+
+Two stand-ins exist that Phase 5 must replace, both in `src/benchmarks.py` and both deliberately
+injectable rather than hard-wired: `_ewma_cov` (superseded by step 14's `src/covariance.py`) and
+`_nearest_psd` (superseded by step 15). Pass the real estimator via `cov_estimator=` at the call
+site; do not fork a second copy.
+
 ## Setup and commands
 
 System Python has no numpy on this machine — always work inside a venv.
@@ -32,9 +55,15 @@ python3 -m venv .venv
 
 ```bash
 .venv/bin/python tests/test_contract.py      # Phase 0 gate: contract + metrics port + fixtures
+.venv/bin/python tests/test_data.py          # data layer: windowing, calendar, look-ahead guard
+.venv/bin/python tests/test_benchmarks.py    # equal weight / 60-40 / max Sharpe
 .venv/bin/python tests/fixtures.py           # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py             # full run -> reports/   (exists from step 30)
 ```
+
+Run all three suites after any change to `src/`. Only `test_data.py` and `test_contract.py` are
+network-free; the suites must keep passing offline, so live-data checks belong in the Phase 5 run
+rather than in a test.
 
 Tests are **standalone scripts with no framework** — no pytest, no test runner. Each file defines
 `test_*()` functions plus a `check(label, condition)` helper, and a `__main__` block calls them in
@@ -126,7 +155,18 @@ Keyless sources only, so anyone can clone and run: yfinance for prices, the FRED
 ## Working style for this repo
 
 - Failures are surfaced, never swallowed. Solver non-convergence and covariance condition numbers
-  go into `meta` and the run summary; bad data raises.
+  go into `meta` and the run summary; bad data raises. Two failure modes must stay distinguishable
+  in `meta` even when they share a fallback path — a solver that did not converge is not the same
+  event as a genuine economic condition, and collapsing them hides the one you needed to see.
+- **Never assert on a single simulated path.** Over a 0.78-year window at ~24% annualised
+  volatility, one path's total return carries a ~21% standard deviation, so sleeve orderings flip
+  seed to seed. A realised-path check written this way failed on 3 of 15 seeds before it was caught.
+  Assert on the *parameters* instead (`_CRISIS_PROFILES`, the correlation tables) — equally
+  informative, never flaky. Ensemble means across seeds are the fallback when a realised property
+  genuinely must be tested.
+- Bugs found by review get a regression check in the matching suite, not just a fix. Every bug
+  fixed here so far was silent — passing tests, plausible output, wrong behaviour — so "it runs and
+  the number looks reasonable" is not evidence of anything.
 - Comments here explain *why* a subtle choice is correct (the ones that would otherwise get
   "simplified" away). Match that density — this is a capstone that gets read and defended, not
   just run.
