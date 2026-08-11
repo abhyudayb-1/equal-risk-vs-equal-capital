@@ -228,10 +228,21 @@ def sixty_forty(
 ) -> BacktestResult:
     """The institutional default: 60% equities, 40% nominal bonds, 0% elsewhere.
 
-    The benchmark the 2022 result turns on. Risk parity beats this comfortably in
-    2008 and 2020 and loses to it in 2022, because 60/40's smaller bond position
-    -- unlevered, and half the size -- is less exposed when the correlation flips
-    and bonds stop being a hedge.
+    The benchmark the 2022 result turns on, and the reason is *not* the one this
+    docstring originally gave. Two corrections, both worth carrying:
+
+    First, the mechanism. The stock/bond correlation did not flip positive during
+    the 2022 drawdown -- measured over 2022-01-03 to 2022-10-12 it averaged -0.09
+    and was positive on only 31% of days. What happened is that TLT fell 31.2%
+    against SPY's 24.1%: the hedge lost more than the thing it hedged, with
+    correlation still negative. Risk parity's exposure is worse than 60/40's here
+    not because the sign changed but because it holds *more* bonds by capital
+    (low volatility earns a large weight) and then levers the whole thing.
+
+    Second, the ranking is an open question, not a known result. 60/40 was itself
+    down roughly 23% over 2022, and which strategy loses by less is exactly what
+    the crisis table in step 24 is built to answer. Stating the outcome in
+    advance is how a backtest ends up confirming it -- so it is not stated here.
 
     The unallocated sleeves are carried as explicit zero columns over
     ``universe`` (default: every column in ``returns``) rather than dropped, so

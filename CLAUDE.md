@@ -6,9 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Project 16 — a risk-parity + volatility-targeting portfolio engine over four ETF sleeves
 (SPY / TLT / DBC / TIP), backtested 2006→present through the GFC, COVID and the 2022 rate shock.
-The deliverable is not just the engine: the analytical payload is **why risk parity failed in 2022**
-when the stock/bond correlation flipped positive. Results that make the strategy look bad are
-stated plainly, not hidden.
+The deliverable is not just the engine: the analytical payload is **why risk parity failed in 2022**.
+Results that make the strategy look bad are stated plainly, not hidden.
+
+Note the mechanism carefully, because the obvious version is wrong and this repo already corrected
+it once against live data: the stock/bond correlation did **not** flip positive during the 2022
+drawdown. Over `2022-01-03 → 2022-10-12` the rolling 63-day SPY/TLT correlation averaged **−0.09**
+and was positive on only 31% of days; the persistent flip is 2023 onward. What happened is that
+**TLT fell 31.2% against SPY's 24.1%** — the hedge lost more than the thing it hedged — while
+correlation merely rose toward zero, which was enough to remove the offset. See PLAN.md's 2022
+section and the "Data reality check" in TASKS.md before writing anything about 2022.
 
 `PLAN.md` holds the design rationale and the pinned math. `TASKS.md` holds the numbered build
 order — every step names one owner, one branch, and a "done when". Read the relevant step before
