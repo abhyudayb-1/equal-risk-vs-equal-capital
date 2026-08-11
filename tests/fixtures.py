@@ -80,10 +80,51 @@ _CALM_CORR = {
     (_INFL, _GOLD): 0.30,
 }
 
-# 2022: the correlation flips positive and the diversification benefit vanishes.
+# 2022. NOT a dramatic positive flip -- that was this project's original
+# assumption and live data refuted it. Across the 2022 drawdown the real
+# SPY/TLT correlation averaged -0.09 and was positive on only 31% of days.
+#
+# The mechanism was subtler and more interesting: correlation merely rose toward
+# zero, which removed the OFFSET. For two equal-vol legs at 50/50, going from
+# -0.34 to ~0 lifts portfolio vol from 0.57 to 0.71 sigma -- a third of the
+# diversification benefit gone with the sign still negative. That was enough,
+# because the sleeve risk parity holds most of by capital is the one that fell
+# hardest, with leverage on top.
+#
+# The fixture reproduces that subtle version on purpose. A caricature would let
+# step 25's diagnostic pass while being unable to detect the real thing.
 _FLIPPED_CORR = dict(_CALM_CORR) | {
-    (_EQ, _BOND): 0.50, (_EQ, _INFL): 0.45, (_BOND, _CMD): 0.10,
-    (_BOND, _INFL): 0.85, (_EQ, _CMD): 0.20,
+    (_EQ, _BOND): 0.05, (_EQ, _INFL): 0.30, (_BOND, _INFL): 0.85,
+    # Commodities were the one sleeve that worked in 2022, so they decouple.
+    (_EQ, _CMD): -0.15, (_BOND, _CMD): -0.25,
+}
+
+# Annualized drift and volatility scaling per crisis, calibrated so each window
+# reproduces the SHAPE of the real one. Measured totals inside each window:
+#
+#   GFC   2007-10-09 -> 2009-03-09 : SPY -54.8%  TLT +24.9%  DBC -26.9%  TIP  +3.3%
+#   COVID 2020-02-19 -> 2020-03-23 : SPY -33.4%  TLT +14.2%  DBC -25.0%  TIP  -0.6%
+#   2022  2022-01-03 -> 2022-10-12 : SPY -24.1%  TLT -31.2%  DBC +21.9%  TIP -13.2%
+#
+# Read the 2022 row twice. The bond sleeve fell HARDER than equities, and
+# commodities -- the sleeve risk parity under-weights most by capital, because
+# they are the highest-volatility one -- were the only thing that made money.
+_CRISIS_PROFILES: dict[str, dict] = {
+    "GFC (2008)": {
+        "vol_scale": 2.5,
+        "flipped": False,
+        "annual_drift": {_EQ: -0.386, _BOND: 0.175, _CMD: -0.189, _INFL: 0.023, _GOLD: 0.10},
+    },
+    "COVID (2020)": {
+        "vol_scale": 3.5,
+        "flipped": False,
+        "annual_drift": {_EQ: -3.66, _BOND: 1.56, _CMD: -2.74, _INFL: -0.07, _GOLD: -0.50},
+    },
+    "Rate shock (2022)": {
+        "vol_scale": 1.5,
+        "flipped": True,
+        "annual_drift": {_EQ: -0.310, _BOND: -0.401, _CMD: 0.281, _INFL: -0.170, _GOLD: -0.03},
+    },
 }
 
 
@@ -115,16 +156,39 @@ def _corr_matrix(tickers: list[str], table: dict) -> np.ndarray:
     return corr
 
 
-def _regime_flags(index: pd.DatetimeIndex) -> tuple[np.ndarray, np.ndarray]:
-    """(in_any_crisis, in_2022_window) boolean masks over ``index``."""
-    crisis = np.zeros(len(index), dtype=bool)
-    flipped = np.zeros(len(index), dtype=bool)
+def _regime_arrays(
+    index: pd.DatetimeIndex, tickers: list[str]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-day (vol_scale, daily_drift, use_flipped_correlations).
+
+    Every window in ``config.CRISIS_WINDOWS`` must have a matching entry in
+    ``_CRISIS_PROFILES``; a missing one raises rather than silently falling back
+    to calm-regime parameters, which would look like a working fixture whose
+    crises had quietly stopped being crises.
+    """
+    n_days = len(index)
+    ppy = config.TRADING_DAYS_PER_YEAR
+
+    vol_scale = np.ones(n_days)
+    drift = np.tile(
+        np.array([_ANNUAL_DRIFT[t] for t in tickers]) / ppy, (n_days, 1)
+    )
+    flipped = np.zeros(n_days, dtype=bool)
+
     for label, (start, end) in config.CRISIS_WINDOWS.items():
+        if label not in _CRISIS_PROFILES:
+            raise KeyError(
+                f"crisis window {label!r} has no entry in _CRISIS_PROFILES; add one "
+                f"in tests/fixtures.py rather than letting it run as a calm regime"
+            )
+        profile = _CRISIS_PROFILES[label]
         mask = (index >= pd.Timestamp(start)) & (index <= pd.Timestamp(end))
-        crisis |= mask
-        if "2022" in label:
+        vol_scale[mask] = profile["vol_scale"]
+        drift[mask] = np.array([profile["annual_drift"][t] for t in tickers]) / ppy
+        if profile["flipped"]:
             flipped |= mask
-    return crisis, flipped
+
+    return vol_scale, drift, flipped
 
 
 def month_end_dates(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
@@ -156,26 +220,17 @@ def make_fake_returns(
     vols = np.array([_ANNUAL_VOL[t] for t in tickers]) / np.sqrt(
         config.TRADING_DAYS_PER_YEAR
     )
-    drift = np.array([_ANNUAL_DRIFT[t] for t in tickers]) / config.TRADING_DAYS_PER_YEAR
 
-    calm = np.linalg.cholesky(_corr_matrix(tickers, _CALM_CORR))
-    flipped = np.linalg.cholesky(_corr_matrix(tickers, _FLIPPED_CORR))
+    calm_chol = np.linalg.cholesky(_corr_matrix(tickers, _CALM_CORR))
+    flipped_chol = np.linalg.cholesky(_corr_matrix(tickers, _FLIPPED_CORR))
 
-    in_crisis, in_flip = _regime_flags(index)
+    vol_scale, drift, use_flipped = _regime_arrays(index, tickers)
     shocks = rng.standard_normal((n_days, n_assets))
 
     out = np.empty((n_days, n_assets))
     for i in range(n_days):
-        chol = flipped if in_flip[i] else calm
-        correlated = chol @ shocks[i]
-        if in_crisis[i]:
-            # Crises are higher-vol and negative-drift; the 2022 rate shock is a
-            # grind rather than a crash, so it is scaled less than 2008/2020.
-            scale = 1.6 if in_flip[i] else 2.5
-            mu = -3.0 * drift if in_flip[i] else -6.0 * drift
-        else:
-            scale, mu = 1.0, drift
-        out[i] = mu + vols * scale * correlated
+        chol = flipped_chol if use_flipped[i] else calm_chol
+        out[i] = drift[i] + vols * vol_scale[i] * (chol @ shocks[i])
 
     return pd.DataFrame(out, index=index, columns=tickers)
 

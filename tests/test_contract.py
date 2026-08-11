@@ -28,7 +28,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import cache, config, metrics  # noqa: E402
 from src.types import BacktestResult, ContractViolation  # noqa: E402
 from tests.fixtures import (  # noqa: E402
+    _ANNUAL_VOL,
     _CALM_CORR,
+    _CRISIS_PROFILES,
+    _FLIPPED_CORR,
     _corr_matrix,
     make_fake_result,
     make_fake_returns,
@@ -204,12 +207,59 @@ def test_fixture_regimes() -> None:
     calm_corr = calm[equity].corr(calm[bond])
     check(f"equity/bond correlation is negative in calm years ({calm_corr:+.2f})", calm_corr < 0)
 
+    # The 2022 assertions deliberately do NOT test for a positive correlation.
+    # Live data refuted that framing: the real window averaged -0.09 and was
+    # positive on only 31% of days. What actually happened is below.
     start, end = config.CRISIS_WINDOWS["Rate shock (2022)"]
     stressed = returns.loc[start:end]
-    flip_corr = stressed[equity].corr(stressed[bond])
+    window_corr = stressed[equity].corr(stressed[bond])
     check(
-        f"equity/bond correlation FLIPS POSITIVE in 2022 ({flip_corr:+.2f})",
-        flip_corr > 0,
+        f"2022 equity/bond correlation rises toward zero without flipping hard "
+        f"({window_corr:+.2f} vs {calm_corr:+.2f} calm)",
+        window_corr > calm_corr,
+    )
+
+    # Asserted on the PROFILE, not on a realized path. Over a 0.78-year window
+    # at ~24% annualized volatility, one path's total return carries a ~21%
+    # standard deviation, so the realized ordering of two sleeves whose expected
+    # returns differ by 7% flips from seed to seed. A test on the draw would be
+    # flaky; a test on the parameters is exactly as informative and never is.
+    profile = _CRISIS_PROFILES["Rate shock (2022)"]["annual_drift"]
+    check(
+        f"2022 profile makes BONDS fall harder than equities "
+        f"({profile[bond]:+.1%}/yr vs {profile[equity]:+.1%}/yr)",
+        profile[bond] < profile[equity] < 0,
+    )
+    check(
+        f"2022 profile makes commodities the only sleeve that works "
+        f"({profile[config.COMMODITY_TICKER]:+.1%}/yr)",
+        profile[config.COMMODITY_TICKER] > 0,
+    )
+    check(
+        "every crisis window has a calibrated profile",
+        set(config.CRISIS_WINDOWS) == set(_CRISIS_PROFILES),
+    )
+
+    # The diagnostic step 25 keys off: diversification degrades through 2022
+    # even though the correlation sign never sustains a flip.
+    #
+    # Computed from the correlation TABLES, not from a sampled window. The
+    # sampled version failed on 3 of 15 seeds -- the fixture's DR gap is only
+    # ~0.04, because commodities decoupling (SPY/DBC +0.35 -> -0.15) partly
+    # offsets the equity/bond move, which is realistic but leaves the realized
+    # margin inside sampling noise. The ratio is scale-invariant, so the crisis
+    # volatility multiplier drops out and the table comparison is exact.
+    def theoretical_dr(table: dict) -> float:
+        sd = np.array([_ANNUAL_VOL[t] for t in returns.columns])
+        weights = (1.0 / sd) / (1.0 / sd).sum()
+        cov = np.diag(sd) @ _corr_matrix(list(returns.columns), table) @ np.diag(sd)
+        return float((weights @ sd) / np.sqrt(weights @ cov @ weights))
+
+    calm_dr, stressed_dr = theoretical_dr(_CALM_CORR), theoretical_dr(_FLIPPED_CORR)
+    check(
+        f"the 2022 correlation regime degrades diversification "
+        f"({stressed_dr:.3f} vs {calm_dr:.3f} calm)",
+        stressed_dr < calm_dr,
     )
 
     for label, (a, b) in config.CRISIS_WINDOWS.items():

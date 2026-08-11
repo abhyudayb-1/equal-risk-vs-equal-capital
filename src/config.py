@@ -155,3 +155,24 @@ HTTP_TIMEOUT_SECONDS: float = 30.0
 
 PRICE_CACHE_MAX_AGE_HOURS: float = 12.0
 RISK_FREE_CACHE_MAX_AGE_HOURS: float = 24.0
+
+# ---------------------------------------------------------------------------
+# Regime diagnostics
+# ---------------------------------------------------------------------------
+# Measured on live data, and it corrected the project's original thesis: the
+# equity/bond correlation did NOT turn meaningfully positive during the 2022
+# drawdown. Across 2022-01-03 to 2022-10-12 the rolling 63-day SPY/TLT
+# correlation averaged -0.09 and was positive on only 31% of days. The
+# persistent flip is a 2023-onward phenomenon (66%, 65%, 70% of days positive in
+# 2023/2024/2025), so it gets its own window rather than being folded into the
+# crisis list. ``None`` as the end date means "through the end of the sample".
+REGIME_SHIFT_WINDOW: tuple[str, str | None] = ("2021-01-01", None)
+
+# The diversification ratio, ``sum(w_i * sigma_i) / sigma_p``, is the diagnostic
+# that actually degrades THROUGH 2021-22 rather than after it. Inverse-vol
+# weighted annual means on live data: 2.18 (2012 peak), 2.11 (2008), 1.78
+# (2020), 1.68 (2021), 1.59 (2022), 1.52 (2023 -- lowest in the sample).
+#
+# A correlation-SIGN alarm fires in 2023, after the damage. This one is already
+# falling while the damage is being done, which is why step 25 keys off it.
+DIVERSIFICATION_WINDOW_DAYS: int = CORRELATION_WINDOW_DAYS

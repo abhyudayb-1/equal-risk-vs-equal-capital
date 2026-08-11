@@ -87,8 +87,8 @@ This is the mathematical core. **Step 17 is what proves step 16 is correct.**
 | 21 | A | `feat/a21-vol-target` | `src/overlay.py`: trailing EWMA vol of the *current* weights' portfolio returns using only data ≤ t; `L_t = TARGET_VOL / σ̂_t`; clip to `LEVERAGE_CAP`. | Leverage rises in calm regimes, falls in volatile ones, never leaves the cap |
 | 22 | A | `feat/a22-financing` | `src/overlay.py`: `r_p = L_t·(r_assets − r_f) + r_f`. **Leverage is financed, not free** — omitting this is the most common way this strategy gets oversold. | With `L = 1`, output equals the unlevered return exactly |
 | 23 | A | `feat/a23-backtest` | `src/backtest.py`: monthly rebalance loop → daily accrual → populated `BacktestResult`. Only data ≤ `t` at each rebalance. | Produces a real `BacktestResult` that satisfies every contract invariant |
-| 24 | B | `feat/b24-stress` | `src/stress.py`: per-crisis decomposition and the cross-strategy drawdown table (risk parity vs equal-weight vs 60/40 vs max-Sharpe vs naive 1/vol). | Emits `reports/crisis_drawdowns.csv` from fixtures |
-| 25 | B | `feat/b25-correlation` | `src/stress.py`: rolling 63-day SPY/TLT correlation + a flag for when it crosses positive. This is the 2022 diagnostic. | Correctly flags a synthetic series constructed to flip sign |
+| 24 | B | `feat/b24-stress` | `src/stress.py`: per-crisis decomposition and the cross-strategy drawdown table (risk parity vs equal-weight vs 60/40 vs max-Sharpe vs naive 1/vol). **Include a capital-weight-in-bonds column** — it is what explains the 2022 ranking rather than just reporting it. | Emits `reports/crisis_drawdowns.csv` from fixtures |
+| 25 | B | `feat/b25-diversification` | **Respecified after step 10 — read the note below.** `src/stress.py`: rolling `CORRELATION_WINDOW_DAYS` SPY/TLT correlation **for the chart**, and the **diversification ratio** `Σwᵢσᵢ / σₚ` as the actual diagnostic. A correlation-sign alarm fires in 2023, after the damage; the ratio is already falling during 2022. | Ratio reproduces the known live path: ~2.11 (2008), 1.68 (2021), 1.59 (2022), 1.52 (2023) |
 | 26 | B | `feat/b26-viz-core` | `src/viz.py`: port `_style_axes`/`_new_figure`/`_title`/`_save` and the palette from the sp500 repo. Then the **risk contribution stacked area** chart. | PNG lands in `reports/` from fixture data |
 | 27 | B | `feat/b27-viz-rest` | `src/viz.py`: capital-weight vs risk-weight comparison, leverage time series, rolling correlation chart. | Four PNGs total in `reports/` |
 
@@ -115,6 +115,35 @@ This is the mathematical core. **Step 17 is what proves step 16 is correct.**
 | 35 | Both | — | Final review, tag `v1.0`. | Both can explain any module in the repo, not just their own |
 
 ---
+
+## Data reality check — read before steps 24, 25 and 34
+
+Steps 8–10 are merged, so the engine's data layer now runs on **live** data, and it corrected
+one of this project's founding assumptions. The original plan (and an earlier version of the
+fixture) said the 2022 failure was a stock-bond correlation flipping positive. It was not:
+
+- Across `2022-01-03 → 2022-10-12` the rolling 63-day SPY/TLT correlation **averaged −0.09**
+  and was positive on only **31% of days**. The persistent flip is **2023 onward** (66% / 65%
+  / 70% of days in 2023 / 2024 / 2025).
+- What actually happened: **TLT fell 31.2% against SPY's 24.1%** — the hedge lost more than
+  the thing it hedged — while **DBC returned +21.9%**, the only sleeve that worked and the one
+  equal-risk-contribution holds least by capital.
+- The **diversification ratio** `Σwᵢσᵢ / σₚ` degrades right through the episode: 2.11 (2008),
+  1.78 (2020), 1.68 (2021), 1.59 (2022), 1.52 (2023). That is why step 25 keys off it.
+
+**Two consequences for Person B:**
+
+1. Do not write a "correlation crossed zero" alarm. It fires a year late. See step 25.
+2. **The fixtures are shape-accurate, not magnitude-accurate.** `tests/fixtures.py` now
+   calibrates each crisis profile to the real windows above, but every number it produces is
+   still synthetic and one random draw. Build and test against it freely; never quote its
+   output as a finding. Anything that goes in the README comes from a live run in Phase 5.
+
+A related trap worth internalising, because it cost two test rewrites already: **do not assert
+on a single simulated path.** Over a 0.78-year window at ~24% annualized volatility, one
+path's total return carries a ~21% standard deviation, so sleeve orderings flip seed to seed.
+A realized-path diversification-ratio check failed on 3 of 15 seeds. Assert on the *parameters*
+(`_CRISIS_PROFILES`, the correlation tables) instead — equally informative, never flaky.
 
 ## Ground rules
 

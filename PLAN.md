@@ -152,18 +152,53 @@ charts, reconcile, then the 2022 analysis together.
 
 ## The 2022 write-up (the thing that makes this portfolio-grade)
 
-Four artifacts, produced by `stress.py` and `viz.py`, that together tell the story:
+**This section was rewritten after step 10, when live data refuted the original thesis.**
+The plan said risk parity broke in 2022 "because stock-bond correlation turned positive."
+It did not. Measured on real data across `2022-01-03 → 2022-10-12`, the rolling 63-day
+SPY/TLT correlation **averaged −0.09 and was positive on only 31% of days**. The persistent
+flip is a *2023-onward* phenomenon — 66%, 65% and 70% of days positive in 2023, 2024, 2025.
 
-1. Rolling 63-day SPY/TLT correlation crossing from negative to **positive** in 2022.
-2. ERC weights over the same window: bonds' low trailing vol earns them a *large* weight
-   exactly as they become correlated with equities.
-3. The leverage series staying elevated into the drawdown — trailing vol is a lagging
+The true mechanism is subtler and a better finding, because it means risk parity does not
+need positive correlation to fail:
+
+| Window | SPY/TLT corr | SPY | TLT | DBC | TIP |
+|---|---|---|---|---|---|
+| Calm 2013–19 | −0.34 | | | | |
+| GFC 2008 | −0.47 | −54.8% | **+24.9%** | −26.9% | +3.3% |
+| COVID 2020 | −0.50 | −33.4% | **+14.2%** | −25.0% | −0.6% |
+| **Rate shock 2022** | **+0.03** | −24.1% | **−31.2%** | **+21.9%** | −13.2% |
+
+Three things in that last row, and the write-up should hit all three:
+
+1. **The hedge lost more than the thing it hedged.** TLT −31.2% against SPY −24.1%, with
+   correlation still mildly negative. Negative correlation only protects you if bonds
+   actually *rise*; in 2008 and 2020 they did, in 2022 they fell hardest.
+2. **Correlation rising toward zero was enough.** For two equal-vol legs at 50/50, moving
+   from −0.34 to ~0 lifts portfolio volatility from 0.57σ to 0.71σ — a third of the
+   diversification benefit gone without a sign change. The measured **diversification ratio**
+   `Σwᵢσᵢ / σₚ` fell from 2.18 (2012 peak) and 2.11 (2008) to 1.68 (2021), 1.59 (2022) and
+   1.52 (2023, the lowest in the sample).
+3. **The one sleeve that worked is the one risk parity under-weights.** Commodities returned
+   **+21.9%**, and because DBC is the highest-volatility sleeve, equal *risk* contribution
+   gives it the *smallest* capital weight. The diversifier that paid was the one held least.
+
+Four artifacts from `stress.py` and `viz.py`:
+
+1. Rolling 63-day SPY/TLT correlation **alongside the diversification ratio** — the
+   correlation is the intuitive picture, the ratio is the diagnostic that actually degrades
+   while the damage is being done rather than after it.
+2. ERC weights over the same window: bonds' low trailing volatility earns them a large
+   capital weight exactly as they stop diversifying.
+3. The leverage series staying elevated into the drawdown — trailing volatility is a lagging
    estimator, so the overlay de-levers *after* the damage.
-4. Crisis drawdown table: risk parity beats 60/40 in 2008 and 2020, and **loses** in 2022.
+4. Crisis drawdown table across all strategies, with a **capital-weight-in-bonds** column.
+   That column is what explains the ranking rather than merely reporting it.
 
-State that last result plainly. The conclusion is that risk parity is a bet on the
-stock-bond correlation staying negative, and 2022 is what collecting on the wrong side of that
-bet looks like.
+State the loss plainly. The honest conclusion is stronger than the original one: risk parity
+is not a bet that stocks and bonds are *negatively* correlated, it is a bet that bonds rally
+when equities fall. Those are different bets, and 2022 is what it costs to discover the
+difference. The `REGIME_SHIFT_WINDOW` in `config.py` (2021→present) is where the open
+question lives — whether 2022 was an episode or a regime change.
 
 ---
 
