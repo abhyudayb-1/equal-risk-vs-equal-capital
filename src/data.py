@@ -313,3 +313,79 @@ def align_risk_free(risk_free: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
             risk_free.index[0].date(),
         )
     return aligned.rename("risk_free")
+
+
+# ---------------------------------------------------------------------------
+# Returns and the rebalance calendar
+# ---------------------------------------------------------------------------
+def daily_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    """Daily simple returns from a total-return close matrix.
+
+    Simple rather than log returns because portfolio returns aggregate linearly
+    across assets: ``r_p = w @ r``. Log returns do not, and mixing the two is a
+    quiet source of error in exactly this kind of pipeline.
+
+    The first row is dropped rather than filled with zero -- a zero return on
+    day one is a fabricated observation, and it would drag the volatility
+    estimate down at precisely the point the covariance warmup is shortest.
+    """
+    if prices.empty:
+        raise DataUnavailableError("cannot compute returns from an empty price frame")
+    returns = prices.sort_index().pct_change().iloc[1:]
+    if returns.isna().to_numpy().any():
+        offenders = {c: int(n) for c, n in returns.isna().sum().items() if n}
+        raise DataUnavailableError(f"NaN returns after pct_change: {offenders}")
+    return returns
+
+
+def month_end_rebalance_dates(
+    index: pd.DatetimeIndex,
+    warmup_trading_days: int = 0,
+) -> pd.DatetimeIndex:
+    """Last **actual trading day** of each month, after a warmup.
+
+    Taken from the observed index rather than generated with a calendar offset:
+    ``pd.date_range(freq="BME")`` yields business-month ends that can fall on an
+    exchange holiday, and a rebalance date that is not a real trading day either
+    silently shifts or drops when it is used to look up a price.
+
+    ``warmup_trading_days`` drops the leading dates that do not yet have enough
+    history behind them for a covariance estimate. The first returned date is
+    therefore the first month-end with at least that many observations before
+    it, inclusive.
+    """
+    if len(index) == 0:
+        raise DataUnavailableError("cannot build a rebalance calendar from an empty index")
+    index = pd.DatetimeIndex(index).sort_values()
+
+    if warmup_trading_days > len(index):
+        raise DataUnavailableError(
+            f"warmup of {warmup_trading_days} trading days exceeds the {len(index)} "
+            "available observations"
+        )
+
+    as_series = pd.Series(index, index=index)
+    month_ends = pd.DatetimeIndex(
+        as_series.groupby([index.year, index.month]).last().to_numpy()
+    ).sort_values()
+
+    if warmup_trading_days > 0:
+        cutoff = index[warmup_trading_days - 1]
+        month_ends = month_ends[month_ends >= cutoff]
+
+    if len(month_ends) == 0:
+        raise DataUnavailableError(
+            f"no rebalance dates survive a {warmup_trading_days}-day warmup"
+        )
+    return month_ends
+
+
+def asof_slice(frame: pd.DataFrame | pd.Series, date: pd.Timestamp):
+    """Everything at or before ``date`` -- the look-ahead guard, in one place.
+
+    Every estimator in this project (covariance, trailing volatility, financing
+    cost) takes its input through here. Centralising it means the invariant is
+    enforced in a single readable line instead of being re-derived at each call
+    site, and ``tests/test_lookahead.py`` has one function to attack.
+    """
+    return frame.loc[frame.index <= pd.Timestamp(date)]
