@@ -47,7 +47,7 @@ Do these in order, together. **Nothing in Phase 1 starts until step 7 is merged.
 | 4 | B | `feat/b04-cache` | Port `src/cache.py` **verbatim** from `abhyudayb-1/sp500-factor-backtester`. Do not rewrite it. | Round-trips a DataFrame to `data/cache/` and back |
 | 5 | B | `feat/b05-metrics` | Port `src/metrics.py` from the same repo. **One change:** `periods_per_year` becomes a required argument, not a module constant (this project accrues daily = 252, not monthly = 12). Keep `_ZERO_VARIANCE_EPS` and the peak-floored-at-1.0 drawdown fix — both are subtle and correct. | Sharpe/CAGR/max-drawdown reproduce the sp500 repo's values on the same input |
 | 6 | B | `feat/b06-fixtures` | `tests/fixtures.py`: `make_fake_result(n_assets=4, n_days=4000) -> BacktestResult` with plausible random weights (sum to 1), risk contributions (sum to 1), leverage in `[0.5, 3.0]`, daily returns. | Returns a valid `BacktestResult`; `weights.sum(axis=1)` is 1.0 everywhere |
-| 7 | Both | — | Review and merge 1–6. Confirm B can `from tests.fixtures import make_fake_result` and get usable data. | **Gate: B is now unblocked for the whole project** |
+| 7 | Both | — | Review and merge 1–6, plus `tests/test_contract.py`: proves `validate()` *rejects* malformed results, the metrics port kept its two subtleties, and the fixtures carry real regime structure. | `python tests/test_contract.py` passes. **Gate: B is now unblocked for the whole project** |
 
 ---
 
