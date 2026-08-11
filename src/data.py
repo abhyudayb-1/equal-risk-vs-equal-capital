@@ -13,21 +13,36 @@ wrong picture of the sleeve it leans on hardest.
 
 from __future__ import annotations
 
+import io
 import logging
 
+import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
 
 from . import cache
 from .config import (
     DATA_START_DATE,
+    FRED_CSV_URL,
+    HTTP_TIMEOUT_SECONDS,
+    HTTP_USER_AGENT,
     PRICE_CACHE_MAX_AGE_HOURS,
+    RISK_FREE_CACHE_MAX_AGE_HOURS,
+    RISK_FREE_SERIES_ID,
+    TRADING_DAYS_PER_YEAR,
     UNIVERSE,
 )
 
 log = logging.getLogger(__name__)
 
 PRICE_CACHE_FILE = "prices_close.csv"
+RISK_FREE_CACHE_FILE = "risk_free.csv"
+
+# FRED publishes DTB3 on business days only. Gaps this long are holidays and are
+# forward-filled; anything longer means the series genuinely stopped and the
+# financing cost would be silently stale.
+MAX_RISK_FREE_GAP_DAYS = 10
 
 # A sleeve whose history starts more than this long after DATA_START_DATE is a
 # configuration error, not a data hiccup -- see DBC and the 2006 start date.
@@ -181,3 +196,120 @@ def fetch_prices(
     log.info("Downloaded %d rows, %s to %s.", len(close), close.index[0].date(),
              close.index[-1].date())
     return close
+
+
+# ---------------------------------------------------------------------------
+# Risk-free rate -- the financing cost of leverage
+# ---------------------------------------------------------------------------
+def _parse_fred_csv(text: str, series_id: str) -> pd.Series:
+    """Parse a FRED CSV export into a dated float series.
+
+    FRED changed its export header from ``DATE`` to ``observation_date`` and
+    both are still in circulation, so the date column is taken positionally
+    rather than by name. Missing observations are exported as ``"."``.
+    """
+    frame = pd.read_csv(io.StringIO(text))
+    if frame.shape[1] < 2:
+        raise DataUnavailableError(f"unexpected FRED CSV shape {frame.shape} for {series_id}")
+
+    date_col = frame.columns[0]
+    value_col = series_id if series_id in frame.columns else frame.columns[1]
+
+    frame[date_col] = pd.to_datetime(frame[date_col])
+    values = pd.to_numeric(frame[value_col], errors="coerce")  # "." -> NaN
+    series = pd.Series(values.to_numpy(), index=pd.DatetimeIndex(frame[date_col]))
+    series.index.name = "date"
+    return series.sort_index().dropna()
+
+
+def fetch_risk_free(
+    series_id: str = RISK_FREE_SERIES_ID,
+    start: str = DATA_START_DATE,
+    refresh: bool = False,
+) -> pd.Series:
+    """Daily risk-free rate as a **per-trading-day decimal**, not annualized %.
+
+    FRED publishes DTB3 as an annualized percentage (``3.72`` means 3.72%/yr).
+    Two conversions happen here and both matter:
+
+    1. percent -> decimal (``/100``);
+    2. annual -> per-period by **de-compounding**,
+       ``(1 + r_annual) ** (1 / 252) - 1``, matching how ``metrics.sharpe_ratio``
+       de-compounds its own risk-free input. Dividing by 252 instead would be
+       wrong in the same direction everywhere, which is exactly the kind of
+       error a backtest never surfaces.
+
+    This series is the financing cost in ``overlay.py``: leverage is borrowed,
+    not free, and omitting this leg is the most common way a risk-parity
+    backtest gets oversold.
+    """
+    if not refresh and cache.is_fresh(RISK_FREE_CACHE_FILE, RISK_FREE_CACHE_MAX_AGE_HOURS):
+        cached = cache.read_frame(RISK_FREE_CACHE_FILE)
+        if cached is not None and not cached.empty:
+            log.info("Using cached risk-free series (%d rows).", len(cached))
+            return cached.iloc[:, 0].rename("risk_free")
+
+    url = FRED_CSV_URL.format(series_id=series_id)
+    log.info("Downloading %s from FRED...", series_id)
+    try:
+        response = requests.get(
+            url,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            headers={"User-Agent": HTTP_USER_AGENT},
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise DataUnavailableError(f"could not fetch {series_id} from FRED: {exc}") from exc
+
+    annual_percent = _parse_fred_csv(response.text, series_id)
+    annual_percent = annual_percent.loc[annual_percent.index >= pd.Timestamp(start)]
+    if annual_percent.empty:
+        raise DataUnavailableError(f"{series_id} has no observations at or after {start}")
+
+    gaps = annual_percent.index.to_series().diff().dt.days.dropna()
+    if (gaps > MAX_RISK_FREE_GAP_DAYS).any():
+        worst = gaps.max()
+        log.warning(
+            "%s has a %d-day gap; the financing cost will be forward-filled across it.",
+            series_id, int(worst),
+        )
+
+    annual = annual_percent / 100.0
+    if (annual < -0.01).any() or (annual > 0.25).any():
+        raise DataUnavailableError(
+            f"{series_id} contains implausible rates "
+            f"({annual.min():.3f} to {annual.max():.3f}) -- check the units"
+        )
+
+    daily = (1.0 + annual) ** (1.0 / TRADING_DAYS_PER_YEAR) - 1.0
+    daily = daily.rename("risk_free")
+    cache.write_frame(RISK_FREE_CACHE_FILE, daily.to_frame())
+    log.info(
+        "Risk-free: %d obs, %s to %s, %.2f%%-%.2f%% annualized.",
+        len(daily), daily.index[0].date(), daily.index[-1].date(),
+        annual.min() * 100, annual.max() * 100,
+    )
+    return daily
+
+
+def align_risk_free(risk_free: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
+    """Put the risk-free series on the price calendar.
+
+    Forward-fill only, and only across holidays: a rate is known from its
+    publication date onward, so carrying the last print forward is correct while
+    back-filling would leak a future rate into a past decision. Any leading days
+    before the first FRED print are filled with the first available rate, which
+    is the only non-look-ahead choice available.
+    """
+    aligned = risk_free.reindex(index.union(risk_free.index)).ffill().reindex(index)
+    if aligned.isna().any():
+        first_valid = aligned.first_valid_index()
+        if first_valid is None:
+            raise DataUnavailableError("risk-free series does not overlap the price calendar")
+        aligned = aligned.bfill()
+        log.warning(
+            "Risk-free series starts %s, after the price calendar; "
+            "back-filled the leading days with the first available rate.",
+            risk_free.index[0].date(),
+        )
+    return aligned.rename("risk_free")
