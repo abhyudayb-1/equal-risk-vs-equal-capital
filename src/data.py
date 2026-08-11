@@ -146,6 +146,25 @@ def _cached_prices(tickers: list[str], start: str) -> pd.DataFrame | None:
     return frame[tickers]
 
 
+def _restrict(frame, start: str, end: str | None):
+    """Trim to the requested window.
+
+    Applied to cache hits and fresh downloads alike. Without it the cache
+    silently returns whatever span happens to be on disk: ``fetch_prices(
+    end="2015-01-01")`` handed back data through today whenever the cache was
+    warm, which would have made step 30's ``--start`` and date flags do nothing
+    at all on the second run of any session.
+    """
+    out = frame.loc[frame.index >= pd.Timestamp(start)]
+    if end is not None:
+        out = out.loc[out.index <= pd.Timestamp(end)]
+    if len(out) == 0:
+        raise DataUnavailableError(
+            f"no observations between {start} and {end or 'today'}"
+        )
+    return out
+
+
 def fetch_prices(
     tickers: tuple[str, ...] | list[str] = UNIVERSE,
     start: str = DATA_START_DATE,
@@ -174,13 +193,16 @@ def fetch_prices(
         cached = _cached_prices(tickers, start)
         if cached is not None:
             log.info("Using cached prices (%d rows).", len(cached))
-            return cached
+            return _restrict(cached, start, end)
 
     log.info("Downloading %s from yfinance...", ", ".join(tickers))
+    # Deliberately downloaded and cached through TODAY regardless of ``end``, so
+    # one cached pull serves every window a session asks for. ``end`` narrows the
+    # returned frame, not the stored one.
     raw = yf.download(
         tickers,
         start=start,
-        end=end,
+        end=None,
         auto_adjust=True,  # total return: dividends reinvested, splits applied
         progress=False,
         group_by="column",
@@ -195,7 +217,7 @@ def fetch_prices(
     cache.write_frame(PRICE_CACHE_FILE, close)
     log.info("Downloaded %d rows, %s to %s.", len(close), close.index[0].date(),
              close.index[-1].date())
-    return close
+    return _restrict(close, start, end)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +269,7 @@ def fetch_risk_free(
         cached = cache.read_frame(RISK_FREE_CACHE_FILE)
         if cached is not None and not cached.empty:
             log.info("Using cached risk-free series (%d rows).", len(cached))
-            return cached.iloc[:, 0].rename("risk_free")
+            return _restrict(cached.iloc[:, 0].rename("risk_free"), start, None)
 
     url = FRED_CSV_URL.format(series_id=series_id)
     log.info("Downloading %s from FRED...", series_id)
@@ -261,9 +283,11 @@ def fetch_risk_free(
     except requests.RequestException as exc:
         raise DataUnavailableError(f"could not fetch {series_id} from FRED: {exc}") from exc
 
+    # Parsed and cached in FULL, then narrowed on return. Truncating before the
+    # write meant a request with a late start poisoned the cache for every later
+    # request with an earlier one.
     annual_percent = _parse_fred_csv(response.text, series_id)
-    annual_percent = annual_percent.loc[annual_percent.index >= pd.Timestamp(start)]
-    if annual_percent.empty:
+    if annual_percent.loc[annual_percent.index >= pd.Timestamp(start)].empty:
         raise DataUnavailableError(f"{series_id} has no observations at or after {start}")
 
     gaps = annual_percent.index.to_series().diff().dt.days.dropna()
@@ -289,7 +313,7 @@ def fetch_risk_free(
         len(daily), daily.index[0].date(), daily.index[-1].date(),
         annual.min() * 100, annual.max() * 100,
     )
-    return daily
+    return _restrict(daily, start, None)
 
 
 def align_risk_free(risk_free: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
@@ -338,9 +362,19 @@ def daily_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return returns
 
 
+def _is_true_month_end(date: pd.Timestamp) -> bool:
+    """True if no business days remain in ``date``'s calendar month."""
+    month_end = date + pd.offsets.MonthEnd(0)
+    if month_end == date:
+        return True
+    remaining = pd.bdate_range(date + pd.Timedelta(days=1), month_end)
+    return len(remaining) == 0
+
+
 def month_end_rebalance_dates(
     index: pd.DatetimeIndex,
     warmup_trading_days: int = 0,
+    drop_partial_final_month: bool = True,
 ) -> pd.DatetimeIndex:
     """Last **actual trading day** of each month, after a warmup.
 
@@ -368,6 +402,20 @@ def month_end_rebalance_dates(
     month_ends = pd.DatetimeIndex(
         as_series.groupby([index.year, index.month]).last().to_numpy()
     ).sort_values()
+
+    # The final group is the last *observed* date, which is only a month-end if
+    # the month actually finished. Running a backtest mid-month otherwise puts a
+    # rebalance on, say, the 10th and opens a stub period that every monthly
+    # metric then treats as a full one.
+    #
+    # Tested against the calendar rather than "is there data next month", because
+    # a dataset that legitimately ends on 31 December would fail that version.
+    if drop_partial_final_month and len(month_ends) and not _is_true_month_end(month_ends[-1]):
+        log.info(
+            "Dropping %s as a rebalance date: its month is still in progress.",
+            month_ends[-1].date(),
+        )
+        month_ends = month_ends[:-1]
 
     if warmup_trading_days > 0:
         cutoff = index[warmup_trading_days - 1]
