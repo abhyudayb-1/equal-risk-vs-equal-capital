@@ -128,11 +128,29 @@ class BacktestResult:
             raise ContractViolation("returns must have a DatetimeIndex")
         if not self.returns.index.is_monotonic_increasing:
             raise ContractViolation("returns index must be sorted ascending")
-        if not np.isfinite(self.returns.dropna().to_numpy(dtype="float64")).all():
-            raise ContractViolation("returns contains non-finite values")
+        if self.returns.empty:
+            raise ContractViolation("returns is empty")
+        # Checked WITHOUT dropna: a NaN return is not a missing observation, it
+        # is a day the strategy could not be priced. Metrics drop them silently,
+        # so an unnoticed NaN run shortens the series and flatters every
+        # annualized number computed from it.
+        if not np.isfinite(self.returns.to_numpy(dtype="float64")).all():
+            raise ContractViolation("returns contains NaN or non-finite values")
+
+        # Anchor the return series to the allocation that produced it. Without
+        # this, a returns Series covering a completely different date range
+        # validates cleanly and every chart silently plots misaligned data.
+        if self.returns.index[0] < w.index[0]:
+            raise ContractViolation(
+                f"returns start {self.returns.index[0].date()} precedes the first "
+                f"rebalance {w.index[0].date()} -- a return before any allocation "
+                f"decision cannot be explained by these weights"
+            )
 
         if not np.isfinite(self.leverage.to_numpy(dtype="float64")).all():
             raise ContractViolation("leverage contains non-finite values")
+        if (self.leverage.to_numpy(dtype="float64") <= 0.0).any():
+            raise ContractViolation("leverage must be strictly positive")
 
         if "strategy" not in self.meta:
             raise ContractViolation("meta must carry a 'strategy' name")

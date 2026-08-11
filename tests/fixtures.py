@@ -61,19 +61,29 @@ _ORDER = (
     config.GOLD_TICKER,
 )
 
+# Keyed off the config constants rather than string literals on purpose: keying
+# these by "SPY"/"TLT" meant renaming a ticker in config.py silently produced an
+# identity correlation matrix -- zero correlation everywhere, no error, and a
+# fixture that quietly stopped exercising the diversification story.
+_EQ = config.EQUITY_TICKER
+_BOND = config.NOMINAL_BOND_TICKER
+_CMD = config.COMMODITY_TICKER
+_INFL = config.INFLATION_TICKER
+_GOLD = config.GOLD_TICKER
+
 # Calm-regime correlations. Equities and nominal bonds are NEGATIVELY
 # correlated -- the assumption the whole strategy rests on.
 _CALM_CORR = {
-    ("SPY", "TLT"): -0.30, ("SPY", "DBC"): 0.35, ("SPY", "TIP"): -0.05,
-    ("SPY", "GLD"): 0.05, ("TLT", "DBC"): -0.10, ("TLT", "TIP"): 0.75,
-    ("TLT", "GLD"): 0.20, ("DBC", "TIP"): 0.20, ("DBC", "GLD"): 0.30,
-    ("TIP", "GLD"): 0.30,
+    (_EQ, _BOND): -0.30, (_EQ, _CMD): 0.35, (_EQ, _INFL): -0.05,
+    (_EQ, _GOLD): 0.05, (_BOND, _CMD): -0.10, (_BOND, _INFL): 0.75,
+    (_BOND, _GOLD): 0.20, (_CMD, _INFL): 0.20, (_CMD, _GOLD): 0.30,
+    (_INFL, _GOLD): 0.30,
 }
 
 # 2022: the correlation flips positive and the diversification benefit vanishes.
 _FLIPPED_CORR = dict(_CALM_CORR) | {
-    ("SPY", "TLT"): 0.50, ("SPY", "TIP"): 0.45, ("TLT", "DBC"): 0.10,
-    ("TLT", "TIP"): 0.85, ("SPY", "DBC"): 0.20,
+    (_EQ, _BOND): 0.50, (_EQ, _INFL): 0.45, (_BOND, _CMD): 0.10,
+    (_BOND, _INFL): 0.85, (_EQ, _CMD): 0.20,
 }
 
 
@@ -82,8 +92,18 @@ def _corr_matrix(tickers: list[str], table: dict) -> np.ndarray:
     corr = np.eye(n)
     for i in range(n):
         for j in range(i + 1, n):
-            key = (tickers[i], tickers[j])
-            rho = table.get(key, table.get((tickers[j], tickers[i]), 0.0))
+            pair, reverse = (tickers[i], tickers[j]), (tickers[j], tickers[i])
+            if pair in table:
+                rho = table[pair]
+            elif reverse in table:
+                rho = table[reverse]
+            else:
+                # Never default to 0.0 -- an unlisted pair is a mistake, and a
+                # silent zero would look like a working fixture.
+                raise KeyError(
+                    f"no fixture correlation for {pair}; add it to the table in "
+                    f"tests/fixtures.py rather than relying on a default"
+                )
             corr[i, j] = corr[j, i] = rho
     # Hand-written correlation tables are not guaranteed PSD; repair rather than
     # let a Cholesky failure surface as a confusing fixture error.
@@ -201,7 +221,20 @@ def make_fake_result(
     rng = np.random.default_rng(seed + 1)
 
     daily = make_fake_returns(tuple(tickers), start=start, end=end, seed=seed)
+
+    # Respect the covariance warmup. Without this the fixture's first rebalance
+    # sits ~18 trading days after DATA_START_DATE while the real engine's sits
+    # ~252 days after it, so every chart Person B builds would have an x-axis a
+    # year longer than the one the engine eventually produces.
+    if len(daily) <= config.COV_WARMUP_TRADING_DAYS:
+        raise ValueError(
+            f"need more than {config.COV_WARMUP_TRADING_DAYS} trading days of "
+            f"warmup; got {len(daily)}"
+        )
+    warmup_end = daily.index[config.COV_WARMUP_TRADING_DAYS - 1]
     rebalance = month_end_dates(daily.index)
+    rebalance = rebalance[rebalance >= warmup_end]
+
     n_reb, n_assets = len(rebalance), len(tickers)
 
     # Weights: inverse-vol baseline plus a smooth random walk, so the series
@@ -236,10 +269,18 @@ def make_fake_result(
     leverage = pd.Series(lev, index=rebalance, name="leverage")
 
     # Daily portfolio return: last-known weights and leverage applied to daily
-    # asset returns. Uses ffill so a day before the first rebalance is dropped
-    # rather than silently treated as equal-weight.
-    aligned_w = weights_df.reindex(daily.index).ffill()
-    aligned_l = leverage.reindex(daily.index).ffill()
+    # asset returns.
+    #
+    # The .shift(1) is the whole ballgame. Without it the weights chosen at
+    # rebalance date t earn the return OF day t -- a decision made using day t's
+    # close, collecting day t's move. That is precisely the look-ahead bias this
+    # project exists to avoid, and step 28's test is written to catch it. A
+    # fixture that models it wrong would teach the wrong alignment convention to
+    # every benchmark built against it (step 11 onward).
+    #
+    # Decision at t -> realized return over t to t+1.
+    aligned_w = weights_df.reindex(daily.index).ffill().shift(1)
+    aligned_l = leverage.reindex(daily.index).ffill().shift(1)
     gross = (aligned_w * daily).sum(axis=1)
     rf = make_fake_risk_free(start=start, end=end, seed=seed).reindex(daily.index).ffill()
     net = aligned_l * (gross - rf) + rf

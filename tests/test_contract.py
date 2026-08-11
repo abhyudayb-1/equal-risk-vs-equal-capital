@@ -27,7 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import cache, config, metrics  # noqa: E402
 from src.types import BacktestResult, ContractViolation  # noqa: E402
-from tests.fixtures import make_fake_result, make_fake_returns  # noqa: E402
+from tests.fixtures import (  # noqa: E402
+    _CALM_CORR,
+    _corr_matrix,
+    make_fake_result,
+    make_fake_returns,
+)
 
 _checks = 0
 
@@ -72,10 +77,17 @@ def test_contract() -> None:
             result.returns, result.meta,
         ),
     )
+    # Shorting one sleeve into another keeps every row summing to 1.0, so this
+    # actually exercises the long-only rule. The obvious `weights - 0.5` does
+    # NOT: it breaks the row sum and is caught by the earlier check, leaving the
+    # long-only branch silently untested.
+    shorted = result.weights.copy()
+    shorted.iloc[:, 0] -= 0.5
+    shorted.iloc[:, 1] += 0.5
     expect_violation(
-        "rejects negative (short) weights",
+        "rejects short weights that still sum to 1",
         lambda: BacktestResult(
-            result.weights - 0.5, result.risk_contributions, result.leverage,
+            shorted, result.risk_contributions, result.leverage,
             result.returns, result.meta,
         ),
     )
@@ -101,6 +113,36 @@ def test_contract() -> None:
                 result.returns.index == result.returns.index[5], np.inf
             ),
             result.meta,
+        ),
+    )
+
+    nan_returns = result.returns.copy().astype("float64")
+    nan_returns.iloc[5] = np.nan
+    expect_violation(
+        "rejects NaN returns -- metrics drop them silently, flattering the result",
+        lambda: BacktestResult(
+            result.weights, result.risk_contributions, result.leverage,
+            nan_returns, result.meta,
+        ),
+    )
+
+    detached = result.returns.copy()
+    detached.index = detached.index - pd.Timedelta(days=400)
+    expect_violation(
+        "rejects returns that start before the first allocation decision",
+        lambda: BacktestResult(
+            result.weights, result.risk_contributions, result.leverage,
+            detached, result.meta,
+        ),
+    )
+
+    dead_leverage = result.leverage.copy()
+    dead_leverage.iloc[3] = 0.0
+    expect_violation(
+        "rejects non-positive leverage",
+        lambda: BacktestResult(
+            result.weights, result.risk_contributions, dead_leverage,
+            result.returns, result.meta,
         ),
     )
 
@@ -184,6 +226,49 @@ def test_fixture_regimes() -> None:
           not make_fake_returns(seed=7).equals(make_fake_returns(seed=8)))
 
 
+def test_fixture_alignment() -> None:
+    """No look-ahead in the fixture, and the covariance warmup is respected.
+
+    Both of these were wrong in the first cut of Phase 0. They matter because
+    every benchmark Person B writes (step 11 onward) copies the fixture's
+    alignment convention, and step 28's look-ahead test would then be asserting
+    the opposite of what the fixture does.
+    """
+    print("fixture alignment:")
+    result = make_fake_result()
+    daily = make_fake_returns()
+    first = result.weights.index[0]
+
+    history = int((daily.index <= first).sum())
+    check(
+        f"first rebalance clears the {config.COV_WARMUP_TRADING_DAYS}-day warmup "
+        f"({history} days of history)",
+        history >= config.COV_WARMUP_TRADING_DAYS,
+    )
+    check(
+        "returns start strictly after the first allocation decision",
+        result.returns.index[0] > first,
+    )
+
+    applied = result.weights.reindex(daily.index).ffill().shift(1)
+    check(
+        "no weight is applied on the rebalance date itself (no look-ahead)",
+        bool(applied.loc[first].isna().all()),
+    )
+    next_day = daily.index[daily.index.get_loc(first) + 1]
+    check(
+        "the new weights take effect the day AFTER the rebalance",
+        bool(np.allclose(applied.loc[next_day].to_numpy(),
+                         result.weights.iloc[0].to_numpy())),
+    )
+
+    try:
+        _corr_matrix([config.EQUITY_TICKER, "NOT_A_TICKER"], _CALM_CORR)
+        raise AssertionError("FAILED: unlisted correlation pair did not raise")
+    except KeyError:
+        check("an unlisted correlation pair raises instead of defaulting to 0.0", True)
+
+
 def test_capital_vs_risk() -> None:
     """The claim the whole project rests on, asserted on fixture data."""
     print("capital weight vs risk contribution:")
@@ -208,5 +293,6 @@ if __name__ == "__main__":
     test_metrics_port()
     test_cache_port()
     test_fixture_regimes()
+    test_fixture_alignment()
     test_capital_vs_risk()
     print(f"\n{_checks} checks passed")
