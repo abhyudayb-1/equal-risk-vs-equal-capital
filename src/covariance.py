@@ -214,9 +214,16 @@ def nearest_psd(cov: np.ndarray, min_eigenvalue: float = MIN_EIGENVALUE) -> np.n
     the variances were the well-estimated part.
 
     An asset with zero or non-finite variance has no correlation representation,
-    so that case falls back to clipping the covariance directly. Such an asset
-    lands at a variance of ``min_eigenvalue`` rather than zero, which keeps the
-    risk-contribution identity well posed instead of dividing by zero (the
+    so that case falls back to clipping the covariance directly, which lands the
+    asset at a variance of ``min_eigenvalue`` rather than zero and keeps the
+    risk-contribution identity well posed instead of dividing by zero.
+
+    Note the limit of that fallback: it fires only on a variance of *exactly*
+    zero. A merely tiny positive variance keeps its correlation representation
+    and is preserved untouched -- deliberately, since silently inflating a real
+    variance to a floor would be a fabricated number. An asset that small breaks
+    ERC feasibility rather than PSD-ness, and it is
+    ``src.riskparity.solve_erc_with_status`` that detects and raises on it (the
     near-zero-vol degenerate case in TASKS.md step 20).
     """
     cov = validate_covariance(cov, "cov")

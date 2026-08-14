@@ -179,6 +179,10 @@ class ERCSolution:
     converged: bool
     optimiser_succeeded: bool
     max_rc_deviation: float
+    # Evaluated on the SCALE-NORMALISED covariance the solver actually minimises
+    # over, not on the caller's annualised one. That makes objectives comparable
+    # across rebalances, which raw ones would not be; it also means the number
+    # cannot be read as a variance. Judge a solve on max_rc_deviation.
     objective: float
     n_iterations: int
     restarts_used: int
@@ -235,9 +239,14 @@ def solve_erc_with_status(
 
     The escape is a restart from a fresh feasible point, repeated until the
     risk-contribution bar is met. Restarts fire only on failure, so the mean cost
-    over 2000 covariances is 0.1 extra solves; with ``ERC_MAX_RESTARTS`` the
-    residual failure rate is 0 in 2000 adversarial matrices and 0 in 2000 drawn
-    around the real four-sleeve correlation structure.
+    is ~0.08 extra solves. It does not reach zero: about 0.05% of adversarial
+    random 4x4 covariances still miss the bar at ``ERC_MAX_RESTARTS``, and those
+    are reported honestly through ``converged`` rather than papered over. On
+    covariances drawn around the real four-sleeve structure the rate is 0 in
+    2000. See the ``ERC_MAX_RESTARTS`` comment in ``config.py`` for the numbers.
+
+    A genuinely *infeasible* problem is separated out before any of this and
+    raises instead -- see the feasibility check below.
 
     This is deliberately *not* solved by switching to the convex log-barrier
     form. That form is Person B's independent oracle (TASKS.md step 19), and the
@@ -269,6 +278,39 @@ def solve_erc_with_status(
             n_iterations=0,
             restarts_used=0,
             message="single asset: the ERC portfolio is trivially [1.0]",
+        )
+
+    # Feasibility, before spending a single solve on it. naive_inv_vol IS the
+    # exact ERC portfolio when correlations are zero, and correlations move it
+    # only moderately, so it is a sound cheap estimate of the smallest weight the
+    # answer requires. If that is already under the long-only floor, no point in
+    # the floor-constrained simplex is an equal-risk portfolio and SLSQP will
+    # grind through every restart to say so.
+    #
+    # This raises rather than returning converged=False on purpose, and the
+    # distinction is the one this repo insists on keeping: an asset whose
+    # annualised volatility is a millionth of its peers' is bad data, not a
+    # solver event. Collapsing the two would hide whichever one you needed to
+    # see. The margin is enormous in practice -- real ETF sleeves differ by
+    # perhaps 10x, and tripping this needs about 1e6x -- so a false positive
+    # would itself be evidence of a broken price series.
+    floor_estimate = naive_inv_vol(c)
+    if float(floor_estimate.min()) < min_weight:
+        sd = np.sqrt(variances)
+        # Two different assets, and naming both is the point: the one squeezed
+        # under the floor is the symptom, the near-zero-volatility one is the
+        # cause, and they are never the same asset -- it is the *quietest* sleeve
+        # that demands nearly the whole book and crowds the loudest one out.
+        squeezed = int(np.argmin(floor_estimate))
+        culprit = int(np.argmin(sd))
+        raise ERCSolverError(
+            f"no equal-risk portfolio exists above the {min_weight:.1e} weight floor: "
+            f"asset {squeezed} would need about {floor_estimate.min():.2e} of the book, "
+            f"because asset {culprit} has an annualised volatility of {sd[culprit]:.3e} "
+            f"against a maximum of {sd.max():.3e} ({sd.max() / max(sd.min(), 1e-300):.1e}x) "
+            f"and equal risk would hand it {floor_estimate[culprit]:.6f} of the capital. "
+            f"That volatility spread is a data problem, not a solver one -- check the "
+            f"price series for asset {culprit}"
         )
 
     scale = float(np.mean(variances))
@@ -555,6 +597,36 @@ if __name__ == "__main__":  # pragma: no cover
     print(f"  max gap    : {np.abs(erc - naive).max():.4f}  "
           f"(RC spread under 1/sigma: "
           f"{np.ptp(risk_contributions(naive, unequal) / portfolio_volatility(naive, unequal)):.4f})")
+
+    # --- regression: degenerate inputs must solve or raise, never grind -----
+    # Found by running TASKS.md step 20's cases against this module early. The
+    # near-zero-vol asset used to burn every restart and return a non-converged
+    # portfolio that looked like a solver failure; it is really an infeasible
+    # problem, and the two must not be confused.
+    print("\ndegenerate inputs (TASKS.md step 20, checked early)")
+    vols = np.array([0.15, 0.15, 0.15, 0.15])
+    degenerate = {
+        "single asset": np.array([[0.04]]),
+        "perfectly correlated": np.ones((4, 4)) * np.outer(vols, vols),
+        "near-singular (rho=0.999)": (
+            np.full((4, 4), 0.999) + np.eye(4) * 0.001
+        ) * np.outer(vols, vols),
+    }
+    for label, matrix in degenerate.items():
+        outcome = solve_erc_with_status(matrix)
+        print(f"  {label:26s}: converged={outcome.converged} "
+              f"dev={outcome.max_rc_deviation:.2e}")
+
+    starved_vols = np.array([0.15, 0.12, 0.18, 1e-8])
+    starved = np.eye(4)
+    starved[0, 1] = starved[1, 0] = -0.30
+    starved = starved * np.outer(starved_vols, starved_vols)
+    try:
+        solve_erc_with_status(starved)
+        print("  near-zero-vol asset       : NO ERROR RAISED -- regression!")
+    except ERCSolverError as exc:
+        print(f"  near-zero-vol asset       : raised ERCSolverError, as it must")
+        print(f"    {str(exc)[:96]}...")
 
     # --- equal correlations: the one case where they coincide ---------------
     rho = 0.35

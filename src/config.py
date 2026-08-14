@@ -116,11 +116,21 @@ ERC_SLSQP_FTOL: float = 1e-14
 # to MIN_WEIGHT at a *negative* risk contribution, reliably when two sleeves are
 # strongly negatively correlated -- exactly the SPY/TLT structure this project is
 # built on. The escape is a restart from a fresh feasible point, which only fires
-# when the first solve misses the bar. Measured: 2 failures in 2000 adversarial
-# 4x4 covariances at 24 restarts, 0 at 48, and a mean cost of 0.1 extra solves
-# because the first attempt succeeds ~98% of the time. Restart points are drawn
-# from a fixed seed so a backtest stays reproducible.
-ERC_MAX_RESTARTS: int = 48
+# when the first solve misses the bar, so the mean cost is ~0.08 extra solves.
+# Restart points are drawn from a fixed seed so a backtest stays reproducible.
+#
+# This does NOT drive the failure rate to zero, and the returns diminish sharply
+# -- measured over 4000 adversarial random 4x4 covariances: 0.075% of solves
+# still miss the bar at 48 restarts, 0.050% at 150, 0.025% at 400. A handful of
+# matrices have a true-optimum basin small enough that random restarts rarely
+# land in it. 150 is chosen as the knee, not as a guarantee.
+#
+# On covariances drawn around the REAL four-sleeve correlation structure the rate
+# is 0 in 2000. The residual is an artefact of adversarial |rho| up to 0.95, well
+# outside anything SPY/TLT/DBC/TIP produce. Anything asserting across many random
+# covariances (step 19's oracle) should assert agreement where both solvers
+# converge rather than assuming every draw converges.
+ERC_MAX_RESTARTS: int = 150
 
 # ---------------------------------------------------------------------------
 # Volatility-targeting overlay
