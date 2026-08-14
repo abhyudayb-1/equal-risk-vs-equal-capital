@@ -80,6 +80,7 @@ python3 -m venv .venv
 .venv/bin/python tests/test_data.py           # data layer: windowing, calendar, look-ahead guard
 .venv/bin/python tests/test_benchmarks.py     # equal weight / 60-40 / max Sharpe
 .venv/bin/python tests/test_crisis_slices.py  # crisis-window slicing and summary metrics
+.venv/bin/python tests/test_riskparity.py     # RC identity, the ERC oracle, degenerate cases
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py              # full run -> reports/   (exists from step 30)
 ```
@@ -96,6 +97,13 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 Run every suite after any change to `src/`. Only `test_data.py` and `test_contract.py` are
 network-free; the suites must keep passing offline, so live-data checks belong in the Phase 5 run
 rather than in a test.
+
+**`test_riskparity.py` currently exits 1 on purpose.** Its last check,
+`test_non_psd_covariance_is_rejected`, asserts the behaviour `solve_erc_with_status`'s docstring
+promises — raising on a covariance with a negative eigenvalue — which the code does not do; it
+returns weights for a matrix implying a correlation of 1.67. It is Person A's file, so it is
+reported rather than patched, and the check runs last so the 60 passing checks print above it.
+Do not silence it to get a green suite; it goes green when the fix lands.
 
 Tests are **standalone scripts with no framework** — no pytest, no test runner. Each file defines
 `test_*()` functions plus a `check(label, condition)` helper, and a `__main__` block calls them in

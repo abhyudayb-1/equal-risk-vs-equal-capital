@@ -56,7 +56,12 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+# Whether Person A's steps 16-17 exist is decided on the file, not on whether it
+# imports -- see :func:`_load_solver`.
+_RISKPARITY_PATH = _REPO_ROOT / "src" / "riskparity.py"
 
 from src import config  # noqa: E402
 from src.benchmarks import risk_contribution_fractions  # noqa: E402
@@ -320,18 +325,34 @@ def _fallback_solve_erc(cov: np.ndarray, **kwargs) -> np.ndarray:
 
 
 def _load_solver() -> tuple[str, object, object]:
-    """Return ``(label, solve_erc, risk_contributions)`` for whatever exists.
+    """Return ``(label, solve_erc, module)`` for whatever exists.
 
-    Person A's module wins whenever it imports. ``naive_inv_vol`` and
-    ``risk_contributions`` come from there too when present, so steps 16 and 17
-    are both genuinely under test rather than shadowed by the local copies.
+    Person A's module wins whenever it is there. ``naive_inv_vol``,
+    ``portfolio_volatility`` and ``risk_contributions`` are taken from it too, so
+    steps 16 and 17 are genuinely under test rather than shadowed by the local
+    copies.
+
+    The fallback is chosen on **whether the file exists**, deliberately not on
+    whether it imports. Catching ``ImportError`` around the import reads as the
+    obvious way to write this and is wrong: a bad import *inside* A's module --
+    a typo, a renamed helper in ``src/covariance.py``, a circular import --
+    raises ``ModuleNotFoundError``, which is an ``ImportError``, and is
+    indistinguishable from the module being absent. This file would then quietly
+    switch to the stand-in and print a full page of passing checks about code
+    that is broken, which is the exact misreading the banner exists to prevent.
+    A module that is present and does not import is a hard failure.
     """
+    if not _RISKPARITY_PATH.exists():
+        return ("fallback (src/riskparity.py not built yet)", _fallback_solve_erc, None)
+
     try:
         from src import riskparity  # type: ignore
-    except ImportError:
-        return ("fallback (src/riskparity.py not built yet)", _fallback_solve_erc, None)
-    except Exception as exc:  # a module that exists but cannot import is a failure
-        raise AssertionError(f"src/riskparity.py exists but does not import: {exc!r}") from exc
+    except Exception as exc:
+        raise AssertionError(
+            f"{_RISKPARITY_PATH} exists but does not import: {exc!r}. That is a broken "
+            "engine, not a missing one -- fix the import rather than deleting the file "
+            "to get the stand-in back."
+        ) from exc
 
     solver = getattr(riskparity, "solve_erc", None)
     if solver is None:
