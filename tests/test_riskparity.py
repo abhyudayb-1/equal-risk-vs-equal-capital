@@ -29,6 +29,17 @@ The claim the whole project rests on is asserted in
 weighting only when every pairwise correlation is equal. If the two were the same
 thing in general, there would be no reason to build a solver at all.
 
+**This file currently ends in a failure, and it is meant to.**
+:func:`test_non_psd_covariance_is_rejected` asserts that ``solve_erc`` rejects a
+covariance with a negative eigenvalue, which its own docstring promises and its
+code does not do -- it returns weights for a matrix implying a correlation of
+1.67. That is a bug in ``src/riskparity.py``, which is Person A's file, so it is
+reported here rather than patched here (see that test's docstring for the cause,
+the severity and the one-line fix). It runs last so the 60 checks that pass are
+all printed before it. **Do not silence it to make the suite green** -- deleting
+the check loses the finding, and the count line below it is the signal that A's
+fix has landed.
+
 **On what is under test.** ``src/riskparity.py`` is Person A's (steps 16-17). If
 it is importable, it is what these checks run against and the fallback below is
 never used. Until then the file still runs end to end against a private stand-in,
@@ -319,6 +330,8 @@ def _load_solver() -> tuple[str, object, object]:
         from src import riskparity  # type: ignore
     except ImportError:
         return ("fallback (src/riskparity.py not built yet)", _fallback_solve_erc, None)
+    except Exception as exc:  # a module that exists but cannot import is a failure
+        raise AssertionError(f"src/riskparity.py exists but does not import: {exc!r}") from exc
 
     solver = getattr(riskparity, "solve_erc", None)
     if solver is None:
@@ -329,10 +342,15 @@ def _load_solver() -> tuple[str, object, object]:
         return ("fallback (solve_erc is still the contract stub)", _fallback_solve_erc, None)
     except Exception:  # a real solver that dislikes this input: still real
         pass
-    return ("src.riskparity.solve_erc", solver, getattr(riskparity, "risk_contributions", None))
+    return ("src.riskparity.solve_erc", solver, riskparity)
 
 
-SOLVER_LABEL, solve_erc, module_risk_contributions = _load_solver()
+SOLVER_LABEL, solve_erc, riskparity = _load_solver()
+
+# Present only once steps 16-17 are merged; every test that touches them says so
+# and skips rather than failing, so this file keeps running on a checkout that
+# does not have them.
+module_risk_contributions = getattr(riskparity, "risk_contributions", None)
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +486,124 @@ def test_module_risk_contributions_agree() -> None:
         worst = max(worst, float(np.max(np.abs(theirs - mine))))
 
     check(f"the two forms agree to 1e-12 (worst {worst:.2e})", worst < 1e-12)
+
+
+def test_naive_inv_vol_comparator() -> None:
+    """A's ``naive_inv_vol`` (step 16) is the comparator, so it has to be right.
+
+    It carries more weight than a helper normally would: it is the warm start for
+    the solver, the feasibility screen in front of it, *and* the exhibit the
+    write-up contrasts ERC against. A bug in it would show up as a solver that
+    starts badly and a conclusion that is drawn against the wrong baseline.
+    """
+    print("naive_inv_vol as the comparator:")
+    if riskparity is None:
+        print("  skip src/riskparity.py is not built yet")
+        return
+
+    rng = np.random.default_rng(160)
+    worst = 0.0
+    for _ in range(50):
+        cov = random_covariance(int(rng.integers(2, 7)), rng)
+        worst = max(
+            worst,
+            float(np.max(np.abs(riskparity.naive_inv_vol(cov) - inverse_vol_weights(cov)))),
+        )
+    check(f"matches 1/sigma weights computed here (worst {worst:.2e})", worst < 1e-12)
+
+    cov = random_covariance(4, np.random.default_rng(161))
+    check(
+        "portfolio_volatility is sqrt(w' C w)",
+        bool(np.isclose(
+            riskparity.portfolio_volatility(np.full(4, 0.25), cov),
+            float(np.sqrt(np.full(4, 0.25) @ cov @ np.full(4, 0.25))),
+            rtol=0, atol=1e-15,
+        )),
+    )
+    expect_raises(
+        "a zero-variance asset has no inverse-vol weight, and it raises",
+        ValueError,
+        lambda: riskparity.naive_inv_vol(np.array([[0.04, 0.0], [0.0, 0.0]])),
+    )
+
+
+def test_solver_reports_its_status() -> None:
+    """Step 17's other half: the solver has to say how the solve went.
+
+    ``solve_erc`` alone cannot be audited -- a portfolio that missed the bar and
+    one that hit it look identical coming out of it. ``solve_erc_with_status``
+    is what step 29 lifts into ``BacktestResult.meta``, so what it reports has to
+    be true, not merely present.
+    """
+    print("the solver reports its own status:")
+    if riskparity is None:
+        print("  skip src/riskparity.py is not built yet")
+        return
+
+    cov = random_covariance(4, np.random.default_rng(170))
+    solution = riskparity.solve_erc_with_status(cov)
+
+    check("a healthy solve reports converged", solution.converged is True)
+    check(
+        f"the deviation it reports is the one that is there ({solution.max_rc_deviation:.2e})",
+        bool(np.isclose(
+            solution.max_rc_deviation,
+            float(np.max(np.abs(risk_contribution_fractions(solution.weights, cov) - 0.25))),
+            rtol=1e-9, atol=1e-15,
+        )),
+    )
+    check(
+        "solve_erc returns exactly the weights the status object carries",
+        bool(np.array_equal(np.asarray(solve_erc(cov)), solution.weights)),
+    )
+    check(
+        "a well-conditioned covariance needs no restarts",
+        solution.restarts_used == 0,
+    )
+
+
+def test_non_convex_local_minimum_is_escaped() -> None:
+    """The oracle's highest-value use: confirming the escape landed somewhere real.
+
+    The least-squares objective A minimises is not convex, and its local minima
+    pin one sleeve at the weight floor. They appear when two sleeves are strongly
+    negatively correlated -- the SPY/TLT structure, which is the whole project.
+    A's module asserts it escapes; only an independent derivation can say the
+    escaped answer is the *right* portfolio rather than a second, prettier local
+    minimum. That is what the convex form is for: it has exactly one.
+    """
+    print("the non-convex local minimum:")
+    if riskparity is None:
+        print("  skip src/riskparity.py is not built yet")
+        return
+
+    correlation = np.array([
+        [1.00, -0.93, 0.67, -0.02],
+        [-0.93, 1.00, -0.55, -0.25],
+        [0.67, -0.55, 1.00, 0.12],
+        [-0.02, -0.25, 0.12, 1.00],
+    ])
+    sigma = np.array([0.1064, 0.0463, 0.0468, 0.2299])
+    cov = np.outer(sigma, sigma) * correlation
+    _validate_covariance(cov)
+
+    solution = riskparity.solve_erc_with_status(cov)
+    print(f"       restarts used {solution.restarts_used}, "
+          f"deviation {solution.max_rc_deviation:.2e}")
+
+    check("it converges on the risk-contribution bar", solution.converged is True)
+    check(
+        "and the convex oracle confirms it is the global optimum, not a nicer local one",
+        bool(np.allclose(solution.weights, _oracle_erc(cov), atol=AGREEMENT_TOLERANCE)),
+    )
+    check(
+        "no sleeve is left pinned at the weight floor",
+        float(np.min(solution.weights)) > 10.0 * config.MIN_WEIGHT,
+    )
+    check(
+        "every risk contribution is positive, which is what a local minimum breaks",
+        bool((_risk_contributions(solution.weights, cov) > 0.0).all()),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +856,126 @@ def test_bad_input_raises() -> None:
         lambda: _risk_contributions(np.zeros(2), np.eye(2) * 0.04),
     )
 
+    if riskparity is None:
+        print("  skip src/riskparity.py is not built yet, so only the oracle is attacked")
+        return
+
+    # The same matrices through A's solver. Step 20's bar is "solve or raise a
+    # clear error", and it applies to the implementation that ships, not only to
+    # the one this file owns.
+    #
+    # The non-PSD case is missing from this list on purpose: it is a known bug in
+    # A's solver and it has its own test at the bottom of this file, which fails
+    # today. See :func:`test_non_psd_covariance_is_rejected`.
+    for label, matrix in (
+        ("a non-square matrix", np.ones((3, 4))),
+        ("an asymmetric matrix", np.array([[0.04, 0.01], [0.02, 0.09]])),
+        ("a NaN entry", np.array([[0.04, np.nan], [np.nan, 0.09]])),
+        ("a zero-variance asset", np.array([[0.04, 0.0], [0.0, 0.0]])),
+    ):
+        expect_raises(
+            f"solve_erc rejects {label}",
+            ValueError,  # CovarianceError and ERCSolverError both subclass it
+            lambda m=matrix: solve_erc(m),
+        )
+
+
+def test_infeasible_is_not_reported_as_non_convergence() -> None:
+    """A sleeve at 1e-8 vol makes ERC infeasible, not hard -- and the two differ.
+
+    Equal risk with one sleeve a millionth as volatile as its peers demands
+    ~5.6e-08 of the book in the loudest sleeve, which is below ``MIN_WEIGHT``: no
+    point in the floor-constrained simplex is an equal-risk portfolio, so no
+    amount of solver effort will find one. Reporting that as ``converged=False``
+    would file a broken price series under "solver trouble", and those two have
+    to stay distinguishable -- the repo's rule, and the reason A's fix raises.
+
+    Note the boundary this pins: :func:`test_near_zero_vol_asset` runs a 1e-4 vol
+    sleeve through the *same* solver and expects an answer. Infeasibility starts
+    somewhere between them, and it is a data problem when it does.
+    """
+    print("infeasible vs merely difficult:")
+    if riskparity is None:
+        print("  skip src/riskparity.py is not built yet")
+        return
+
+    sigma = np.array([0.15, 0.12, 0.18, 1e-8])
+    correlation = np.eye(4)
+    correlation[0, 1] = correlation[1, 0] = -0.30
+    cov = np.outer(sigma, sigma) * correlation
+
+    try:
+        weights = solve_erc(cov)
+    except riskparity.ERCSolverError as exc:
+        check("an infeasible problem raises rather than returning weights", True)
+        message = str(exc)
+        check(
+            "the error names the near-zero-volatility sleeve, which is the cause",
+            "1.000e-08" in message or "asset 3" in message,
+        )
+        check(
+            "and says it is a data problem rather than a solver one",
+            "data problem" in message,
+        )
+        return
+
+    raise AssertionError(
+        f"FAILED: an infeasible ERC problem returned weights {weights} instead of raising"
+    )
+
+
+def test_non_psd_covariance_is_rejected() -> None:
+    """KNOWN BUG, Person A, ``src/riskparity.py`` -- **this check fails today.**
+
+    ``solve_erc`` does not raise on a covariance with a negative eigenvalue. It
+    returns weights::
+
+        solve_erc([[0.04, 0.10], [0.10, 0.09]])  ->  [0.6, 0.4]
+
+    That matrix implies a correlation of 1.67 and has a minimum eigenvalue of
+    -3.808e-02. No portfolio of those two assets exists, so the weights describe
+    nothing, and nothing in the call path says so.
+
+    Why it happens: ``covariance.validate_covariance`` checks square, finite and
+    symmetric and stops there -- the spectrum is ``nearest_psd``'s business, and
+    ``solve_erc`` never calls it. ``portfolio_volatility`` does guard against a
+    negative variance, but that only fires for weights that land in a negative
+    direction of the quadratic form, and the ERC iterate need not land in one.
+    This one does not.
+
+    Why it is a bug rather than a missing feature: ``solve_erc_with_status``
+    documents the opposite behaviour in its own docstring -- "this function will
+    not repair a non-PSD input, it will raise on one". Either the guard or the
+    sentence has to go, and per the repo's rules on surfacing failures it should
+    be the sentence that stays.
+
+    Severity: the live pipeline routes every covariance through
+    ``estimate_covariance`` / ``nearest_psd`` before it reaches the solver, so
+    only a caller bypassing ``src/covariance.py`` can reach this -- which is
+    exactly what a test, a notebook, or step 24's stress code does.
+
+    **Not fixed here on purpose.** ``src/riskparity.py`` is Person A's file and
+    the owner fixes it. The fix is a spectrum check in
+    ``solve_erc_with_status`` next to the existing zero-variance check; when it
+    lands, this test goes green on its own and the case can move up into
+    :func:`test_bad_input_raises`'s loop with the rest.
+    """
+    print("non-PSD covariance (KNOWN BUG -- expected to fail):")
+    if riskparity is None:
+        print("  skip src/riskparity.py is not built yet")
+        return
+
+    cov = np.array([[0.04, 0.10], [0.10, 0.09]])
+    smallest = float(np.linalg.eigvalsh(cov).min())
+    print(f"       min eigenvalue {smallest:.3e}, implied correlation "
+          f"{cov[0, 1] / np.sqrt(cov[0, 0] * cov[1, 1]):.2f}")
+
+    expect_raises(
+        "solve_erc rejects a non-PSD covariance instead of returning weights",
+        ValueError,
+        lambda: solve_erc(cov),
+    )
+
 
 if __name__ == "__main__":
     print(f"solver under test: {SOLVER_LABEL}\n")
@@ -729,10 +985,13 @@ if __name__ == "__main__":
     test_solver_output_is_a_valid_allocation()
     test_erc_equalises_risk()
     test_module_risk_contributions_agree()
+    test_naive_inv_vol_comparator()
+    test_solver_reports_its_status()
 
     test_oracle_agrees_with_solver()
     test_oracle_is_erc_by_construction()
     test_analytic_case()
+    test_non_convex_local_minimum_is_escaped()
 
     test_erc_is_not_inverse_vol()
     test_single_asset()
@@ -740,5 +999,12 @@ if __name__ == "__main__":
     test_near_singular()
     test_near_zero_vol_asset()
     test_bad_input_raises()
+    test_infeasible_is_not_reported_as_non_convergence()
+
+    # Last on purpose. It fails today -- a known bug in Person A's solver, see
+    # the function's docstring -- and the house-style runner stops at the first
+    # failure, so everything that does pass has already printed above it. The
+    # count below is only reached once A's fix lands.
+    test_non_psd_covariance_is_rejected()
 
     print(f"\n{_checks} checks passed  [{SOLVER_LABEL}]")
