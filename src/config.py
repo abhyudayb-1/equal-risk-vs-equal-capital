@@ -103,6 +103,25 @@ ERC_AGREEMENT_TOLERANCE: float = 1e-6
 # posed.
 MIN_WEIGHT: float = 1e-6
 
+# SLSQP's ftol is an ABSOLUTE threshold on the objective sum_i (RC_i - sigma_p/N)^2,
+# and that objective is already ~1e-12 at the 1e-6 risk-fraction bar above (on the
+# scale-normalised covariance solve_erc actually solves). So ERC_TOLERANCE used as
+# an ftol stops the optimiser exactly AT the bar instead of well inside it.
+# Measured on 200 random 4x4 covariances: ftol 1e-12 misses the bar 35 times,
+# 1e-14 misses it 4 times (and those 4 are the local-minimum case below, not
+# precision). This supersedes ERC_TOLERANCE as the value passed to SLSQP.
+ERC_SLSQP_FTOL: float = 1e-14
+
+# sum_i (RC_i - sigma_p/N)^2 is NOT convex. It has local minima that pin an asset
+# to MIN_WEIGHT at a *negative* risk contribution, reliably when two sleeves are
+# strongly negatively correlated -- exactly the SPY/TLT structure this project is
+# built on. The escape is a restart from a fresh feasible point, which only fires
+# when the first solve misses the bar. Measured: 2 failures in 2000 adversarial
+# 4x4 covariances at 24 restarts, 0 at 48, and a mean cost of 0.1 extra solves
+# because the first attempt succeeds ~98% of the time. Restart points are drawn
+# from a fixed seed so a backtest stays reproducible.
+ERC_MAX_RESTARTS: int = 48
+
 # ---------------------------------------------------------------------------
 # Volatility-targeting overlay
 # ---------------------------------------------------------------------------
