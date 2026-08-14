@@ -102,8 +102,9 @@ rather than in a test.
 `test_non_psd_covariance_is_rejected`, asserts the behaviour `solve_erc_with_status`'s docstring
 promises — raising on a covariance with a negative eigenvalue — which the code does not do; it
 returns weights for a matrix implying a correlation of 1.67. It is Person A's file, so it is
-reported rather than patched, and the check runs last so the 60 passing checks print above it.
-Do not silence it to get a green suite; it goes green when the fix lands.
+reported rather than patched, and the check runs last so every passing check prints above it.
+Do not silence it to get a green suite; it goes green when the fix lands, and the `N checks
+passed` line that failure currently suppresses is how you will know.
 
 Tests are **standalone scripts with no framework** — no pytest, no test runner. Each file defines
 `test_*()` functions plus a `check(label, condition)` helper, and a `__main__` block calls them in

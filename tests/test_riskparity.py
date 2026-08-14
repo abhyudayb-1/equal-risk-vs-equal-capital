@@ -35,10 +35,10 @@ covariance with a negative eigenvalue, which its own docstring promises and its
 code does not do -- it returns weights for a matrix implying a correlation of
 1.67. That is a bug in ``src/riskparity.py``, which is Person A's file, so it is
 reported here rather than patched here (see that test's docstring for the cause,
-the severity and the one-line fix). It runs last so the 60 checks that pass are
-all printed before it. **Do not silence it to make the suite green** -- deleting
-the check loses the finding, and the count line below it is the signal that A's
-fix has landed.
+the severity and the one-line fix). It runs last, so every check that passes is
+printed before it. **Do not silence it to make the suite green** -- deleting the
+check loses the finding, and the ``N checks passed`` line, which this failure
+currently prevents, is the signal that A's fix has landed.
 
 **On what is under test.** ``src/riskparity.py`` is Person A's (steps 16-17). If
 it is importable, it is what these checks run against and the fallback below is
@@ -158,10 +158,17 @@ def _validate_covariance(cov: np.ndarray) -> np.ndarray:
     if (np.diag(cov) <= 0.0).any():
         raise ValueError("every asset must have strictly positive variance")
     smallest = float(np.linalg.eigvalsh(cov).min())
-    # Scale the PSD test by the size of the matrix: an absolute -1e-10 is noise
-    # on an annualized equity covariance and a real negative direction on a
-    # covariance of basis-point returns.
-    if smallest < -1e-10 * max(1.0, float(np.abs(np.diag(cov)).max())):
+    # The PSD test is *relative* to the size of the matrix, because a fixed
+    # -1e-10 means different things at different scales: it is rounding noise on
+    # an annualized equity covariance (diagonal ~1e-2) and a genuine negative
+    # direction on the same covariance expressed in daily returns (~1e-4) or
+    # basis points (~1e-8). An earlier version wrote this as
+    # ``max(1.0, max|diag|)``, which pinned the bar at an absolute 1e-10 for
+    # every covariance this project ever sees, since all of them are below 1.
+    # The margin is comfortable either way -- an exactly rank-1 rho=1 matrix
+    # measures a min eigenvalue of about -1.6e-16 times its diagonal, six orders
+    # inside this bar -- but the comment and the code should agree.
+    if smallest < -1e-10 * float(np.abs(np.diag(cov)).max()):
         raise ValueError(
             f"covariance is not positive semi-definite (min eigenvalue {smallest:.3e})"
         )
@@ -647,7 +654,7 @@ def test_oracle_agrees_with_solver() -> None:
         f"agree on {N_RANDOM_COVARIANCES} random covariances to "
         f"{AGREEMENT_TOLERANCE:g} (worst {worst_weight:.2e})",
         worst_weight < AGREEMENT_TOLERANCE,
-        )
+    )
     if worst_case is not None and worst_weight > AGREEMENT_TOLERANCE / 100:
         # Not a failure, but worth seeing: a solver that is merely inside
         # tolerance on well-conditioned 4x4 input is not one to trust in 2020.
@@ -925,9 +932,14 @@ def test_infeasible_is_not_reported_as_non_convergence() -> None:
     correlation[0, 1] = correlation[1, 0] = -0.30
     cov = np.outer(sigma, sigma) * correlation
 
+    # getattr rather than a direct attribute: if A ever renames the exception,
+    # this test should fail on the assertion below, not blow up with an
+    # AttributeError that says nothing about the behaviour under test.
+    solver_error = getattr(riskparity, "ERCSolverError", ValueError)
+
     try:
         weights = solve_erc(cov)
-    except riskparity.ERCSolverError as exc:
+    except solver_error as exc:
         check("an infeasible problem raises rather than returning weights", True)
         message = str(exc)
         check(
