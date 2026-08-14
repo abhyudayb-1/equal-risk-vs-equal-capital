@@ -23,26 +23,48 @@ starting work; the step text is the spec.
 
 ## Where the build is
 
-**Check `git log --oneline` and `gh pr list` before trusting this section — it goes stale, they do
-not.** As of the last edit, Phase 0 and steps 8–11 and 13 were on `main`, with step 12 (`max_sharpe`)
-still in an open PR.
+**Check `git log --oneline` before trusting this section — it goes stale, the log does not.**
+Commit subjects are `Step NN [A|B]: ...`, so the log reads as a build ledger. As of the last edit,
+**steps 1–17 are on `main`**: Phase 0, the whole data layer, all four benchmarks, the crisis-window
+slices, and Phase 2's covariance and ERC solver.
 
-Next up: **steps 14–17** for Person A — EWMA covariance, shrinkage and PSD repair, risk
-contributions, and the SLSQP ERC solver — then **18–20** for Person B.
+Next up: **steps 18–20** for Person B (the RC identity, the independent oracle, the degenerate
+cases) and **21–23** for Person A (`overlay.py` vol targeting and financing, then `backtest.py`).
+Those two tracks are parallel and neither blocks the other.
 
 Step 19 is the highest-value test in the project: Person B's independent convex log-barrier oracle,
 asserting Person A's SLSQP solver to `ERC_AGREEMENT_TOLERANCE`. It must be written **from the
 maths, not by reading step 17** — two independent derivations are the entire point, and peeking
 collapses them into one.
 
+Two things step 17 learned that step 19 needs, and neither requires reading the solver:
+
+- The least-squares ERC objective `Σ(RC_i − σ_p/N)²` is **not convex**. It has local minima that pin
+  an asset at `MIN_WEIGHT` with a *negative* risk contribution, and they show up whenever two
+  sleeves are strongly negatively correlated — i.e. exactly the SPY/TLT pair. SLSQP reports
+  `"Optimization terminated successfully"` on every one of them, so the optimiser's own status is
+  not evidence of anything. `solve_erc_with_status` escapes them by restarting.
+- That escape does **not** reach zero. About 0.05% of adversarial random 4×4 covariances (|ρ| up to
+  0.95) still miss the bar; on covariances drawn around the real four-sleeve structure it is 0 in
+  2000. Over 50 random draws a per-draw rate of 0.05% is a ~2.5% flaky test, so **assert agreement
+  where both solvers converge**, rather than assuming every draw does. Numbers and the
+  diminishing-returns curve are in the `ERC_MAX_RESTARTS` comment in `config.py`.
+
 To resume in a new session: read `TASKS.md`, find the lowest-numbered unfinished step for your
 owner, and build it. Nothing else needs reconstructing — the contract in `src/types.py` and the
 fixtures make each step independently buildable.
 
-Two stand-ins exist that Phase 5 must replace, both in `src/benchmarks.py` and both deliberately
-injectable rather than hard-wired: `_ewma_cov` (superseded by step 14's `src/covariance.py`) and
-`_nearest_psd` (superseded by step 15). Pass the real estimator via `cov_estimator=` at the call
-site; do not fork a second copy.
+Two stand-ins in `src/benchmarks.py` are now superseded and must be retired in Phase 5:
+
+- `_ewma_cov` → `src.covariance.estimate_covariance`. Injectable rather than hard-wired: pass the
+  real estimator via `cov_estimator=` at the call site — all four benchmarks accept it — and do not
+  fork a second copy.
+- `_nearest_psd` → `src.covariance.nearest_psd`. Note these two are **not** equivalent, so swapping
+  is a behaviour change and not a rename. `_nearest_psd` clips eigenvalues of the covariance
+  directly, which shifts the diagonal and therefore quietly alters asset volatilities;
+  `covariance.nearest_psd` repairs in correlation space and leaves them intact. The real one is
+  what `max_sharpe` should be judged on, since a tangency portfolio is sensitive to exactly those
+  volatilities.
 
 ## Setup and commands
 
@@ -54,14 +76,24 @@ python3 -m venv .venv
 ```
 
 ```bash
-.venv/bin/python tests/test_contract.py      # Phase 0 gate: contract + metrics port + fixtures
-.venv/bin/python tests/test_data.py          # data layer: windowing, calendar, look-ahead guard
-.venv/bin/python tests/test_benchmarks.py    # equal weight / 60-40 / max Sharpe
-.venv/bin/python tests/fixtures.py           # print a synthetic BacktestResult summary
-.venv/bin/python run_backtest.py             # full run -> reports/   (exists from step 30)
+.venv/bin/python tests/test_contract.py       # Phase 0 gate: contract + metrics port + fixtures
+.venv/bin/python tests/test_data.py           # data layer: windowing, calendar, look-ahead guard
+.venv/bin/python tests/test_benchmarks.py     # equal weight / 60-40 / max Sharpe
+.venv/bin/python tests/test_crisis_slices.py  # crisis-window slicing and summary metrics
+.venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
+.venv/bin/python run_backtest.py              # full run -> reports/   (exists from step 30)
 ```
 
-Run all three suites after any change to `src/`. Only `test_data.py` and `test_contract.py` are
+Engine modules also carry a `__main__` self-check, which is where Person A's steps assert their
+"done when" until Person B's matching suite exists. Run them the same way:
+
+```bash
+.venv/bin/python -m src.covariance    # halflife -> inf == sample cov; PSD repair on indefinite input
+.venv/bin/python -m src.riskparity    # analytic gradient vs central differences; ERC on 500 randoms
+.venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
+```
+
+Run every suite after any change to `src/`. Only `test_data.py` and `test_contract.py` are
 network-free; the suites must keep passing offline, so live-data checks belong in the Phase 5 run
 rather than in a test.
 
@@ -72,8 +104,10 @@ by calling its function in the `__main__` block. New test files must match this 
 the `sys.path.insert(0, ...)` preamble that makes `from src import ...` work when run from the
 repo root.
 
-PLAN.md and TASKS.md quote PowerShell paths (`.\.venv\Scripts\python.exe`) because Person A is on
-Windows. On this machine use `.venv/bin/python`.
+This file is checked in and read on both machines, so "this machine" would be ambiguous here: the
+interpreter path depends on the OS, not on whose repo it is. **Windows** (Person A, and what PLAN.md
+and TASKS.md quote): `.\.venv\Scripts\python.exe`. **macOS/Linux** (Person B): `.venv/bin/python`.
+The commands above are written in the POSIX form; substitute as needed.
 
 ## Architecture
 
@@ -85,8 +119,22 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
                                                           metrics.py / benchmarks.py / stress.py / viz.py
 ```
 
-`src/__init__.py` carries the authoritative stage list. Modules past `backtest.py` in that list do
-not exist yet — see TASKS.md for which step creates each.
+`src/__init__.py` carries the authoritative stage list. Everything through `riskparity.py` exists;
+`overlay.py`, `backtest.py`, `stress.py` and `viz.py` do not yet — see TASKS.md for which step
+creates each.
+
+Two notes on the Phase 2 modules, because both encode a decision that looks like a detail:
+
+- `covariance.py` repairs a non-PSD matrix **in correlation space** — factor out the volatilities,
+  clip the correlation matrix's eigenvalues, renormalise its diagonal to 1, multiply the
+  volatilities back. The renormalisation is a congruence transform by a positive diagonal, so unlike
+  overwriting the diagonal in place it cannot reintroduce a negative eigenvalue. Volatilities come
+  back unchanged and the correlation structure absorbs the adjustment, which is the right place to
+  put it: the variances were the well-estimated part.
+- `riskparity.py` keeps `optimiser_succeeded`, `converged` and `restarts_used` apart on
+  `ERCSolution`, and they disagree in both directions. It also **raises** rather than returning
+  `converged=False` when no equal-risk portfolio exists above the weight floor at all — a sleeve
+  whose volatility is a millionth of its peers' is a broken price series, not a solver event.
 
 ### The contract is the load-bearing design decision
 
@@ -138,6 +186,12 @@ Notable policy encoded there: `DATA_START_DATE = 2006-02-03` (DBC's inception �
 2005 and the data cannot deliver it; state this rather than back-filling a proxy), `TARGET_VOL`,
 `LEVERAGE_CAP = (0.5, 3.0)`, the three `CRISIS_WINDOWS`, and the EWMA halflives (vol halflife is
 shorter than covariance halflife on purpose — the overlay should react faster than the weights).
+
+One trap in the ERC block, since the names look interchangeable and are not. `ERC_TOLERANCE` is
+**not** what SLSQP receives; `ERC_SLSQP_FTOL` is. `ftol` is an *absolute* threshold on an objective
+that is already ~1e-12 at the 1e-6 risk-fraction bar, so passing `ERC_TOLERANCE = 1e-12` stops the
+optimiser exactly *at* the bar — measured, it missed on 35 of 200 random 4×4 covariances. Every
+constant in that block carries the measurement that set it; read the comments before changing one.
 
 ### Data policy
 
