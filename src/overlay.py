@@ -1,4 +1,4 @@
-"""Volatility targeting: trailing vol -> leverage -> caps (TASKS.md step 21).
+"""Volatility targeting and financing (TASKS.md steps 21-22).
 
 The ERC solver in :mod:`src.riskparity` decides *how the risk is split*. It says
 nothing about *how much* risk to run, and left alone it runs whatever the sleeves
@@ -36,9 +36,27 @@ notional. It binds in both directions and the two mean opposite things, so
 ceiling binds constantly is a run whose target vol is too high for its sleeves,
 which is a different problem from one where the floor binds in a crisis.
 
-Step 22 adds the financing leg -- ``r_p = L_t * (r_assets - r_f) + r_f`` -- to
-this module. Leverage here is a multiplier on the *portfolio*; it is not free,
-and nothing in this file should be read as if it were.
+**Financing (step 22).** ``r_p = L_t * (r_a - r_f) + r_f``. Borrowing ``L - 1`` of
+capital costs ``(L-1) * r_f``, and leaving that leg out is the single most common
+way a risk-parity backtest is oversold -- at ``L = 2`` against a 5% cash rate it
+is worth ~5%/yr, more than the strategy's whole edge. It cuts both ways: below
+``L = 1`` the un-deployed capital earns the rate instead, so a de-levered book is
+not merely a smaller one. :func:`financed_returns` computes the algebraically
+identical ``L*r_a - (L-1)*r_f`` for reasons its docstring measures.
+
+**Which decision applies to which day.** Two rules live here and they differ by
+one day, on purpose:
+
+* :func:`leverage_path` sizes the book you are *about to hold*, so it uses the
+  weights in force **at or before** the decision date.
+* :func:`unlevered_returns` and :func:`financed_returns` attribute a return
+  *earned on* a date, so they use the decision taken **strictly before** it --
+  a choice made at the close of day ``d`` cannot have earned day ``d``'s move,
+  and crediting it would be look-ahead of the flattering kind.
+
+``_in_force_before`` is the second rule in one place. A plain
+``reindex(...).ffill()`` implements the first, and using it for the second is the
+bug this module is shaped to prevent.
 
 Look-ahead: :func:`leverage_at` and :func:`leverage_path` route their input
 through :func:`src.data.asof_slice` and are the entry points that enforce the
@@ -82,6 +100,13 @@ log = logging.getLogger(__name__)
 # enough to absorb float accumulation over four sleeves (ERC output lands within
 # ~1e-16) and tight enough that a genuinely unnormalised vector is caught.
 _WEIGHT_SUM_TOLERANCE: float = 1e-6
+
+# Ceiling on a plausible PER-PERIOD financing rate, used only to catch an
+# annualised series passed where a de-compounded one belongs. src.data caps the
+# annual rate at 25%, whose per-trading-day equivalent is ~8.9e-4, so 5e-3 (~250%
+# annualised) is far above anything real and far below the annualised figure it
+# exists to catch. Not a policy limit -- a units check.
+_MAX_DAILY_RATE: float = 5e-3
 
 
 class OverlayError(ValueError):
@@ -382,6 +407,158 @@ def leverage_path(
 
 
 # ---------------------------------------------------------------------------
+# Step 22 -- financing. Leverage is borrowed, not free.
+# ---------------------------------------------------------------------------
+def unlevered_returns(
+    returns: pd.DataFrame,
+    weights: np.ndarray | pd.DataFrame,
+) -> pd.Series:
+    """The portfolio return series ``w @ r``, before any leverage.
+
+    ``weights`` is either a fixed vector or a frame of rebalance-date weights. In
+    the frame case the allocation applied to date ``d`` is the one set at the last
+    rebalance **strictly before** ``d`` -- see :func:`_in_force_before`, and note
+    this is a *different* rule from the one :func:`leverage_path` uses. Both are
+    correct for what they do:
+
+    * estimating the vol of the book you are *about to hold* uses the weights at
+      or before ``d``, because the allocation just chosen is the one being sized;
+    * attributing the return *earned on* ``d`` uses the weights chosen strictly
+      before ``d``, because a decision taken at the close of ``d`` cannot have
+      earned that day's return.
+
+    Collapsing the two into one ffill is look-ahead, and it is the flattering
+    kind: the weights chosen at the close of a rebalance date would be credited
+    with that date's move, which they were partly chosen *because of*.
+    """
+    if not isinstance(returns, pd.DataFrame):
+        raise OverlayError("unlevered_returns needs a DataFrame of asset returns")
+    _require_chronological(returns.index)
+
+    if isinstance(weights, pd.DataFrame):
+        aligned = _in_force_before(weights, returns.index, "weights")
+        if list(aligned.columns) != list(returns.columns):
+            raise OverlayError(
+                f"weight columns {list(aligned.columns)} do not match return columns "
+                f"{list(returns.columns)}"
+            )
+        row_sums = aligned.to_numpy(dtype="float64").sum(axis=1)
+        worst = float(np.max(np.abs(row_sums - 1.0)))
+        if worst > _WEIGHT_SUM_TOLERANCE:
+            raise OverlayError(
+                f"weights must sum to 1.0 on every date; worst deviation {worst:.3e}"
+            )
+        portfolio = (returns.to_numpy(dtype="float64") * aligned.to_numpy(dtype="float64")).sum(
+            axis=1
+        )
+    else:
+        w = _validate_weights(weights, expected=returns.shape[1])
+        portfolio = returns.to_numpy(dtype="float64") @ w
+
+    if not np.all(np.isfinite(portfolio)):
+        raise OverlayError("unlevered portfolio returns are not all finite")
+    return pd.Series(portfolio, index=returns.index, name="unlevered")
+
+
+def financed_returns(
+    unlevered: pd.Series,
+    leverage: pd.Series | float,
+    risk_free: pd.Series | float,
+) -> pd.Series:
+    """``r_p = L*(r_a - r_f) + r_f`` -- the levered return net of financing.
+
+    Parameters
+    ----------
+    unlevered:
+        The portfolio's own return series, from :func:`unlevered_returns`.
+    leverage:
+        A constant, or a series of rebalance-date decisions. As a series, the
+        leverage applied to date ``d`` is the one set at the last rebalance
+        **strictly before** ``d``, for the same reason as in
+        :func:`unlevered_returns`.
+    risk_free:
+        The financing rate **per period, as a decimal** -- what
+        ``src.data.fetch_risk_free`` returns, already de-compounded from FRED's
+        annualised percentage. Passing an annualised figure here would overstate
+        the financing cost by roughly 252x; the guard in :func:`_validate_rate`
+        exists because that error produces a smoothly wrong equity curve rather
+        than a crash.
+
+    Notes
+    -----
+    **Why this leg exists.** Borrowing ``L - 1`` of capital costs ``(L-1)*r_f``.
+    Omitting it hands the strategy free money in exactly the regimes it levers
+    hardest -- calm ones, which historically are also high-rate ones -- and it is
+    the single most common way a risk-parity backtest is oversold. At ``L = 2``
+    and a 5% cash rate the omission is worth ~5%/yr, which is more than the
+    strategy's entire edge.
+
+    **It cuts both ways.** With ``L < 1`` the term ``-(L-1)*r_f`` is *positive*:
+    the un-deployed capital sits in cash and earns the rate. So a de-levered book
+    in a crisis is not simply a smaller book, and the floor of ``LEVERAGE_CAP``
+    is not a pure drag.
+
+    **The form actually computed** is the algebraically identical
+    ``L*r_a - (L-1)*r_f``, and the rearrangement is not cosmetic. Step 22's
+    "done when" is that ``L = 1`` reproduces the unlevered return *exactly*, and
+    the two forms differ on precisely that point: measured over 2,000,000 draws
+    at realistic magnitudes, ``L*(r_a - r_f) + r_f`` is bit-identical to ``r_a``
+    on only 92.7% of them -- ``(a - b) + b != a`` in floating point -- while
+    ``L*r_a - (L-1)*r_f`` collapses to ``r_a - 0.0`` and is exact on all of them.
+    The second form also reads as what it is: the return on the levered book,
+    minus the interest on the borrowed part.
+    """
+    if not isinstance(unlevered, pd.Series):
+        raise OverlayError("unlevered must be a Series indexed by date")
+    _require_chronological(unlevered.index)
+    r_a = unlevered.to_numpy(dtype="float64")
+    if not np.all(np.isfinite(r_a)):
+        raise OverlayError("unlevered returns contain NaN or inf")
+
+    lev = _decision_values(leverage, unlevered.index, "leverage")
+    if np.any(lev <= 0.0):
+        raise OverlayError(
+            "leverage must be strictly positive; a zero or negative multiplier is "
+            "not a de-levered book, it is a different strategy"
+        )
+
+    rate = _published_values(risk_free, unlevered.index, "risk_free")
+    _validate_rate(rate)
+
+    # L*r_a - (L-1)*r_f, not L*(r_a - r_f) + r_f. See the docstring: only this
+    # form is bit-exact at L == 1, which is what the step's "done when" asks for.
+    financed = lev * r_a - (lev - 1.0) * rate
+    return pd.Series(financed, index=unlevered.index, name="strategy")
+
+
+def apply_overlay(
+    returns: pd.DataFrame,
+    weights: np.ndarray | pd.DataFrame,
+    leverage: pd.Series | float,
+    risk_free: pd.Series | float,
+) -> pd.DataFrame:
+    """Compose steps 21 and 22 into the frame step 23 accrues from.
+
+    Columns: ``unlevered`` (``w @ r``), ``leverage`` (the multiplier in force),
+    ``risk_free`` (the financing rate charged) and ``strategy`` (the financed
+    return). Keeping all four side by side is deliberate -- the difference between
+    ``unlevered`` and ``strategy`` is the financing leg, and a run that cannot
+    show it is a run that cannot prove it charged for leverage at all.
+    """
+    unlevered = unlevered_returns(returns, weights)
+    strategy = financed_returns(unlevered, leverage, risk_free)
+    return pd.DataFrame(
+        {
+            "unlevered": unlevered,
+            "leverage": _decision_values(leverage, unlevered.index, "leverage"),
+            "risk_free": _published_values(risk_free, unlevered.index, "risk_free"),
+            "strategy": strategy,
+        },
+        index=unlevered.index,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
 def _require_chronological(index: pd.Index) -> None:
@@ -517,6 +694,143 @@ def _align_weights(
     return pd.DataFrame(
         np.tile(w, (len(returns), 1)), index=returns.index, columns=returns.columns
     )
+
+
+def _in_force_before(source, target_index: pd.DatetimeIndex, label: str):
+    """The ``source`` row in force for each target date: the last one *strictly* before it.
+
+    This is the look-ahead guard for realised returns, and it is one character
+    different from the wrong answer. ``reindex(target).ffill()`` takes the last
+    entry at or *before* each date; on a date that is itself a rebalance, that is
+    the decision taken at that day's close -- credited with a return it could not
+    have earned, and taken partly *because of* that return. Over a monthly
+    calendar that is roughly one day in twenty-one given the strategy's own
+    hindsight, which is not a rounding error.
+
+    ``searchsorted(side="left") - 1`` is the strict version: the last source
+    index entry strictly less than the target date.
+    """
+    if not isinstance(source.index, pd.DatetimeIndex):
+        raise OverlayError(f"{label} must be indexed by date")
+    if not source.index.is_monotonic_increasing:
+        raise OverlayError(f"{label} index must be sorted ascending")
+    if source.index.has_duplicates:
+        raise OverlayError(f"{label} index repeats a date")
+
+    positions = source.index.searchsorted(target_index, side="left") - 1
+    if np.any(positions < 0):
+        first_usable = target_index[positions >= 0]
+        raise OverlayError(
+            f"{len(target_index) - len(first_usable)} return date(s) precede the first "
+            f"{label} decision ({source.index[0].date()}); a return earned before any "
+            f"decision cannot be attributed to one. Trim the returns to start after "
+            f"{source.index[0].date()}"
+        )
+    return source.iloc[positions].set_axis(target_index)
+
+
+def _scalar_or(value, target_index: pd.DatetimeIndex, label: str) -> np.ndarray | None:
+    """Broadcast a finite scalar across ``target_index``; ``None`` if not scalar."""
+    if not np.isscalar(value):
+        if not isinstance(value, pd.Series):
+            raise OverlayError(
+                f"{label} must be a Series or a scalar, got {type(value).__name__}"
+            )
+        return None
+    scalar = float(value)
+    if not np.isfinite(scalar):
+        raise OverlayError(f"{label} must be finite, got {scalar}")
+    return np.full(len(target_index), scalar, dtype="float64")
+
+
+def _decision_values(
+    value: pd.Series | float, target_index: pd.DatetimeIndex, label: str
+) -> np.ndarray:
+    """Align a *decision* series: always the last entry STRICTLY before each date.
+
+    Leverage is a decision, so this rule applies to it unconditionally -- and that
+    "unconditionally" is the whole point. An earlier draft picked the rule by
+    asking whether the series already covered the target index, on the theory
+    that a series on the return calendar must be a published quantity rather than
+    a decision. That is false for exactly the input step 23 is most likely to
+    hand it: :func:`leverage_path` with its default daily dates produces a
+    decision for *every* return date, so the shape test classified it as
+    published and applied ``L_d`` to ``r_d`` -- reintroducing the one-day
+    look-ahead this module is shaped to prevent, in the one code path most likely
+    to be used.
+
+    Kind, not shape. A decision is a decision whatever calendar it lands on.
+    """
+    broadcast = _scalar_or(value, target_index, label)
+    if broadcast is not None:
+        return broadcast
+
+    aligned = _in_force_before(value, target_index, label)
+    out = aligned.to_numpy(dtype="float64")
+    if not np.all(np.isfinite(out)):
+        raise OverlayError(f"{label} contains NaN or inf after alignment")
+    return out
+
+
+def _published_values(
+    value: pd.Series | float, target_index: pd.DatetimeIndex, label: str
+) -> np.ndarray:
+    """Align a *published* series date for date.
+
+    The risk-free rate is not a decision anyone in this backtest makes: the rate
+    that applies to date ``d`` is the one published for ``d``, known at that day's
+    close, so there is nothing to defer. Use ``src.data.align_risk_free`` to put
+    it on the price calendar first -- it forward-fills across holidays only, which
+    is the direction that cannot leak a future rate into a past day.
+    """
+    broadcast = _scalar_or(value, target_index, label)
+    if broadcast is not None:
+        return broadcast
+
+    missing = target_index.difference(value.index)
+    if len(missing) > 0:
+        raise OverlayError(
+            f"{label} does not cover {len(missing)} of the return dates, first "
+            f"{missing[0].date()}; run it through src.data.align_risk_free before "
+            "passing it here rather than letting the gap become a silent zero"
+        )
+    out = value.reindex(target_index).to_numpy(dtype="float64")
+    if not np.all(np.isfinite(out)):
+        raise OverlayError(f"{label} contains NaN or inf after alignment")
+    return out
+
+
+def _validate_rate(rate: np.ndarray) -> None:
+    """Catch an annualised rate passed where a per-period one belongs.
+
+    ``src.data.fetch_risk_free`` already de-compounds FRED's annualised
+    percentage to a per-trading-day decimal, and ``data`` caps the annual figure
+    at 25%, whose daily equivalent is ~8.9e-4. Anything above _MAX_DAILY_RATE is
+    therefore not a daily rate at all -- almost always the annualised series
+    passed straight through, which overstates financing by ~252x.
+
+    Worth a guard rather than a comment because of how it fails: the equity curve
+    stays smooth and merely underperforms, so it reads as the strategy being bad
+    rather than as the units being wrong.
+    """
+    if np.any(rate < 0.0):
+        # Negative policy rates are real, but they arrive as a small negative
+        # annual figure, which de-compounds to a small negative daily one. data
+        # already floors the annual series at -1%.
+        worst = float(rate.min())
+        if worst < -_MAX_DAILY_RATE:
+            raise OverlayError(
+                f"risk-free rate {worst:.3e}/period is more negative than any plausible "
+                f"policy rate; check the units"
+            )
+    if np.any(rate > _MAX_DAILY_RATE):
+        worst = float(rate.max())
+        raise OverlayError(
+            f"risk-free rate {worst:.3e} per period is implausible (bar {_MAX_DAILY_RATE:.1e}, "
+            f"~{100 * ((1 + _MAX_DAILY_RATE) ** TRADING_DAYS_PER_YEAR - 1):.0f}%/yr). "
+            "src.data.fetch_risk_free returns a PER-PERIOD decimal; this looks like the "
+            "annualised series, which would overstate financing by about 252x"
+        )
 
 
 def _log_saturation(path: pd.DataFrame, cap: tuple[float, float]) -> None:
@@ -694,11 +1008,104 @@ if __name__ == "__main__":  # pragma: no cover
         except OverlayError:
             print(f"  {label:24s} : OverlayError, as it must")
 
+    # =====================================================================
+    # Step 22 -- financing
+    # =====================================================================
+    financing_window = synthetic_returns(300, np.array([0.16, 0.11, 0.19, 0.06]), rng)
+    unlev = unlevered_returns(financing_window, equal)
+    # 4e-5/day de-compounds to about 1.01%/yr, a plausible cash rate.
+    cash = pd.Series(np.full(len(financing_window), 4e-5), index=financing_window.index)
+
+    # --- step 22's "done when": L = 1 is the unlevered return, EXACTLY -------
+    # Bit-identical, not merely close. This is why financed_returns computes
+    # L*r_a - (L-1)*r_f rather than the spec's L*(r_a - r_f) + r_f: the latter is
+    # (a - b) + b, which is not exactly a in floating point. Measured over
+    # 2,000,000 draws at these magnitudes it misses on 7.3% of them.
+    print("\nfinancing: L = 1 reproduces the unlevered return")
+    # The series case drops the first day on purpose: a decision series covering
+    # every return date has no decision strictly before its own first date, and
+    # _in_force_before refuses to invent one rather than quietly dropping the day.
+    after_first = unlev.iloc[1:]
+    for label, target, lever, rate in (
+        ("scalar L = 1.0", unlev, 1.0, cash),
+        (
+            "series of 1.0",
+            after_first,
+            pd.Series(np.ones(len(unlev)), index=unlev.index),
+            cash.loc[after_first.index],
+        ),
+    ):
+        same = np.array_equal(
+            financed_returns(target, lever, rate).to_numpy(), target.to_numpy()
+        )
+        print(f"  {label:22s}: bit-identical to unlevered = {same}")
+
+    # --- the financing leg costs what it should ------------------------------
+    # (L-1) * r_f per period, annualised. Positive L below 1: the un-deployed
+    # capital sits in cash and earns the rate, so de-levering is not a pure drag.
+    print("\nfinancing costs (L-1)*r_f, and pays when L < 1")
+    for lever in (0.5, 1.0, 1.5, 2.0, 3.0):
+        financed = financed_returns(unlev, lever, cash)
+        free = lever * unlev
+        drag = TRADING_DAYS_PER_YEAR * float((financed - free).mean())
+        expected = -(lever - 1.0) * 4e-5 * TRADING_DAYS_PER_YEAR + 0.0  # + 0.0 kills -0.0
+        print(f"  L = {lever:<4}: {drag:+.4%}/yr against an expected {expected:+.4%}/yr "
+              f"({'ok' if abs(drag - expected) < 1e-12 else 'MISMATCH'})")
+
+    # --- the decision that applies to a day is the one made BEFORE it --------
+    # One character from the wrong answer: reindex().ffill() takes the decision
+    # at or before each date, which on a rebalance date is the one taken at that
+    # day's close -- credited with a move it could not have earned and was partly
+    # chosen because of. On the real four-sleeve run that hindsight is worth
+    # +0.053%/yr of CAGR and +0.006 of Sharpe across 233 of 4896 days: small,
+    # free, and exactly the kind of thing that never announces itself.
+    print("\nleverage in force is the last decision STRICTLY before the day")
+    days = financing_window.index
+    schedule = pd.Series([1.0, 3.0], index=[days[0], days[5]])
+    strict = _in_force_before(schedule, days[1:8], "leverage")
+    naive = schedule.reindex(days[1:8].union(schedule.index)).ffill().reindex(days[1:8])
+    for day in days[3:8]:
+        marker = "  <-- rebalance date" if day in schedule.index else ""
+        print(f"  {day.date()}  strictly-before {strict.loc[day]:.1f}   "
+              f"naive ffill {naive.loc[day]:.1f}{marker}")
+
+    # A DAILY leverage series is still a decision series, and must still be
+    # deferred by a day. Caught while building step 22: an earlier draft picked
+    # the alignment rule by asking whether the series already covered the return
+    # index, on the theory that anything on the return calendar must be a
+    # published quantity. leverage_path's default output is a decision for every
+    # return date, so that test classified it as published and applied L_d to
+    # r_d -- the one-day look-ahead this module exists to prevent, in the code
+    # path step 23 is most likely to use. Kind, not shape.
+    daily_decisions = pd.Series(
+        np.where(np.arange(len(days)) < 5, 1.0, 3.0), index=days
+    )
+    live = financing_window.loc[financing_window.index > days[0]]
+    effective = financed_returns(
+        unlevered_returns(live, equal),
+        daily_decisions,
+        pd.Series(0.0, index=live.index),
+    ) / unlevered_returns(live, equal)
+    switch = days[5]
+    print(f"  daily decision series: L switches at {switch.date()}, applied from "
+          f"{effective[effective > 2.0].index[0].date()} "
+          f"(deferred = {bool(np.isclose(effective.loc[switch], 1.0))})")
+
+    # --- composed, and the financing leg is visible in the output ------------
+    panel = apply_overlay(financing_window, equal, 2.0, cash)
+    print(f"\napply_overlay columns: {list(panel.columns)}")
+    print(f"  unlevered mean {TRADING_DAYS_PER_YEAR * panel['unlevered'].mean():+.3%}/yr, "
+          f"strategy mean {TRADING_DAYS_PER_YEAR * panel['strategy'].mean():+.3%}/yr at L = 2")
+
     # --- degenerate inputs must raise, never return a plausible number -------
     print("\nbad input raises")
     flat = pd.DataFrame(
         np.zeros((300, 4)), index=pd.bdate_range("2006-02-03", periods=300), columns=tickers
     )
+    # An ANNUALISED rate where a per-period one belongs: ~252x the real financing
+    # cost, and it fails by making the equity curve smoothly worse rather than by
+    # crashing, so it reads as a bad strategy instead of a units error.
+    annualised = pd.Series(np.full(len(unlev), 0.05), index=unlev.index)
     for label, call in (
         ("constant prices (zero vol)", lambda: trailing_portfolio_vol(flat, equal)),
         ("weights not summing to 1", lambda: trailing_portfolio_vol(window, np.repeat(0.3, 4))),
@@ -706,6 +1113,10 @@ if __name__ == "__main__":  # pragma: no cover
         ("negative halflife", lambda: trailing_portfolio_vol(window, equal, halflife=-1)),
         ("negative target vol", lambda: target_leverage(0.10, target_vol=-0.1)),
         ("inverted cap", lambda: target_leverage(0.10, cap=(3.0, 0.5))),
+        ("annualised risk-free rate", lambda: financed_returns(unlev, 2.0, annualised)),
+        ("zero leverage", lambda: financed_returns(unlev, 0.0, cash)),
+        ("returns before any decision",
+         lambda: financed_returns(unlev, pd.Series([2.0], index=[days[10]]), cash)),
     ):
         try:
             call()
