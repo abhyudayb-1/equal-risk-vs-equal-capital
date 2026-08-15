@@ -52,6 +52,7 @@ import pandas as pd
 # imported, which is the only point at which it takes effect.
 matplotlib.use("Agg")
 
+import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import FuncFormatter, PercentFormatter  # noqa: E402
 
@@ -208,8 +209,13 @@ def _shade_crises(ax, windows: Mapping[str, tuple[str, str]] | None = None,
     """
     left, right = ax.get_xlim()
     for label, (start, end) in (windows or CRISIS_WINDOWS).items():
-        start_num = matplotlib.dates.date2num(pd.Timestamp(start))
-        end_num = matplotlib.dates.date2num(pd.Timestamp(end))
+        # mdates is imported explicitly rather than reached through the
+        # `matplotlib` package object: `import matplotlib` does not bind the
+        # `dates` submodule, and this worked only because pyplot's own import
+        # chain happens to pull it in. That is a dependency on someone else's
+        # internals, and it breaks silently the day it changes.
+        start_num = mdates.date2num(pd.Timestamp(start))
+        end_num = mdates.date2num(pd.Timestamp(end))
         if end_num < left or start_num > right:
             continue
         ax.axvspan(

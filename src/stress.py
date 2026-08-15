@@ -242,11 +242,16 @@ def crisis_decomposition(
                 continue
 
             capital, risk = bond_exposure(sliced, ticker=bond_ticker)
+            row = summarize_window(sliced, periods_per_year=periods_per_year, name=label)
+            # summarize_window's row identifies itself with `name`, which is the
+            # window label -- the same string this table already carries in
+            # `window`. Two identical columns in a CSV a human reads is an
+            # invitation to wonder which one is authoritative, so the generic one
+            # goes and the specific one stays.
+            row.pop("name", None)
             rows.append(
                 {
-                    **summarize_window(
-                        sliced, periods_per_year=periods_per_year, name=label
-                    ),
+                    **row,
                     "window": label,
                     "strategy": name,
                     "capital_weight_bonds": capital,
@@ -284,13 +289,20 @@ def drawdown_table(
     the one to write to disk, because it carries the bond-weight and coverage
     columns that the pivot cannot.
     """
-    long = crisis_decomposition(results, windows, bond_ticker=bond_ticker)
+    # Resolved ONCE, and the mapping is what gets passed on. This used to call
+    # _as_result_mapping again after the decomposition, which quietly produced a
+    # table with zero strategy columns whenever `results` was a one-shot iterable
+    # -- the decomposition consumed it, the second pass saw an empty sequence, and
+    # the column order it derived was []. An empty table that raises nothing is
+    # precisely the silent-wrong-output failure this repo does not tolerate.
+    result_map = _as_result_mapping(results)
+    long = crisis_decomposition(result_map, windows, bond_ticker=bond_ticker)
     if value not in long.columns:
         raise StressError(
             f"{value!r} is not a column of the decomposition; available: "
             f"{sorted(long.columns)}"
         )
-    order = list(_as_result_mapping(results))
+    order = list(result_map)
     pivot = long.pivot(index="window", columns="strategy", values=value)
     pivot = pivot[[c for c in order if c in pivot.columns]]
     pivot.columns.name = None
@@ -584,8 +596,20 @@ def _align_weights(
         missing = [c for c in weights.columns if c not in returns.columns]
         if missing:
             raise StressError(f"weights carry columns {missing} absent from the returns")
-        aligned = weights[weights.columns].reindex(returns.index).ffill().shift(1)
-        return aligned.reindex(columns=returns.columns).fillna(0.0)
+        aligned = weights.reindex(returns.index).ffill().shift(1)
+        # A sleeve the strategy does not hold is a real 0.0 -- 60/40 declines DBC.
+        # A *day before the first rebalance* is not: there is no allocation yet.
+        # Filling both with 0.0 (which this used to do) fabricated an all-zero
+        # portfolio for every such day, whose variance is 0, so each one took the
+        # degenerate-covariance path and logged a warning about an estimate that
+        # was never the problem -- 40 of them on a 2006-09 fixture. Left as NaN,
+        # they drop out of the series cleanly, which is what "not invested yet"
+        # actually means.
+        absent = [c for c in returns.columns if c not in weights.columns]
+        aligned = aligned.reindex(columns=returns.columns)
+        if absent:
+            aligned[absent] = aligned[absent].fillna(0.0)
+        return aligned
 
     values = np.asarray(
         weights.reindex(returns.columns) if isinstance(weights, pd.Series) else weights,
