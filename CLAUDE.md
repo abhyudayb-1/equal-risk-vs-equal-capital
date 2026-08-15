@@ -25,19 +25,22 @@ starting work; the step text is the spec.
 
 **Check `git log --oneline` before trusting this section — it goes stale, the log does not.**
 Commit subjects are `Step NN [A|B]: ...`, so the log reads as a build ledger. As of the last edit,
-**steps 1–17 are on `main`**: Phase 0, the whole data layer, all four benchmarks, the crisis-window
-slices, and Phase 2's covariance and ERC solver.
+**steps 1–20 are on `main`**: Phase 0, the whole data layer, all four benchmarks, the crisis-window
+slices, and the whole of Phase 2 — covariance, the ERC solver, and Person B's oracle suite.
 
-Next up: **steps 18–20** for Person B (the RC identity, the independent oracle, the degenerate
-cases) and **21–23** for Person A (`overlay.py` vol targeting and financing, then `backtest.py`).
-Those two tracks are parallel and neither blocks the other.
+**Phase 2 is closed.** The cross-check it existed for passed: Person B's independent convex
+log-barrier oracle agrees with Person A's SLSQP solver to **7.3e-08** on 50 random covariances
+(bar: `ERC_AGREEMENT_TOLERANCE`, 1e-6), and both were checked against the equicorrelation closed
+form so a shared sign error would still have been caught. Its highest-value use was the ρ = −0.93
+case: the restart ladder can say it left a local minimum, but only an independent derivation can
+say the escaped answer is the *global* optimum rather than a second, prettier local one. It is, to
+2.9e-09, after 8 restarts.
 
-Step 19 is the highest-value test in the project: Person B's independent convex log-barrier oracle,
-asserting Person A's SLSQP solver to `ERC_AGREEMENT_TOLERANCE`. It must be written **from the
-maths, not by reading step 17** — two independent derivations are the entire point, and peeking
-collapses them into one.
+Next up: **21–23** for Person A (`overlay.py` vol targeting and financing, then `backtest.py`) and
+**24–27** for Person B (`stress.py`, then `viz.py`). Those two tracks are parallel and neither
+blocks the other.
 
-Two things step 17 learned that step 19 needs, and neither requires reading the solver:
+Two things the solver work established that stay true downstream:
 
 - The least-squares ERC objective `Σ(RC_i − σ_p/N)²` is **not convex**. It has local minima that pin
   an asset at `MIN_WEIGHT` with a *negative* risk contribution, and they show up whenever two
@@ -46,9 +49,10 @@ Two things step 17 learned that step 19 needs, and neither requires reading the 
   not evidence of anything. `solve_erc_with_status` escapes them by restarting.
 - That escape does **not** reach zero. About 0.05% of adversarial random 4×4 covariances (|ρ| up to
   0.95) still miss the bar; on covariances drawn around the real four-sleeve structure it is 0 in
-  2000. Over 50 random draws a per-draw rate of 0.05% is a ~2.5% flaky test, so **assert agreement
-  where both solvers converge**, rather than assuming every draw does. Numbers and the
-  diminishing-returns curve are in the `ERC_MAX_RESTARTS` comment in `config.py`.
+  2000. Anything asserting across many random covariances should **assert agreement where both
+  solvers converge**, rather than assuming every draw does — over 50 draws a per-draw rate of 0.05%
+  is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
+  comment in `config.py`.
 
 To resume in a new session: read `TASKS.md`, find the lowest-numbered unfinished step for your
 owner, and build it. Nothing else needs reconstructing — the contract in `src/types.py` and the
@@ -90,7 +94,8 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 
 ```bash
 .venv/bin/python -m src.covariance    # halflife -> inf == sample cov; PSD repair on indefinite input
-.venv/bin/python -m src.riskparity    # analytic gradient vs central differences; ERC on 500 randoms
+.venv/bin/python -m src.riskparity    # analytic gradient vs central differences; ERC on 500 randoms;
+                                      # degenerate inputs and the non-PSD rejection regression
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 ```
 
@@ -98,13 +103,9 @@ Run every suite after any change to `src/`. Only `test_data.py` and `test_contra
 network-free; the suites must keep passing offline, so live-data checks belong in the Phase 5 run
 rather than in a test.
 
-**`test_riskparity.py` currently exits 1 on purpose.** Its last check,
-`test_non_psd_covariance_is_rejected`, asserts the behaviour `solve_erc_with_status`'s docstring
-promises — raising on a covariance with a negative eigenvalue — which the code does not do; it
-returns weights for a matrix implying a correlation of 1.67. It is Person A's file, so it is
-reported rather than patched, and the check runs last so every passing check prints above it.
-Do not silence it to get a green suite; it goes green when the fix lands, and the `N checks
-passed` line that failure currently suppresses is how you will know.
+**Every suite exits 0.** `test_riskparity.py` used to exit 1 by design, on a known bug filed
+against `solve_erc`; that fix has landed and the suite is green. If one exits non-zero now, it is a
+real failure — do not silence it.
 
 Tests are **standalone scripts with no framework** — no pytest, no test runner. Each file defines
 `test_*()` functions plus a `check(label, condition)` helper, and a `__main__` block calls them in
@@ -144,6 +145,18 @@ Two notes on the Phase 2 modules, because both encode a decision that looks like
   `ERCSolution`, and they disagree in both directions. It also **raises** rather than returning
   `converged=False` when no equal-risk portfolio exists above the weight floor at all — a sleeve
   whose volatility is a millionth of its peers' is a broken price series, not a solver event.
+- `solve_erc_with_status` **rejects a non-PSD covariance rather than repairing it**, on a bar
+  relative to the largest variance (`ERC_MIN_EIGENVALUE_RATIO`). Both halves are deliberate.
+  Repair belongs upstream in `covariance.py` where the run summary can see it happen; a solver that
+  quietly fixed its own input would hide a broken estimator. And an *absolute* bar would mean
+  something different at every scale, since these are annualised ETF variances running ~1e-2 —
+  note in particular that a relative-looking `max(1.0, max|diag|)` silently pins itself to the
+  absolute bar for every matrix below unit scale, which is all of them here. The bar is set from
+  the gap between two measured populations, not picked: legitimately singular matrices (ρ = 1
+  exactly, which must keep solving — it is the TLT/TIP-in-a-rate-shock limit) bottom out at −1e-15
+  of the largest variance, pure `eigvalsh` rounding noise, while a genuine violation sits at −0.42.
+  This guard exists because without it `solve_erc` returned weights for a matrix implying a
+  correlation of 1.67 while every field on `ERCSolution` read healthy.
 
 ### The contract is the load-bearing design decision
 
