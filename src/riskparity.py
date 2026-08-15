@@ -57,6 +57,7 @@ from .config import (
     ERC_AGREEMENT_TOLERANCE,
     ERC_MAX_ITER,
     ERC_MAX_RESTARTS,
+    ERC_MIN_EIGENVALUE_RATIO,
     ERC_SLSQP_FTOL,
     MIN_WEIGHT,
 )
@@ -263,6 +264,43 @@ def solve_erc_with_status(
             f"asset(s) {list(np.flatnonzero(variances <= 0.0))} have zero or negative "
             "variance, so equal risk contribution is not defined for them; "
             "src.covariance.nearest_psd floors variances at MIN_EIGENVALUE"
+        )
+
+    # The spectrum, which is the other half of "is this a covariance at all".
+    # validate_covariance stops at square/finite/symmetric by design -- the
+    # spectrum is nearest_psd's business -- so without this a matrix implying a
+    # correlation above 1 reaches SLSQP and comes back with weights. They would
+    # describe nothing: no portfolio of those assets exists. Worse, the objective
+    # stays finite and smooth on an indefinite form, so every diagnostic on
+    # ERCSolution reads healthy and the answer is silently meaningless. That is
+    # the failure mode this repo treats as the dangerous one, hence a raise.
+    #
+    # Not repaired here. Repairing is src.covariance.nearest_psd's job and it
+    # belongs upstream where the caller can see it happen; a solver that quietly
+    # fixed its own input would hide a broken estimator from the run summary.
+    #
+    # The bar is relative to the largest variance (see ERC_MIN_EIGENVALUE_RATIO)
+    # because an absolute one would mean different things across scales. A
+    # legitimately singular covariance -- rho = 1 exactly, which step 20 requires
+    # solve, and which is the realistic TLT/TIP-in-a-rate-shock limit -- carries a
+    # min eigenvalue of a few 1e-16 relative from rounding alone, so the bar has
+    # to admit it while still rejecting a genuine violation.
+    smallest_eigenvalue = float(np.linalg.eigvalsh(c).min())
+    psd_bar = -ERC_MIN_EIGENVALUE_RATIO * float(np.max(variances))
+    if smallest_eigenvalue < psd_bar:
+        offdiag = c / np.sqrt(np.outer(variances, variances))
+        np.fill_diagonal(offdiag, 0.0)
+        worst = np.unravel_index(int(np.argmax(np.abs(offdiag))), offdiag.shape)
+        raise ERCSolverError(
+            f"covariance is not positive semi-definite: smallest eigenvalue "
+            f"{smallest_eigenvalue:.3e} against a bar of {psd_bar:.3e} "
+            f"({ERC_MIN_EIGENVALUE_RATIO:.0e} of the largest variance "
+            f"{float(np.max(variances)):.3e}). No portfolio has the risk this "
+            f"matrix describes, so equal risk contribution is undefined on it. "
+            f"The largest implied correlation is {offdiag[worst]:+.3f} between "
+            f"assets {worst[0]} and {worst[1]}. Route it through "
+            f"src.covariance.estimate_covariance / nearest_psd before solving -- "
+            f"this function does not repair its input"
         )
 
     # A one-asset portfolio is trivially equal-risk. Worth short-circuiting
@@ -627,6 +665,55 @@ if __name__ == "__main__":  # pragma: no cover
     except ERCSolverError as exc:
         print(f"  near-zero-vol asset       : raised ERCSolverError, as it must")
         print(f"    {str(exc)[:96]}...")
+
+    # --- regression: a non-PSD covariance must be rejected, not solved ------
+    # Found by Person B's step 20 audit. solve_erc used to return [0.6, 0.4] for
+    # the matrix below -- an implied correlation of 1.67, so no such portfolio
+    # exists -- while every field on ERCSolution read healthy. The three cases
+    # here are the whole bar: reject a real violation, admit a legitimately
+    # singular matrix, and admit whatever nearest_psd hands back.
+    print("\nnon-PSD rejection (regression, Person B step 20 audit)")
+    impossible = np.array([[0.04, 0.10], [0.10, 0.09]])
+    try:
+        solve_erc(impossible)
+        print("  implied rho = 1.67        : NO ERROR RAISED -- regression!")
+    except ERCSolverError:
+        print(f"  implied rho = 1.67        : raised ERCSolverError, as it must "
+              f"(min eig {np.linalg.eigvalsh(impossible).min():.3e})")
+
+    # rho = 1 exactly is singular but PSD, and its min eigenvalue is a few 1e-16
+    # of the diagonal from rounding alone. A bar that rejected it would break the
+    # TLT/TIP-in-a-rate-shock limit, which is a case this project has to solve.
+    singular = np.ones((3, 3)) * np.outer(vols[:3], vols[:3])
+    print(f"  rho = 1 exactly           : converged="
+          f"{solve_erc_with_status(singular).converged} "
+          f"(min eig {np.linalg.eigvalsh(singular).min() / np.max(np.diag(singular)):.2e} "
+          f"relative, bar {-ERC_MIN_EIGENVALUE_RATIO:.0e})")
+
+    # The live path. estimate_covariance/nearest_psd repairs before the solver
+    # ever sees a matrix, so a bar the repaired output could not clear would take
+    # the backtest down rather than catch anything. Measured over 2000 repaired
+    # indefinite draws, the worst is +9.2e-13 relative -- positive, ~100x inside
+    # the bar -- so the two are not close to colliding.
+    from .covariance import nearest_psd
+
+    repaired_worst, rejected = 1.0, 0
+    for _ in range(200):
+        raw_corr = rng.uniform(-0.98, 0.98, size=(4, 4))
+        raw_corr = (raw_corr + raw_corr.T) / 2.0
+        np.fill_diagonal(raw_corr, 1.0)
+        raw_vols = rng.uniform(0.03, 0.45, size=4)
+        fixed = nearest_psd(raw_corr * np.outer(raw_vols, raw_vols))
+        repaired_worst = min(
+            repaired_worst,
+            float(np.linalg.eigvalsh(fixed).min()) / float(np.max(np.diag(fixed))),
+        )
+        try:
+            solve_erc_with_status(fixed)
+        except ERCSolverError as exc:
+            rejected += "not positive semi-definite" in str(exc)
+    print(f"  200 nearest_psd outputs   : {rejected} rejected, worst min eig "
+          f"{repaired_worst:+.2e} relative")
 
     # --- equal correlations: the one case where they coincide ---------------
     rho = 0.35
