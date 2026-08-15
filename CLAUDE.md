@@ -33,8 +33,15 @@ starting work; the step text is the spec.
 
 **Check `git log --oneline` before trusting this section — it goes stale, the log does not.**
 Commit subjects are `Step NN [A|B]: ...`, so the log reads as a build ledger. As of the last edit,
-**steps 1–20 are on `main`**: Phase 0, the whole data layer, all four benchmarks, the crisis-window
-slices, and the whole of Phase 2 — covariance, the ERC solver, and Person B's oracle suite.
+**steps 1–22 and 24–27 are on `main`**: Phase 0, the whole data layer, all four benchmarks, the
+crisis-window slices, the whole of Phase 2 (covariance, the ERC solver, Person B's oracle suite),
+`overlay.py` complete, and Person B's `stress.py` / `viz.py`.
+
+**The only unbuilt engine module is `backtest.py` (step 23)**, which is Person A's and is what
+turns the pieces into a `BacktestResult`. Everything it needs now exists and has been run
+end to end by hand: 234 monthly rebalances on live data, 0 solver failures, and a financed
+equity curve. After it, Person A has 28–29 (look-ahead test, diagnostics) and Person B has
+30–31 (CLI, README) before Phase 5 integration.
 
 **Phase 2 is closed.** The cross-check it existed for passed: Person B's independent convex
 log-barrier oracle agrees with Person A's SLSQP solver to **7.3e-08** on 50 random covariances
@@ -105,7 +112,8 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.covariance    # halflife -> inf == sample cov; PSD repair on indefinite input
 .venv/bin/python -m src.riskparity    # analytic gradient vs central differences; ERC on 500 randoms;
                                       # degenerate inputs and the non-PSD rejection regression
-.venv/bin/python -m src.overlay       # vol -> leverage across regimes; the cap; the de-levering lag
+.venv/bin/python -m src.overlay       # vol -> leverage across regimes; the cap; the de-levering lag;
+                                      # financing at L=1..3 and the one-day decision lag
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
 .venv/bin/python -m src.viz           # the four charts -> reports/, from fixtures
@@ -141,10 +149,10 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
                                                           metrics.py / benchmarks.py / stress.py / viz.py
 ```
 
-`src/__init__.py` carries the authoritative stage list. Everything through `riskparity.py` exists,
-plus `overlay.py`'s vol targeting (step 21) and `stress.py` / `viz.py` (steps 24–27);
-`overlay.py`'s financing leg (step 22) and `backtest.py` do not yet — see TASKS.md for which step
-creates each.
+`src/__init__.py` carries the authoritative stage list. Every module exists except `backtest.py`
+(step 23) — see TASKS.md for which step creates it. `overlay.py` is complete through step 22 and
+exposes `apply_overlay(returns, weights, leverage, risk_free)`, which returns the
+`unlevered` / `leverage` / `risk_free` / `strategy` frame step 23 accrues from.
 
 `stress.py` and `viz.py` consume `BacktestResult` and a daily asset-return frame and nothing else,
 so they already run end to end against `tests/fixtures.py`. Phase 5 swaps the fixture for the real
@@ -196,6 +204,25 @@ behaviour as a bug:
   do not "simplify" either convention independently. The overlay still needs its own halflife —
   sharing the matrix would tie its reaction speed to the allocator's, which is the one thing
   `VOL_EWMA_HALFLIFE_DAYS` exists to prevent.
+- **Two alignment rules live in `overlay.py` and they differ by one day. Step 23 depends on
+  getting this right.** Sizing the book you are *about to hold* uses the decision **at or before**
+  the date (`leverage_path`); attributing the return *earned on* a date uses the decision
+  **strictly before** it (`_in_force_before`, used by `unlevered_returns` / `financed_returns`) —
+  a choice made at the close of day `d` cannot have earned day `d`'s move. `reindex(...).ffill()`
+  implements the first; reaching for it to do the second is the bug this module is shaped to
+  prevent, and it is worth **+0.053%/yr of CAGR and +0.006 of Sharpe** of unearned hindsight on
+  the real run. Note the rule is chosen by **kind, not shape**: a *daily* leverage series is still
+  a decision series and is still deferred a day. An earlier draft switched on whether the series
+  already covered the return index, which silently mis-classified `leverage_path`'s own default
+  output — the most likely input of all.
+- **Financing is charged, and it is what the honest version of this strategy costs.** On the real
+  four-sleeve run, unlevered ERC is CAGR 5.11% / Sharpe 0.75; levered to the 10% target *with*
+  financing it is 7.13% / **0.67**; with the financing leg omitted it is 8.27% / **0.76**. So
+  free-money leverage appears to leave Sharpe intact while real leverage visibly *reduces* it —
+  which is exactly the oversell PLAN.md warns about, worth 1.14%/yr here. `financed_returns`
+  computes `L·r_a − (L−1)·r_f` rather than the equivalent `L·(r_a − r_f) + r_f` because only the
+  first is bit-exact at `L = 1` (the second misses on 7.3% of draws — `(a−b)+b ≠ a`), and step 22's
+  "done when" asks for exactness.
 
 ### The contract is the load-bearing design decision
 
