@@ -310,6 +310,74 @@ def test_drawdown_floor_survives_slicing() -> None:
     )
 
 
+def test_window_excludes_the_peak_days_return() -> None:
+    """REGRESSION. The window's returns start strictly after its start date.
+
+    ``config.CRISIS_WINDOWS`` dates are peak-to-trough and the start date is the
+    peak *close*, so the return stamped on it is the move *into* the peak -- the
+    last day of the rally, not the first day of the crisis. Including it measured
+    from the close before the peak.
+
+    Found auditing after step 21. On live data the start date is the SPY
+    local-peak close in all three windows and the return stamped on it is
+    positive in all three (+0.94%, +0.48%, +0.58%), which a peak-to-trough
+    drawdown cannot contain. Mostly it was worth a few tenths of a point; on TLT
+    over 2022 it was worth 1.85pp (-31.2% against a true -29.3%), because TLT
+    fell 2.6% on the equity peak date itself -- and that is the number the 2022
+    write-up turns on.
+
+    The identity this pins: compounding a window's returns must equal the price
+    move over the window, ``price(end)/price(start) - 1``. Asserted on a
+    synthetic price series rather than on live data, so it stays offline and
+    exact -- and on the *identity*, not on a realised magnitude, per the "Data
+    reality check" in TASKS.md.
+    """
+    result = make_fake_result()
+
+    for name in config.CRISIS_WINDOWS:
+        window_start, _ = metrics.resolve_window(name)
+        sliced = metrics.slice_to_window(result, name)
+        check(
+            f"{name}: returns start strictly after the peak close",
+            sliced.returns.index[0] > window_start,
+        )
+
+    # The identity, on a series whose prices are known exactly.
+    index = pd.bdate_range("2020-01-01", periods=120, name="date")
+    rng = np.random.default_rng(11)
+    prices = pd.Series(100.0 * np.cumprod(1.0 + rng.normal(0.0, 0.01, 120)), index=index)
+    returns = prices.pct_change().iloc[1:]
+
+    start, end = index[30], index[100]
+    windowed = returns[(returns.index > start) & (returns.index <= end)]
+    check(
+        "compounding the window's returns equals the peak-to-trough price move",
+        bool(np.isclose(
+            float((1.0 + windowed).prod() - 1.0),
+            float(prices.loc[end] / prices.loc[start] - 1.0),
+            rtol=0.0,
+            atol=1e-12,
+        )),
+    )
+    check(
+        "including the start date's return would instead measure from the day before",
+        bool(np.isclose(
+            float((1.0 + returns[(returns.index >= start) & (returns.index <= end)]).prod() - 1.0),
+            float(prices.loc[end] / prices.iloc[29] - 1.0),
+            rtol=0.0,
+            atol=1e-12,
+        )),
+    )
+
+    # slice_dated stays INCLUSIVE on purpose: it cuts levels -- a price frame, a
+    # rolling correlation, step 25's diversification ratio -- where the value on
+    # the peak date is the peak itself and belongs in the window.
+    check(
+        "slice_dated remains inclusive, because it slices levels rather than returns",
+        metrics.slice_dated(prices, (str(start.date()), str(end.date()))).index[0] == start,
+    )
+
+
 if __name__ == "__main__":
     test_resolve_window()
     test_slice_dated()
@@ -319,4 +387,5 @@ if __name__ == "__main__":
     test_rows_do_not_collide()
     test_ambiguous_window_arguments_raise()
     test_drawdown_floor_survives_slicing()
+    test_window_excludes_the_peak_days_return()
     print(f"\n{_checks} checks passed")

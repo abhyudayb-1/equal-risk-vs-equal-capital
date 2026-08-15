@@ -125,9 +125,11 @@ fixture) said the 2022 failure was a stock-bond correlation flipping positive. I
 - Across `2022-01-03 → 2022-10-12` the rolling 63-day SPY/TLT correlation **averaged −0.09**
   and was positive on only **31% of days**. The persistent flip is **2023 onward** (66% / 65%
   / 70% of days in 2023 / 2024 / 2025).
-- What actually happened: **TLT fell 31.2% against SPY's 24.1%** — the hedge lost more than
-  the thing it hedged — while **DBC returned +21.9%**, the only sleeve that worked and the one
-  equal-risk-contribution holds least by capital.
+- What actually happened: **TLT fell 29.3% against SPY's 24.5%** — the hedge lost more than
+  the thing it hedged — while **DBC returned +21.4%**, the only sleeve that worked and the one
+  equal-risk-contribution holds least by capital. These are peak-to-trough, measured from the
+  window's opening close; compounding the returns stamped *on* `[start, end]` measures from the
+  day before the peak and reads −31.2% / −24.1% / +21.9% instead.
 - The **diversification ratio** `Σwᵢσᵢ / σₚ` degrades right through the episode: 2.11 (2008),
   1.78 (2020), 1.68 (2021), 1.59 (2022), 1.52 (2023). That is why step 25 keys off it.
 

@@ -265,9 +265,10 @@ def sixty_forty(
 
     First, the mechanism. The stock/bond correlation did not flip positive during
     the 2022 drawdown -- measured over 2022-01-03 to 2022-10-12 it averaged -0.09
-    and was positive on only 31% of days. What happened is that TLT fell 31.2%
-    against SPY's 24.1%: the hedge lost more than the thing it hedged, with
-    correlation still negative. Risk parity's exposure is worse than 60/40's here
+    and was positive on only 31% of days. What happened is that TLT fell 29.3%
+    against SPY's 24.5% (peak-to-trough, measured from the window's opening
+    close): the hedge lost more than the thing it hedged, with correlation still
+    negative. Risk parity's exposure is worse than 60/40's here
     not because the sign changed but because it holds *more* bonds by capital
     (low volatility earns a large weight) and then levers the whole thing.
 
