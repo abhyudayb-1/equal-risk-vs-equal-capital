@@ -97,6 +97,7 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.covariance    # halflife -> inf == sample cov; PSD repair on indefinite input
 .venv/bin/python -m src.riskparity    # analytic gradient vs central differences; ERC on 500 randoms;
                                       # degenerate inputs and the non-PSD rejection regression
+.venv/bin/python -m src.overlay       # vol -> leverage across regimes; the cap; the de-levering lag
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
 .venv/bin/python -m src.viz           # the four charts -> reports/, from fixtures
@@ -133,8 +134,9 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
 ```
 
 `src/__init__.py` carries the authoritative stage list. Everything through `riskparity.py` exists,
-plus `stress.py` and `viz.py` (steps 24–27); `overlay.py` and `backtest.py` do not yet — see
-TASKS.md for which step creates each.
+plus `overlay.py`'s vol targeting (step 21) and `stress.py` / `viz.py` (steps 24–27);
+`overlay.py`'s financing leg (step 22) and `backtest.py` do not yet — see TASKS.md for which step
+creates each.
 
 `stress.py` and `viz.py` consume `BacktestResult` and a daily asset-return frame and nothing else,
 so they already run end to end against `tests/fixtures.py`. Phase 5 swaps the fixture for the real
@@ -165,6 +167,27 @@ Two notes on the Phase 2 modules, because both encode a decision that looks like
   of the largest variance, pure `eigvalsh` rounding noise, while a genuine violation sits at −0.42.
   This guard exists because without it `solve_erc` returned weights for a matrix implying a
   correlation of 1.67 while every field on `ERCSolution` read healthy.
+
+And one on `overlay.py`, which is the module most likely to be "fixed" by someone who reads its
+behaviour as a bug:
+
+- **The overlay de-levers *after* the damage, and that is a finding, not a defect.** A trailing
+  estimator cannot see volatility until it has been realised, so leverage is still elevated well
+  into every drawdown. Measured on live data with equal weights, the fraction of each crisis window
+  the book spent still levered *above 1.0x*: **GFC 69%, COVID 54%, 2022 26%** — and COVID reached
+  its minimum leverage on 2020-03-23, the exact market bottom. Shortening `VOL_EWMA_HALFLIFE_DAYS`
+  moves the lag; nothing removes it, because no causal filter can. Vol targeting is a risk
+  *control*, not a risk *forecast*. This is PLAN.md's third artifact — do not tune it away.
+- `trailing_portfolio_vol` estimates on a **counterfactual** series: the weights *about to be held*
+  applied to past returns, not the portfolio returns actually realised (which used older weights).
+  The quantity being levered is the risk of the next book, and the realised series lags hardest
+  right after the weights move — i.e. after a regime change, when the estimate matters most.
+- It demeans with the **weighted** mean and uses the same `1 - Σw²` correction as
+  `ewma_covariance`, which makes `trailing_portfolio_vol(r, w, h)²` equal `wᵀ ewma_covariance(r, h) w`
+  *exactly*. That is a free second derivation of the same number and the self-check asserts it, so
+  do not "simplify" either convention independently. The overlay still needs its own halflife —
+  sharing the matrix would tie its reaction speed to the allocator's, which is the one thing
+  `VOL_EWMA_HALFLIFE_DAYS` exists to prevent.
 
 ### The contract is the load-bearing design decision
 
