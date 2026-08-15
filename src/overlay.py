@@ -384,9 +384,50 @@ def leverage_path(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+def _require_chronological(index: pd.Index) -> None:
+    """Reject a window whose rows are not oldest-first, or repeat a date.
+
+    The EWMA decay weights are positional -- ``ewma_weights`` returns them
+    oldest-first, newest-heaviest, and pairs weight ``k`` with row ``k``. Nothing
+    downstream re-reads the index, so a frame in the wrong order is not an error
+    anywhere, it is simply a different and wrong answer: the decay lands on the
+    oldest observations instead of the newest.
+
+    That is worth a guard rather than a docstring line because of which direction
+    it fails in. Measured on a window that is calm then violent, reversing the
+    rows reports 5.9% annualised volatility against a true 21.0% -- and the
+    leverage rule *divides* by this number, so a 3.6x understatement of risk
+    becomes a 3.6x overstatement of the position. Silent, plausible, and in the
+    direction that flatters the strategy.
+
+    ``src.data`` sorts on the way in, so the live pipeline cannot reach this. A
+    frame assembled anywhere else can -- ``pd.concat`` of two windows in the wrong
+    order produces exactly this with no warning of its own.
+    """
+    if not isinstance(index, pd.DatetimeIndex):
+        # A positional index carries no chronology to verify. Callers passing a
+        # bare ndarray are trusted for ordering; there is nothing to check.
+        return
+    if not index.is_monotonic_increasing:
+        raise OverlayError(
+            "return window is not in chronological order; the EWMA decay weights "
+            "are positional, so out-of-order rows silently mis-weight the estimate "
+            "(a reversed window understates volatility ~3.6x, which the leverage "
+            "rule then divides by). Sort the frame before slicing it"
+        )
+    if index.has_duplicates:
+        duplicated = index[index.duplicated()].unique()
+        raise OverlayError(
+            f"return window repeats {len(duplicated)} date(s), first "
+            f"{duplicated[0].date()}; a duplicated observation is double-weighted "
+            "by the decay and is a sign of a concatenated or re-indexed frame"
+        )
+
+
 def _as_return_matrix(returns: pd.DataFrame | np.ndarray) -> np.ndarray:
     """Validate and coerce a (T, N) return window to a float array."""
     if isinstance(returns, pd.DataFrame):
+        _require_chronological(returns.index)
         x = returns.to_numpy(dtype="float64")
     else:
         x = np.asarray(returns, dtype="float64")
@@ -445,6 +486,16 @@ def _align_weights(
             raise OverlayError(
                 f"weight columns {list(weights.columns)} do not match return columns "
                 f"{list(returns.columns)}; the overlay will not guess an ordering"
+            )
+        if weights.index.has_duplicates:
+            # reindex raises "cannot reindex on an axis with duplicate labels"
+            # from deep inside pandas, which names neither the caller's mistake
+            # nor the file it came from.
+            repeated = weights.index[weights.index.duplicated()].unique()
+            raise OverlayError(
+                f"weight frame repeats {len(repeated)} rebalance date(s), first "
+                f"{pd.Timestamp(repeated[0]).date()}; two allocations for one date "
+                "have no defined order of precedence"
             )
         # Fill over the UNION of the two indices, then restrict. Filling over
         # returns.index alone would silently drop any rebalance date that is not
@@ -611,6 +662,37 @@ if __name__ == "__main__":  # pragma: no cover
     varying = leverage_path(daily, schedule)
     print(f"  leverage_path accepts a weight frame: {len(varying)} decisions, "
           f"L in [{varying['leverage'].min():.2f}, {varying['leverage'].max():.2f}]")
+
+    # --- the ordering regression --------------------------------------------
+    # Found auditing step 21. The EWMA decay weights are POSITIONAL, so a window
+    # whose rows are not oldest-first is not an error anywhere -- it is a
+    # different and wrong answer, with the decay landing on the oldest rows. It
+    # fails in the flattering direction: on a calm-then-violent window, reversing
+    # the rows reported 5.9% vol against a true 21.0%, and the leverage rule
+    # DIVIDES by that, so a 3.6x understatement of risk becomes a 3.6x
+    # overstatement of the position. src.data sorts on the way in, so only a
+    # frame built elsewhere can reach it -- a pd.concat in the wrong order does.
+    print("\nrow ordering is checked, not assumed (regression)")
+    calm_then_violent = pd.concat(
+        [
+            synthetic_returns(150, np.repeat(0.05, 4), rng),
+            synthetic_returns(150, np.repeat(0.40, 4), rng).set_axis(
+                pd.bdate_range("2006-09-01", periods=150), axis=0
+            ),
+        ]
+    )
+    ordered = trailing_portfolio_vol(calm_then_violent, equal, min_observations=100)
+    print(f"  correctly ordered window : sigma_hat {ordered:.2%}")
+    for label, frame in (
+        ("reversed", calm_then_violent.iloc[::-1]),
+        ("shuffled", calm_then_violent.sample(frac=1.0, random_state=1)),
+        ("duplicated date", pd.concat([calm_then_violent, calm_then_violent.iloc[[10]]]).sort_index()),
+    ):
+        try:
+            bad = trailing_portfolio_vol(frame, equal, min_observations=100)
+            print(f"  {label:24s} : returned {bad:.2%} -- REGRESSION, should have raised")
+        except OverlayError:
+            print(f"  {label:24s} : OverlayError, as it must")
 
     # --- degenerate inputs must raise, never return a plausible number -------
     print("\nbad input raises")

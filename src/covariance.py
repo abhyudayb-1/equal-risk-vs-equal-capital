@@ -382,9 +382,47 @@ def estimate_covariance(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+def _require_chronological(index: pd.Index) -> None:
+    """Reject a window whose rows are not oldest-first, or repeat a date.
+
+    :func:`ewma_weights` returns decay weights oldest-first and pairs weight ``k``
+    with row ``k`` positionally. Nothing here re-reads the index, so a frame in
+    the wrong order produces a perfectly well-formed covariance that weights the
+    oldest observations most heavily -- no error, just the wrong matrix.
+
+    Measured on a window that is calm and then violent: reversing the rows reports
+    a portfolio volatility of 7.9% against a true 19.8%. Understating covariance
+    understates every risk contribution the solver balances and inflates every
+    Sharpe downstream, so it fails in the flattering direction.
+
+    ``src.data`` sorts on the way in and the live pipeline cannot reach this; a
+    frame assembled elsewhere (a test, a notebook, a ``pd.concat`` in the wrong
+    order) can. Mirrored in ``src.overlay._require_chronological``, which guards
+    the same assumption for the trailing-vol estimator.
+    """
+    if not isinstance(index, pd.DatetimeIndex):
+        # A positional index carries no chronology to verify.
+        return
+    if not index.is_monotonic_increasing:
+        raise CovarianceError(
+            "return window is not in chronological order; the EWMA decay weights "
+            "are positional, so out-of-order rows silently mis-weight the estimate "
+            "(a reversed window understates portfolio volatility ~2.5x). Sort the "
+            "frame before slicing it"
+        )
+    if index.has_duplicates:
+        duplicated = index[index.duplicated()].unique()
+        raise CovarianceError(
+            f"return window repeats {len(duplicated)} date(s), first "
+            f"{duplicated[0].date()}; a duplicated observation is double-weighted "
+            "by the decay and is a sign of a concatenated or re-indexed frame"
+        )
+
+
 def _as_observation_matrix(returns: pd.DataFrame | np.ndarray) -> np.ndarray:
     """Validate and coerce a (T, N) return window to a float array."""
     if isinstance(returns, pd.DataFrame):
+        _require_chronological(returns.index)
         x = returns.to_numpy(dtype="float64")
     else:
         x = np.asarray(returns, dtype="float64")
@@ -487,3 +525,32 @@ if __name__ == "__main__":  # pragma: no cover
     print(f"  condition number  : {diag.condition_number:,.1f}")
     print(f"  repaired          : {diag.was_repaired}")
     print(f"  ill-conditioned   : {diag.is_ill_conditioned}")
+
+    # --- the ordering regression --------------------------------------------
+    # Found auditing step 21. The decay weights are POSITIONAL: ewma_weights
+    # pairs weight k with row k and nothing here re-reads the index, so a window
+    # in the wrong order produces a well-formed covariance built on the wrong
+    # weighting -- oldest observations weighted most. No error, just the wrong
+    # matrix, and it understates risk, which inflates every Sharpe downstream.
+    # src.data sorts on the way in; a frame assembled elsewhere need not be.
+    print("\nrow ordering is checked, not assumed (regression)")
+    index = pd.bdate_range("2006-02-03", periods=300, name="date")
+    regime = np.concatenate([np.full(150, 0.003), np.full(150, 0.025)])
+    window = pd.DataFrame(
+        rng.normal(0.0, regime[:, None] * np.ones((1, 4))),
+        index=index,
+        columns=["SPY", "TLT", "DBC", "TIP"],
+    )
+    equal = np.repeat(0.25, 4)
+    good = float(np.sqrt(equal @ ewma_covariance(window) @ equal))
+    print(f"  correctly ordered window : portfolio vol {good:.2%}")
+    for label, frame in (
+        ("reversed", window.iloc[::-1]),
+        ("shuffled", window.sample(frac=1.0, random_state=1)),
+        ("duplicated date", pd.concat([window, window.iloc[[10]]]).sort_index()),
+    ):
+        try:
+            bad = float(np.sqrt(equal @ ewma_covariance(frame) @ equal))
+            print(f"  {label:24s} : returned {bad:.2%} -- REGRESSION, should have raised")
+        except CovarianceError:
+            print(f"  {label:24s} : CovarianceError, as it must")
