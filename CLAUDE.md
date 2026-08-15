@@ -33,15 +33,17 @@ starting work; the step text is the spec.
 
 **Check `git log --oneline` before trusting this section — it goes stale, the log does not.**
 Commit subjects are `Step NN [A|B]: ...`, so the log reads as a build ledger. As of the last edit,
-**steps 1–22 and 24–27 are on `main`**: Phase 0, the whole data layer, all four benchmarks, the
-crisis-window slices, the whole of Phase 2 (covariance, the ERC solver, Person B's oracle suite),
-`overlay.py` complete, and Person B's `stress.py` / `viz.py`.
+**steps 1–27 are on `main`** — the whole engine and the whole analysis layer. Phase 0, the data
+layer, all four benchmarks, the crisis-window slices, Phase 2 (covariance, the ERC solver, Person
+B's oracle suite), `overlay.py`, `backtest.py`, and Person B's `stress.py` / `viz.py`.
 
-**The only unbuilt engine module is `backtest.py` (step 23)**, which is Person A's and is what
-turns the pieces into a `BacktestResult`. Everything it needs now exists and has been run
-end to end by hand: 234 monthly rebalances on live data, 0 solver failures, and a financed
-equity curve. After it, Person A has 28–29 (look-ahead test, diagnostics) and Person B has
-30–31 (CLI, README) before Phase 5 integration.
+**The engine runs end to end on live data.** 234 monthly rebalances, 2007-02-28 → 2026-07-31,
+4896 return days: **CAGR 7.13%, vol 11.26%, Sharpe 0.67, max drawdown −29.10%**, mean leverage
+1.76x, **0 solver failures, 0 covariances repaired, worst risk-contribution deviation 1.6e-07**.
+Those are the headline numbers until Phase 5 re-runs them; treat them as current, not final.
+
+Remaining: Person A has **28–29** (the look-ahead test, diagnostics + run summary), Person B has
+**30–31** (`run_backtest.py` CLI, README). Then Phase 5 integration. The two tracks are parallel.
 
 **Phase 2 is closed.** The cross-check it existed for passed: Person B's independent convex
 log-barrier oracle agrees with Person A's SLSQP solver to **7.3e-08** on 50 random covariances
@@ -114,6 +116,7 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
                                       # degenerate inputs and the non-PSD rejection regression
 .venv/bin/python -m src.overlay       # vol -> leverage across regimes; the cap; the de-levering lag;
                                       # financing at L=1..3 and the one-day decision lag
+.venv/bin/python -m src.backtest      # full synthetic run: contract, alignment, look-ahead, meta
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
 .venv/bin/python -m src.viz           # the four charts -> reports/, from fixtures
@@ -149,10 +152,11 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
                                                           metrics.py / benchmarks.py / stress.py / viz.py
 ```
 
-`src/__init__.py` carries the authoritative stage list. Every module exists except `backtest.py`
-(step 23) — see TASKS.md for which step creates it. `overlay.py` is complete through step 22 and
-exposes `apply_overlay(returns, weights, leverage, risk_free)`, which returns the
-`unlevered` / `leverage` / `risk_free` / `strategy` frame step 23 accrues from.
+`src/__init__.py` carries the authoritative stage list, and **every module in it now exists**.
+`backtest.run_backtest(returns, risk_free=...)` is the entry point that walks the calendar and
+returns a validated `BacktestResult`; it composes `apply_overlay(returns, weights, leverage,
+risk_free)`, whose `unlevered` / `leverage` / `risk_free` / `strategy` frame is where the
+financing leg is visible side by side with the return it was charged against.
 
 `stress.py` and `viz.py` consume `BacktestResult` and a daily asset-return frame and nothing else,
 so they already run end to end against `tests/fixtures.py`. Phase 5 swaps the fixture for the real
@@ -223,6 +227,31 @@ behaviour as a bug:
   computes `L·r_a − (L−1)·r_f` rather than the equivalent `L·(r_a − r_f) + r_f` because only the
   first is bit-exact at `L = 1` (the second misses on 7.3% of draws — `(a−b)+b ≠ a`), and step 22's
   "done when" asks for exactness.
+
+And on `backtest.py`, which owns no maths of its own and is therefore wrong only in ways that look
+like tidying:
+
+- **The daily accrual is one call to `apply_overlay`, deliberately.** Hand-rolling the alignment
+  is how the one-day rule gets undone, and the result still produces a plausible equity curve.
+  The self-check pins `overlay`'s `_in_force_before` against `benchmarks._unlevered_result`'s
+  `.ffill().shift(1)` — they agree to **0.0 over 1241 days**, and they have to, or the engine and
+  its own benchmarks are not comparable.
+- **The two solver failures are different events and are handled differently.**
+  `converged=False` is numerical: use the best iterate, log, count it in `meta["solver_failures"]`,
+  keep going — one awkward covariance in 234 is not a reason to discard nineteen years.
+  `ERCSolverError` is economic: no equal-risk portfolio exists above the weight floor, which means
+  a sleeve's volatility is a millionth of its peers' and the price series is broken. It propagates
+  with the date attached and kills the run. Collapsing these two would hide whichever one mattered.
+- **`risk_contributions` are stored as fractions of `σ_p`** (rows sum to 1, per the contract), and
+  `backtest.py` composes them from `riskparity`'s primitives rather than importing
+  `benchmarks.risk_contribution_fractions` — `benchmarks` sits *downstream* in the pipeline and
+  importing it would invert the layering. The self-check asserts the two agree (5.6e-17), which is
+  what the duplication warning in `risk_contributions`' docstring is actually protecting.
+- **Not modelled, and say so when asked:** no transaction costs, no bid-ask, no borrow spread over
+  the bill rate. Financing is charged at `DTB3` flat, so a real book pays more and these levered
+  results are still optimistic — less so than the free-leverage version, but optimistic. Monthly
+  turnover on four liquid ETFs is low enough that costs would not change the *shape* of any
+  conclusion here, which is why the omission is defensible rather than why it is invisible.
 
 ### The contract is the load-bearing design decision
 
