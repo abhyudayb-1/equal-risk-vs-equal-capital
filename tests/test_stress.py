@@ -29,6 +29,7 @@ exactly the bug that column could plausibly have.
 
 from __future__ import annotations
 
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -362,6 +363,74 @@ def test_crisis_decomposition_rejections() -> None:
     )
 
 
+def test_regressions() -> None:
+    """Four defects found by auditing this branch. Each one was silent.
+
+    None of them raised, and three of them produced output that looked
+    completely reasonable -- which is the whole reason they get checks rather
+    than just fixes.
+    """
+    print("\nregressions:")
+    returns = make_fake_returns(end="2009-12-31")
+    result = make_fake_result(end="2009-12-31")
+
+    # 1. drawdown_table used to resolve `results` twice. A one-shot iterable was
+    #    consumed by the decomposition, so the second pass saw nothing and the
+    #    pivot came back with zero strategy columns -- no error, just an empty
+    #    table where a comparison should have been.
+    pivot = stress.drawdown_table(r for r in [result])
+    check(
+        f"a one-shot iterable still yields its strategy column ({list(pivot.columns)})",
+        list(pivot.columns) == [result.strategy],
+    )
+
+    # 2. The crisis row carried both `window` and `name`, identical strings.
+    table = stress.crisis_decomposition(result)
+    check(
+        "the crisis table has exactly one window-identity column, not two",
+        "window" in table.columns and "name" not in table.columns,
+    )
+
+    # 3. _align_weights filled pre-first-rebalance rows with 0.0, fabricating an
+    #    all-zero portfolio whose variance is 0. Those days took the
+    #    degenerate-covariance path and logged a warning blaming the estimate.
+    tally = {"warnings": 0}
+
+    class _Count(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            tally["warnings"] += "undefined" in record.getMessage()
+            return False
+
+    counter = _Count()
+    stress.log.addFilter(counter)
+    try:
+        ratio = stress.rolling_diversification_ratio(
+            returns, weights=result.weights, step_days=5
+        )
+    finally:
+        stress.log.removeFilter(counter)
+
+    check(
+        "no day is warned about for having no allocation yet -- that is not an error",
+        tally["warnings"] == 0,
+    )
+    check(
+        "days before the first rebalance are NaN rather than an all-zero portfolio",
+        bool(ratio.loc[: result.weights.index[0]].isna().all()),
+    )
+    check(
+        "and the ratio is finite once an allocation exists",
+        bool(ratio.loc[result.weights.index[1] :].notna().any()),
+    )
+
+    # 4. viz reached matplotlib.dates through the `matplotlib` package object,
+    #    which only resolves because pyplot's import chain binds the submodule.
+    check(
+        "viz imports matplotlib.dates explicitly rather than via the package object",
+        getattr(viz, "mdates", None) is not None,
+    )
+
+
 def test_ad_hoc_windows() -> None:
     """``REGIME_SHIFT_WINDOW`` has an open end, and the table has to carry it."""
     print("\nad-hoc and open-ended windows:")
@@ -496,6 +565,7 @@ if __name__ == "__main__":
     test_rolling_ratio_respects_the_lookahead_guard()
     test_crisis_decomposition()
     test_crisis_decomposition_rejections()
+    test_regressions()
     test_ad_hoc_windows()
     test_regime_summary()
     test_charts_render()
