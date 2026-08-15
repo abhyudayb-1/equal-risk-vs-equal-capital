@@ -26,6 +26,7 @@ from src.benchmarks import (  # noqa: E402
     _tangency_weights,
     equal_weight,
     max_sharpe,
+    naive_risk_parity,
     sixty_forty,
 )
 from src.types import BacktestResult  # noqa: E402
@@ -112,6 +113,40 @@ def test_sixty_forty() -> None:
     check(
         "a sleeve held at 0% contributes exactly 0 risk",
         bool((result.risk_contributions[unallocated].to_numpy() == 0.0).all()),
+    )
+
+
+def test_naive_risk_parity() -> None:
+    """The fifth comparator: inverse volatility, and where it is *not* equal risk.
+
+    Added with the crisis table (TASKS.md step 24), which needs it as a row. The
+    check that carries weight is the last one: ``1/sigma`` equals a true ERC
+    portfolio only when every pairwise correlation is the same, and the fixture's
+    correlations are emphatically not -- so its risk contributions must visibly
+    miss 1/N. If they ever stop missing it, either the fixture has lost its
+    correlation structure or this has quietly become the engine.
+    """
+    print("naive 1/vol:")
+    returns = make_fake_returns()
+    result = naive_risk_parity(returns)
+    check_is_valid_result(result, returns)
+
+    weights = result.weights
+    check(
+        "weights are strictly positive at every rebalance -- 1/sigma cannot be zero",
+        bool((weights.to_numpy() > 0.0).all()),
+    )
+    check(
+        "the lowest-volatility sleeve takes the largest mean weight",
+        weights.mean().idxmax() == config.INFLATION_TICKER,
+    )
+
+    n = len(returns.columns)
+    worst = float(np.abs(result.risk_contributions.to_numpy() - 1.0 / n).max())
+    check(
+        f"risk contributions miss 1/N by {worst:.3f} -- 1/sigma is not ERC when "
+        f"correlations differ",
+        worst > 0.02,
     )
 
 
@@ -203,6 +238,7 @@ def test_benchmarks_are_comparable() -> None:
 if __name__ == "__main__":
     test_equal_weight()
     test_sixty_forty()
+    test_naive_risk_parity()
     test_max_sharpe()
     test_max_sharpe_on_random_covariances()
     test_benchmarks_are_comparable()

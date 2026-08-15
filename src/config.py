@@ -205,3 +205,18 @@ REGIME_SHIFT_WINDOW: tuple[str, str | None] = ("2021-01-01", None)
 # A correlation-SIGN alarm fires in 2023, after the damage. This one is already
 # falling while the damage is being done, which is why step 25 keys off it.
 DIVERSIFICATION_WINDOW_DAYS: int = CORRELATION_WINDOW_DAYS
+
+# The diversification ratio is measured on an UNSHRUNK covariance, unlike every
+# other covariance in the project. Shrinkage exists to stabilise a matrix that an
+# optimiser is about to invert; the ratio only reads the matrix, and pulling the
+# off-diagonals toward a diagonal target makes the sleeves look more independent
+# than they were -- it biases the diagnostic in exactly the direction the
+# diagnostic is supposed to detect.
+#
+# Measured, and this is what set the constant: at COV_SHRINKAGE = 0.10 the annual
+# means come out 2.098 (2008) / 1.807 (2020) / 1.702 (2021) / 1.615 (2022) /
+# 1.552 (2023) -- the same shape, uniformly ~0.03 too diversified. At 0.0 they
+# reproduce the published path above to three decimals: 2.111 / 2.179 (2012 peak)
+# / 1.790 / 1.678 / 1.586 / 1.521. A diagnostic whose absolute level is quoted in
+# the write-up has to be the reproducible one.
+DIVERSIFICATION_SHRINKAGE: float = 0.0

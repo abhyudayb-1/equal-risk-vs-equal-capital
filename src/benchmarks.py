@@ -12,7 +12,13 @@ variance while looking perfectly diversified on a pie chart. The gap between
 ``weights`` and ``risk_contributions`` in the results below is the entire reason
 the ERC solver exists.
 
-Neither benchmark is levered, so ``leverage`` is pinned at 1.0 throughout and the
+:func:`naive_risk_parity` is the fourth comparator and the one closest to the
+engine: inverse-volatility weights, which is what most descriptions of risk
+parity actually implement. It coincides with true equal risk contribution only
+when all pairwise correlations are equal, so the gap between it and the engine is
+what the correlation structure is worth.
+
+No benchmark here is levered, so ``leverage`` is pinned at 1.0 throughout and the
 financing cost never enters: with ``L = 1`` the overlay identity
 ``r_p = L*(r - r_f) + r_f`` collapses to ``r_p = r`` exactly. That is deliberate
 -- benchmarks that quietly borrowed would not be benchmarks.
@@ -42,6 +48,7 @@ from .config import (
     UNIVERSE,
 )
 from .data import asof_slice, month_end_rebalance_dates
+from .riskparity import naive_inv_vol
 from .types import BacktestResult
 
 log = logging.getLogger(__name__)
@@ -288,6 +295,59 @@ def sixty_forty(
     )
 
 
+def naive_risk_parity(
+    returns: pd.DataFrame,
+    cov_estimator: CovEstimator | None = None,
+    warmup_trading_days: int = COV_WARMUP_TRADING_DAYS,
+    strategy: str = "Naive 1/vol",
+) -> BacktestResult:
+    """Inverse-volatility weights, re-solved monthly -- "risk parity" as usually shipped.
+
+    Weight proportional to ``1/sigma_i``, ignoring correlations entirely. This is
+    what most descriptions of risk parity actually implement, and it equals the
+    true equal-risk-contribution portfolio **only** when every pairwise
+    correlation is the same. The four sleeves here are nowhere near that -- TLT
+    correlates about -0.3 with SPY and about +0.85 with TIP -- so the two diverge
+    visibly, and showing where is one of the write-up's exhibits.
+
+    It belongs among the benchmarks rather than in the engine for exactly that
+    reason: it is the strategy the project is arguing *against*, and the crisis
+    table (TASKS.md step 24) needs it as a row. Unlevered, like every other
+    comparator here, so the ERC engine's crisis losses are never being compared
+    against a differently-geared book without the ``mean_leverage`` column saying
+    so.
+
+    The weights come from ``src.riskparity.naive_inv_vol`` rather than being
+    recomputed here -- one implementation of a quantity, per the contract's whole
+    reason for existing.
+    """
+    if returns.empty:
+        raise ValueError("cannot backtest an empty return frame")
+
+    returns = returns.sort_index()
+    tickers = list(returns.columns)
+    estimate_cov = cov_estimator or _ewma_cov
+    rebalance = month_end_rebalance_dates(returns.index, warmup_trading_days)
+
+    weight_rows, rc_rows = [], []
+    for date in rebalance:
+        cov = _nearest_psd(estimate_cov(asof_slice(returns, date)))
+        w = naive_inv_vol(cov)
+        weight_rows.append(w)
+        rc_rows.append(risk_contribution_fractions(w, cov))
+
+    return _unlevered_result(
+        pd.DataFrame(weight_rows, index=rebalance, columns=tickers),
+        pd.DataFrame(rc_rows, index=rebalance, columns=tickers),
+        returns,
+        strategy,
+        {
+            "solver_failures": 0,
+            "cov_estimator": getattr(estimate_cov, "__name__", repr(estimate_cov)),
+        },
+    )
+
+
 def _nearest_psd(cov: np.ndarray) -> np.ndarray:
     """Symmetrise and clip negative eigenvalues.
 
@@ -481,7 +541,9 @@ if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     fake = make_fake_returns()
 
-    for result in (equal_weight(fake), sixty_forty(fake), max_sharpe(fake)):
+    for result in (
+        equal_weight(fake), sixty_forty(fake), max_sharpe(fake), naive_risk_parity(fake)
+    ):
         print(f"\n{result.strategy}")
         print(f"  rebalances : {len(result.weights)}  "
               f"({result.weights.index[0].date()} -> {result.weights.index[-1].date()})")

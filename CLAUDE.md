@@ -78,8 +78,9 @@ python3 -m venv .venv
 ```bash
 .venv/bin/python tests/test_contract.py       # Phase 0 gate: contract + metrics port + fixtures
 .venv/bin/python tests/test_data.py           # data layer: windowing, calendar, look-ahead guard
-.venv/bin/python tests/test_benchmarks.py     # equal weight / 60-40 / max Sharpe
+.venv/bin/python tests/test_benchmarks.py     # equal weight / 60-40 / max Sharpe / naive 1-vol
 .venv/bin/python tests/test_crisis_slices.py  # crisis-window slicing and summary metrics
+.venv/bin/python tests/test_stress.py         # crisis table, diversification ratio, the four charts
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py              # full run -> reports/   (exists from step 30)
 ```
@@ -91,6 +92,8 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.covariance    # halflife -> inf == sample cov; PSD repair on indefinite input
 .venv/bin/python -m src.riskparity    # analytic gradient vs central differences; ERC on 500 randoms
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
+.venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
+.venv/bin/python -m src.viz           # the four charts -> reports/, from fixtures
 ```
 
 Run every suite after any change to `src/`. Only `test_data.py` and `test_contract.py` are
@@ -119,9 +122,14 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
                                                           metrics.py / benchmarks.py / stress.py / viz.py
 ```
 
-`src/__init__.py` carries the authoritative stage list. Everything through `riskparity.py` exists;
-`overlay.py`, `backtest.py`, `stress.py` and `viz.py` do not yet — see TASKS.md for which step
-creates each.
+`src/__init__.py` carries the authoritative stage list. Everything through `riskparity.py` exists,
+plus `stress.py` and `viz.py` (steps 24–27); `overlay.py` and `backtest.py` do not yet — see
+TASKS.md for which step creates each.
+
+`stress.py` and `viz.py` consume `BacktestResult` and a daily asset-return frame and nothing else,
+so they already run end to end against `tests/fixtures.py`. Phase 5 swaps the fixture for the real
+result and re-renders; no call site changes. `reports/` is gitignored until then, because a
+committed fixture chart is indistinguishable from a real one to anyone browsing the repo.
 
 Two notes on the Phase 2 modules, because both encode a decision that looks like a detail:
 

@@ -8,3 +8,11 @@ __pycache__/
 
 # Regenerable network pulls -- delete a file to force a re-pull
 data/cache/
+
+# Generated report artifacts. Ignored while the engine is still being built,
+# because everything in here is currently rendered from tests/fixtures.py --
+# shape-accurate, magnitude-meaningless -- and a committed fixture chart is
+# indistinguishable from a real result to anyone browsing the repo. Phase 5
+# (TASKS.md step 33) regenerates these from live data; commit them then, with
+# `git add -f`, once they mean something.
+reports/
