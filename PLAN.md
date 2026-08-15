@@ -161,25 +161,34 @@ flip is a *2023-onward* phenomenon — 66%, 65% and 70% of days positive in 2023
 The true mechanism is subtler and a better finding, because it means risk parity does not
 need positive correlation to fail:
 
-| Window | SPY/TLT corr | SPY | TLT | DBC | TIP |
+Sleeve returns are **peak-to-trough**: `price(end)/price(start) − 1`, i.e. the returns stamped
+*after* the window's opening close, since the start date is the peak itself. The correlation
+column is the **pairwise correlation of daily returns inside the window** — not the same
+statistic as the mean of the rolling 63-day series quoted below, and the two differ most in
+exactly the row that matters (2022: **+0.03** pairwise, **−0.09** as a rolling mean). Both are
+reported because the gap between them *is* the subtlety.
+
+| Window | SPY/TLT corr (in-window pairwise) | SPY | TLT | DBC | TIP |
 |---|---|---|---|---|---|
 | Calm 2013–19 | −0.34 | | | | |
-| GFC 2008 | −0.47 | −54.8% | **+24.9%** | −26.9% | +3.3% |
-| COVID 2020 | −0.50 | −33.4% | **+14.2%** | −25.0% | −0.6% |
-| **Rate shock 2022** | **+0.03** | −24.1% | **−31.2%** | **+21.9%** | −13.2% |
+| GFC 2008 | −0.47 | −55.2% | **+25.1%** | −27.4% | +3.7% |
+| COVID 2020 | −0.50 | −33.7% | **+14.2%** | −25.7% | −0.6% |
+| **Rate shock 2022** | **+0.03** | −24.5% | **−29.3%** | **+21.4%** | −12.7% |
 
 Three things in that last row, and the write-up should hit all three:
 
-1. **The hedge lost more than the thing it hedged.** TLT −31.2% against SPY −24.1%, with
-   correlation still mildly negative. Negative correlation only protects you if bonds
-   actually *rise*; in 2008 and 2020 they did, in 2022 they fell hardest.
+1. **The hedge lost more than the thing it hedged.** TLT −29.3% against SPY −24.5%, while the
+   rolling 63-day correlation was still mildly negative (mean −0.09, positive on only 31% of
+   days; the in-window pairwise figure is a shade positive at +0.03, which is why the write-up
+   must name which one it means). Negative correlation only protects you if bonds actually
+   *rise*; in 2008 and 2020 they did, in 2022 they fell hardest.
 2. **Correlation rising toward zero was enough.** For two equal-vol legs at 50/50, moving
    from −0.34 to ~0 lifts portfolio volatility from 0.57σ to 0.71σ — a third of the
    diversification benefit gone without a sign change. The measured **diversification ratio**
    `Σwᵢσᵢ / σₚ` fell from 2.18 (2012 peak) and 2.11 (2008) to 1.68 (2021), 1.59 (2022) and
    1.52 (2023, the lowest in the sample).
 3. **The one sleeve that worked is the one risk parity under-weights.** Commodities returned
-   **+21.9%**, and because DBC is the highest-volatility sleeve, equal *risk* contribution
+   **+21.4%**, and because DBC is the highest-volatility sleeve, equal *risk* contribution
    gives it the *smallest* capital weight. The diversifier that paid was the one held least.
 
 Four artifacts from `stress.py` and `viz.py`:

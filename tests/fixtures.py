@@ -102,9 +102,19 @@ _FLIPPED_CORR = dict(_CALM_CORR) | {
 # Annualized drift and volatility scaling per crisis, calibrated so each window
 # reproduces the SHAPE of the real one. Measured totals inside each window:
 #
-#   GFC   2007-10-09 -> 2009-03-09 : SPY -54.8%  TLT +24.9%  DBC -26.9%  TIP  +3.3%
-#   COVID 2020-02-19 -> 2020-03-23 : SPY -33.4%  TLT +14.2%  DBC -25.0%  TIP  -0.6%
-#   2022  2022-01-03 -> 2022-10-12 : SPY -24.1%  TLT -31.2%  DBC +21.9%  TIP -13.2%
+#   GFC   2007-10-09 -> 2009-03-09 : SPY -55.2%  TLT +25.1%  DBC -27.4%  TIP  +3.7%
+#   COVID 2020-02-19 -> 2020-03-23 : SPY -33.7%  TLT +14.2%  DBC -25.7%  TIP  -0.6%
+#   2022  2022-01-03 -> 2022-10-12 : SPY -24.5%  TLT -29.3%  DBC +21.4%  TIP -12.7%
+#
+# Peak-to-trough: price(end)/price(start) - 1, i.e. the returns stamped AFTER the
+# window's opening close, because the start date is the peak itself. Compounding
+# the returns stamped ON [start, end] instead measures from the day before the
+# peak and reads 2022 as SPY -24.1% / TLT -31.2% / DBC +21.9%; earlier revisions
+# of this block carried those. See metrics.slice_to_window.
+#
+# Drifts below are total / calendar-years, which is why they are so large for the
+# 33-day COVID window. Calibration, not measurement -- these fixtures are
+# shape-accurate, not magnitude-accurate, and nothing asserts on a realized path.
 #
 # Read the 2022 row twice. The bond sleeve fell HARDER than equities, and
 # commodities -- the sleeve risk parity under-weights most by capital, because
@@ -113,17 +123,17 @@ _CRISIS_PROFILES: dict[str, dict] = {
     "GFC (2008)": {
         "vol_scale": 2.5,
         "flipped": False,
-        "annual_drift": {_EQ: -0.386, _BOND: 0.175, _CMD: -0.189, _INFL: 0.023, _GOLD: 0.10},
+        "annual_drift": {_EQ: -0.390, _BOND: 0.177, _CMD: -0.193, _INFL: 0.026, _GOLD: 0.10},
     },
     "COVID (2020)": {
         "vol_scale": 3.5,
         "flipped": False,
-        "annual_drift": {_EQ: -3.66, _BOND: 1.56, _CMD: -2.74, _INFL: -0.07, _GOLD: -0.50},
+        "annual_drift": {_EQ: -3.73, _BOND: 1.58, _CMD: -2.85, _INFL: -0.07, _GOLD: -0.50},
     },
     "Rate shock (2022)": {
         "vol_scale": 1.5,
         "flipped": True,
-        "annual_drift": {_EQ: -0.310, _BOND: -0.401, _CMD: 0.281, _INFL: -0.170, _GOLD: -0.03},
+        "annual_drift": {_EQ: -0.317, _BOND: -0.380, _CMD: 0.278, _INFL: -0.165, _GOLD: -0.03},
     },
 }
 

@@ -9,7 +9,7 @@ two things.
 **capital-weight-in-bonds** column. That column is not decoration. Every strategy
 in the comparison lost money in 2022, and the ranking between them is very nearly
 a monotone function of how much of the book each one had in TLT while TLT fell
-31.2%. Reporting the ranking without it states *that* risk parity lost; reporting
+29.3%. Reporting the ranking without it states *that* risk parity lost; reporting
 it with the column states *why*, which is the difference between a backtest and
 an analysis.
 

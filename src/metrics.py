@@ -165,13 +165,19 @@ def summarize(
 # ---------------------------------------------------------------------------
 # Crisis windows
 # ---------------------------------------------------------------------------
-# The three windows in ``config.CRISIS_WINDOWS`` are peak-to-trough, so a sliced
-# series very often opens with a negative period. That is exactly the case the
-# peak floor in :func:`_drawdown_series` was kept for -- without it, slicing to a
-# crisis and asking for its drawdown would report the decline from the window's
-# own first close rather than from the pre-crisis peak, understating every
-# crisis in the table. The port's subtlety and this section's correctness are
-# the same fact.
+# The three windows in ``config.CRISIS_WINDOWS`` are peak-to-trough, and their
+# start date is the peak CLOSE -- so the returns of the window are the ones
+# stamped strictly after it, and a sliced series opens with the first day of
+# decline. That is exactly the case the peak floor in :func:`_drawdown_series`
+# was kept for -- without it, slicing to a crisis and asking for its drawdown
+# would report the decline from the window's own first close rather than from the
+# pre-crisis peak, understating every crisis in the table. The port's subtlety
+# and this section's correctness are the same fact.
+#
+# The exclusive lower bound lives in :func:`slice_to_window`, which explains it;
+# :func:`slice_dated` deliberately stays inclusive because it slices *levels* --
+# a price frame, a rolling correlation, step 25's diversification ratio -- where
+# the value on the peak date is the peak itself and belongs in the window.
 
 Window = str | tuple[str | pd.Timestamp | None, str | pd.Timestamp | None]
 
@@ -312,6 +318,30 @@ def slice_to_window(
     what any honest attribution of the window's return has to attribute it to.
     When the window opens before the very first rebalance there is no such
     allocation, and the returns are trimmed forward to where one exists instead.
+
+    Why the return slice opens *after* the window's start date
+    ---------------------------------------------------------
+    ``config.CRISIS_WINDOWS`` dates are **peak-to-trough**, and the start date is
+    the peak *close*. The return stamped on that date is the move from the
+    previous close *into* the peak -- it is the last day of the rally, not the
+    first day of the crisis. So the window's returns are the ones stamped
+    strictly after it, and the loss it describes is
+    ``price(end) / price(start) - 1``.
+
+    Including it was measuring from the close *before* the peak. Small in most
+    places and not everywhere: over 2022-01-03 to 2022-10-12 it moved TLT from
+    -29.3% to -31.2%, because TLT happened to fall 2.6% on the equity peak date
+    itself, and that is the number the 2022 write-up turns on. Verified across all
+    three windows: the start date is the SPY local-peak close in each, and the
+    return stamped on it is *positive* in each (+0.94%, +0.48%, +0.58%) -- the
+    rise into the peak, which a peak-to-trough drawdown cannot contain.
+
+    This is also what makes the peak floor in :func:`_drawdown_series` do the job
+    its docstring describes. With the start date included the first in-window
+    period was positive, so the running peak rose above 1.0 on day one and the
+    floor never bound; excluding it, the first period is the first day of decline
+    and the floor is what stops the drawdown being measured from the window's own
+    first close.
     """
     window = _as_window(start, end)
     window_start, window_end = resolve_window(window)
@@ -332,14 +362,20 @@ def slice_to_window(
             f"rebalances {rebalances[0].date()} to {rebalances[-1].date()}"
         )
 
-    # With no prior allocation the window has to start where one begins, or the
-    # returns would describe days no weights in this result explain.
-    returns_from = window_start if anchor is not None else kept[0]
-    returns = result.returns.loc[returns_from:window_end]
+    # EXCLUSIVE lower bound -- see "Why the return slice opens after the window's
+    # start date" above. With no prior allocation the bound is the first rebalance
+    # instead, for the same reason in a different guise: weights decided at the
+    # close of a rebalance date apply from the next day, so a return stamped on
+    # the rebalance date itself is one no weights in this result explain.
+    returns_after = window_start if anchor is not None else kept[0]
+    in_window = result.returns.index > returns_after
+    if window_end is not None:
+        in_window &= result.returns.index <= window_end
+    returns = result.returns[in_window]
     if len(returns) == 0:
         raise ValueError(
-            f"no daily returns in {returns_from.date()} to "
-            f"{'open' if window_end is None else window_end.date()}"
+            f"no daily returns after {returns_after.date()} through "
+            f"{'the end of the sample' if window_end is None else window_end.date()}"
         )
 
     # Decided here, where the *unsliced* series is still available. After the cut

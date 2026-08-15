@@ -13,9 +13,17 @@ Note the mechanism carefully, because the obvious version is wrong and this repo
 it once against live data: the stock/bond correlation did **not** flip positive during the 2022
 drawdown. Over `2022-01-03 → 2022-10-12` the rolling 63-day SPY/TLT correlation averaged **−0.09**
 and was positive on only 31% of days; the persistent flip is 2023 onward. What happened is that
-**TLT fell 31.2% against SPY's 24.1%** — the hedge lost more than the thing it hedged — while
+**TLT fell 29.3% against SPY's 24.5%** — the hedge lost more than the thing it hedged — while
 correlation merely rose toward zero, which was enough to remove the offset. See PLAN.md's 2022
 section and the "Data reality check" in TASKS.md before writing anything about 2022.
+
+Those sleeve returns are **peak-to-trough** — `price(end)/price(start) − 1`, the returns stamped
+*after* the window's opening close, because the start date is the peak itself. Quoting a crisis
+window by compounding the returns stamped *on* `[start, end]` instead measures from the close
+before the peak, which is a different and larger number: it reads TLT 2022 as −31.2% against
+SPY's −24.1%, inflating the gap from 4.8pp to 7.1pp. Earlier drafts of this file carried those
+figures. `metrics.slice_to_window` uses the exclusive bound and
+`tests/test_crisis_slices.py::test_window_excludes_the_peak_days_return` pins it.
 
 `PLAN.md` holds the design rationale and the pinned math. `TASKS.md` holds the numbered build
 order — every step names one owner, one branch, and a "done when". Read the relevant step before
