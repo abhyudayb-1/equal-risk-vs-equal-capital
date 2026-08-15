@@ -42,6 +42,17 @@ B's oracle suite), `overlay.py`, `backtest.py`, and Person B's `stress.py` / `vi
 1.76x, **0 solver failures, 0 covariances repaired, worst risk-contribution deviation 1.6e-07**.
 Those are the headline numbers until Phase 5 re-runs them; treat them as current, not final.
 
+**A live-run finding the write-up has to address, because the project is framed around 2022 and
+this does not fit that frame.** The worst drawdown in the sample is not 2022 — it is **COVID, at
+−29.10%** (peak 2020-02-20, trough 2020-03-18), against −25.43% for the GFC and **−17.72% for
+2022**. And the strategy walked into it at **2.33x, its highest pre-crisis leverage of the whole
+run** (GFC 1.83x, 2022 1.74x), because 2019 was calm and the trailing estimator had nothing else
+to say. That is the lagging-overlay mechanism from step 21 at its most expensive: the vol target
+levers hardest into quiet regimes, and the fastest crash in the sample followed the quietest year.
+2022 is still the more interesting *mechanism* — it is where diversification itself failed rather
+than where the overlay mistimed — but "risk parity's worst month was caused by its own vol target"
+is a finding, and this repo does not hide the ones that look bad.
+
 Remaining: Person A has **28–29** (the look-ahead test, diagnostics + run summary), Person B has
 **30–31** (`run_backtest.py` CLI, README). Then Phase 5 integration. The two tracks are parallel.
 
@@ -122,9 +133,12 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.viz           # the four charts -> reports/, from fixtures
 ```
 
-Run every suite after any change to `src/`. Only `test_data.py` and `test_contract.py` are
-network-free; the suites must keep passing offline, so live-data checks belong in the Phase 5 run
-rather than in a test.
+Run every suite after any change to `src/`. **All six suites and all seven module self-checks run
+offline** — verified by blocking `socket.connect` / `getaddrinfo` and re-running each one, not by
+assumption. `src/data.py` imports `requests`, so the import graph touches the network stack, but
+nothing under `tests/` or any `__main__` opens a connection. Keep it that way: live-data checks
+belong in the Phase 5 run, not in a test, because a suite that needs the network fails for reasons
+that have nothing to do with the code.
 
 **Every suite exits 0.** `test_riskparity.py` used to exit 1 by design, on a known bug filed
 against `solve_erc`; that fix has landed and the suite is green. If one exits non-zero now, it is a
