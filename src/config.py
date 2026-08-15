@@ -132,6 +132,22 @@ ERC_SLSQP_FTOL: float = 1e-14
 # converge rather than assuming every draw converges.
 ERC_MAX_RESTARTS: int = 150
 
+# How negative an eigenvalue may be before solve_erc rejects the covariance as
+# not PSD, as a FRACTION of the largest variance on the diagonal. Relative and
+# not absolute on purpose: these covariances are annualised variances of ETF
+# sleeves, so the diagonal runs ~1e-2 and an absolute bar would mean something
+# different at every scale. Note this is a rejection bar for a matrix that was
+# never repaired, not MIN_EIGENVALUE, which is the floor nearest_psd clips TO
+# once it has decided to repair.
+#
+# Set from the gap between the two populations, both measured over 2000 draws:
+# genuinely PSD-but-singular matrices (rho = 1 exactly, and random rank-deficient
+# B@B.T) bottom out at -1.0e-15 of the largest variance, which is eigvalsh's own
+# rounding noise; the non-PSD matrix step 20 requires be rejected sits at -0.42.
+# 1e-10 sits five orders above the noise and eight below the rejection, so the
+# choice is not delicate -- anything in that range behaves identically.
+ERC_MIN_EIGENVALUE_RATIO: float = 1e-10
+
 # ---------------------------------------------------------------------------
 # Volatility-targeting overlay
 # ---------------------------------------------------------------------------
