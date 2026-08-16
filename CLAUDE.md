@@ -8,7 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
-**Done: steps 1–27, all on `main`** — the whole engine and the whole analysis layer.
+**Done: steps 1–31, all on `main`** — every numbered build step. The engine, the analysis layer,
+the hardening and the CLI. **Only Phase 5 (32–35) is left, and it is joint work.**
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -23,6 +24,10 @@ are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, own
 | 21–22 | A | `da0c70c` `46acb51` | `overlay.py`: vol targeting, the leverage cap, financed leverage |
 | 23 | A | `725e120` | `backtest.py`: the rebalance loop → a real validated `BacktestResult` |
 | 24–27 | B | `f0b2758` | `stress.py` (crisis table, diversification ratio) and `viz.py` (the four charts) |
+| 28 | A | `46906f4` `fea684c` | `tests/test_lookahead.py`: the `<= t` guard, **attacked by removing it** |
+| 29 | A | `9659e8e` | `meta` diagnostics + `backtest.format_run_summary`, marking failures with `!` |
+| 30 | B | `160b8e8` | `run_backtest.py`: the end-to-end CLI, every flag documented |
+| 31 | B | `864a5f6` | `README.md`: install, run, and the method — results sections left for Phase 5 |
 
 Follow-up fixes that landed on top of those steps and are worth knowing about: `361c995` (reject a
 non-PSD covariance in `solve_erc` rather than solving it), `d61e7bd` (reject out-of-order rows in
@@ -30,10 +35,20 @@ both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `
 `36a275c` (correct the 2022 thesis against live data), and `bc7c36f` / `1491e6b` / `c5f9c5f`
 (audit passes on Phase 0, Phase 2 and B's step 24–27 branch).
 
-**Remaining:** Person A has **28–29** (`tests/test_lookahead.py`; diagnostics into `meta` + the run
-summary). Person B has **30–31** (`run_backtest.py` CLI, `README.md` — currently an empty stub).
-Then **Phase 5, 32–35**: live run, real charts, the 2022 write-up, tag `v1.0`. A's and B's tracks
-are parallel and neither blocks the other.
+**Remaining: Phase 5 only (32–35), and it is JOINT — the parallel A/B split is over.**
+
+| Step | Owner | What it needs |
+| --- | --- | --- |
+| 32 | A | First real end-to-end run on live data; fix whatever breaks |
+| 33 | B | Swap fixtures for the real `BacktestResult` in `viz.py` / `stress.py`, regenerate `reports/` |
+| 34 | Both | The write-up: the 2022 mechanism, the crisis table, the findings below that do not flatter |
+| 35 | Both | Final review, tag `v1.0` |
+
+Four things are already known to be waiting there, so nobody rediscovers them cold: the two
+stand-in retirements in "Two stand-ins" below, wiring `format_run_summary` into `run_backtest.py`
+(one line, noted at the end of the `backtest.py` bullets), and deciding whether
+`MAX_CONDITION_NUMBER` should come down, since as set it cannot fire — the measurement is in the
+same bullets.
 
 Read "Where the build is" next — the live-run numbers and the two findings that constrain the
 write-up are there, and they are the part a summary cannot carry.
@@ -108,21 +123,30 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: read `TASKS.md`, find the lowest-numbered unfinished step for your
-owner, and build it. Nothing else needs reconstructing — the contract in `src/types.py` and the
-fixtures make each step independently buildable.
+To resume in a new session: every numbered step is built, so start from Phase 5 in `TASKS.md`
+(steps 32–35) rather than hunting for the lowest unfinished one. The fastest way back into the
+code is `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole
+pipeline on live data in one command.
 
-Two stand-ins in `src/benchmarks.py` are now superseded and must be retired in Phase 5:
+Two stand-ins in `src/benchmarks.py` are superseded. **One is retired in practice, one is not** —
+and the distinction matters, because the first reads as still-outstanding if you only grep:
 
-- `_ewma_cov` → `src.covariance.estimate_covariance`. Injectable rather than hard-wired: pass the
-  real estimator via `cov_estimator=` at the call site — all four benchmarks accept it — and do not
-  fork a second copy.
-- `_nearest_psd` → `src.covariance.nearest_psd`. Note these two are **not** equivalent, so swapping
-  is a behaviour change and not a rename. `_nearest_psd` clips eigenvalues of the covariance
-  directly, which shifts the diagonal and therefore quietly alters asset volatilities;
-  `covariance.nearest_psd` repairs in correlation space and leaves them intact. The real one is
-  what `max_sharpe` should be judged on, since a tangency portfolio is sensitive to exactly those
-  volatilities.
+- `_ewma_cov` → `src.covariance.estimate_covariance`. **Done at the call site that matters:**
+  `run_backtest.py` passes `cov_estimator=estimate_covariance` to all four benchmarks, so every
+  number in a real run already comes from the engine's own estimator. What remains is the module
+  *default* — `estimate_cov = cov_estimator or _ewma_cov` — which still applies to any caller that
+  omits the argument, including the `__main__` self-check and the fixtures. Deleting the default
+  is a Phase 5 tidy, not a correctness fix.
+- `_nearest_psd` → `src.covariance.nearest_psd`. **Still in the path even under injection:**
+  `max_sharpe` and `naive_risk_parity` both call `_nearest_psd(estimate_cov(...))`, so the
+  stand-in runs on top of whatever estimator you inject. It is harmless as things stand — it
+  early-returns the symmetrised input untouched when the smallest eigenvalue is already above
+  `MIN_EIGENVALUE`, which `estimate_covariance`'s output always is — so today it is a no-op
+  symmetrise rather than a second, different repair. It should still go, because the two are **not**
+  equivalent if it ever fires: `_nearest_psd` clips eigenvalues of the covariance directly, which
+  shifts the diagonal and quietly alters asset volatilities, while `covariance.nearest_psd` repairs
+  in correlation space and leaves them intact. A tangency portfolio is about as sensitive to those
+  volatilities as a portfolio gets.
 
 ## Setup and commands
 
@@ -292,7 +316,27 @@ like tidying:
   the bill rate. Financing is charged at `DTB3` flat, so a real book pays more and these levered
   results are still optimistic — less so than the free-leverage version, but optimistic. Monthly
   turnover on four liquid ETFs is low enough that costs would not change the *shape* of any
-  conclusion here, which is why the omission is defensible rather than why it is invisible.
+  conclusion here, which is why the omission is defensible rather than why it is invisible. The
+  run summary prints this line too, because it is the block someone screenshots.
+- **A failure has to be visible three ways (step 29), and `meta["run_health"]` is the one to read
+  first.** It is `"clean"` or a phrase naming what went wrong; `format_run_summary(result)` renders
+  the whole picture and marks a bad line with a leading `!`; and the run logs a warning both when a
+  rebalance fails and once at the end. Silence from the last of those means a clean run, which is
+  the only thing silence is allowed to mean. The date fields in `meta` are **short strings, not
+  lists of `Timestamp`** — a list prints as its length in a generic dump, so `solver_failure_dates`
+  as a list would read `2 entries` and the date would be invisible exactly where someone reads it.
+  `meta["diagnostics"]` stays the lossless per-rebalance frame; filter that when you want data.
+- **`0 ill-conditioned` means "nothing pathological", not "well conditioned".** Measured while
+  building step 29: shrinkage maps `ρ → 0.9ρ`, which caps the shrunk *correlation* matrix's
+  condition number at `(1 + (N−1)(1−d))/d` = **37** for four sleeves — 37.00 at `ρ = 1` exactly,
+  where the unshrunk matrix is 3.2e32. So `MAX_CONDITION_NUMBER = 1e8` needs a ~1,600:1 volatility
+  ratio between two sleeves to fire at all; over 20,000 random covariances at realistic vols the
+  worst was 1,183. The informative fields are the condition numbers themselves, which is why the
+  median is reported beside the max. Whether to lower that constant is a Phase 5 decision, not a
+  silent one.
+- **`format_run_summary` is not wired into `run_backtest.py` yet.** The CLI's generic `_print_meta`
+  dump surfaces every new field including `run_health`, so nothing is hidden — but printing the
+  formatted block is a one-line addition in B's file, and Phase 5 is when to make it.
 
 ### The contract is the load-bearing design decision
 
@@ -318,7 +362,25 @@ Consequences that constrain how you work:
 At rebalance date `t`, only data timestamped `<= t` may be used — covariance, trailing vol estimate
 and risk-free rate alike. `data.asof_slice()` is the single chokepoint for this; route new
 estimators through it rather than re-deriving the guard at each call site.
-`tests/test_lookahead.py` (step 28) exists to attack that one function.
+
+`tests/test_lookahead.py` (step 28, 49 checks) attacks that one function three ways, and the third
+is the one to preserve if the file is ever refactored:
+
+1. a 12× spike in the last 200 days — every earlier rebalance must be **bit-identical**, and later
+   ones must move, since "the future changed nothing" is also true of an engine ignoring its input;
+2. **truncation equivalence** — deleting everything after a cutoff cannot change a rebalance before
+   it. Stronger than the spike, because it does not depend on the perturbation moving the leaked
+   quantity;
+3. **removing the guard** — `asof_slice` is monkeypatched to a leaky identity and 1–2 are re-run
+   *expecting failure*. Note it patches every module that imported the function, found by scanning
+   `sys.modules`: `backtest` and `overlay` both do `from .data import asof_slice`, so patching
+   `src.data` alone would change nothing and the mutation test would pass while proving nothing.
+
+The same file covers the one-day rule with its own mutation, and `data.align_risk_free`'s
+forward-fill-only direction. What it deliberately does **not** assert is that the hindsight version
+earns more: that is true on live data (+0.053%/yr) but across 12 seeds the synthetic sign flips
+(−0.148%/yr to +0.135%/yr, positive on 4), so it pins the mechanism instead — the leak must land on
+exactly the rebalance days and no others.
 
 ### Conventions inherited from `abhyudayb-1/sp500-factor-backtester`
 
@@ -375,14 +437,30 @@ Keyless sources only, so anyone can clone and run: yfinance for prices, the FRED
   seed to seed. A realised-path check written this way failed on 3 of 15 seeds before it was caught.
   Assert on the *parameters* instead (`_CRISIS_PROFILES`, the correlation tables) — equally
   informative, never flaky. Ensemble means across seeds are the fallback when a realised property
-  genuinely must be tested.
+  genuinely must be tested. It bit a second time in step 28: "the look-ahead version earns more" is
+  true on live data (+0.053%/yr) and *failed on the first seed tried*, because across 12 seeds the
+  synthetic drift runs −0.148%/yr to +0.135%/yr and is positive on 4 of them. The fix was to assert
+  the mechanism (which days moved) rather than the outcome (which direction), and to sweep seeds
+  before believing any new check.
+- **A test that cannot fail proves nothing — so break the thing and watch it fail.** The house
+  technique now, used three times: `asof_slice` monkeypatched to a leaky identity, `_in_force_before`
+  put back to the naive `ffill`, and a solver failure injected at the seam in `backtest.py`'s
+  self-check. All three assert that the *reporting or the guard* is what makes the green result
+  green. Every perturbation check also needs its positive control — the poisoned run has to differ
+  *somewhere*, or an engine ignoring its input passes.
 - Bugs found by review get a regression check in the matching suite, not just a fix. Every bug
   fixed here so far was silent — passing tests, plausible output, wrong behaviour — so "it runs and
   the number looks reasonable" is not evidence of anything.
 - Comments here explain *why* a subtle choice is correct (the ones that would otherwise get
   "simplified" away). Match that density — this is a capstone that gets read and defended, not
   just run.
-- Ownership split: Person A (`abhyudayb-1`) owns the engine modules, Person B (`shivakasula`, this
-  machine) owns metrics/benchmarks/stress/viz/tests/CLI/README. Only touch the files listed for the
-  step you are on. Branches are `feat/a<NN>-slug` / `feat/b<NN>-slug`, one step per branch, merged
-  before the next starts.
+- Ownership split: Person A (`abhyudayb-1`) owns the engine modules, Person B (`shivakasula`) owns
+  metrics/benchmarks/stress/viz/tests/CLI/README. Only touch the files listed for the step you are
+  on. Branches are `feat/a<NN>-slug` / `feat/b<NN>-slug`, one step per branch, merged before the
+  next starts. Two standing exceptions, both already exercised: a step may assign a file outside its
+  owner's usual area (step 28 gave `tests/test_lookahead.py` to A), and `CLAUDE.md` refreshes go on
+  their own `docs/`-prefixed branch rather than riding along with a feature.
+- **Phase 5 is joint, so the split above stops applying at step 32.** Its branches are named in
+  `TASKS.md` (`feat/a32-live-run`, `feat/b33-real-charts`, `feat/analysis-2022`) and steps 34–35
+  are both people. Wiring `format_run_summary` into `run_backtest.py` — A's function, B's file — is
+  the first thing that would have needed a negotiation under the old rule and does not now.
