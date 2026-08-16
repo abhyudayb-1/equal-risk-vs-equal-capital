@@ -255,3 +255,30 @@ DIVERSIFICATION_WINDOW_DAYS: int = CORRELATION_WINDOW_DAYS
 # / 1.790 / 1.678 / 1.586 / 1.521. A diagnostic whose absolute level is quoted in
 # the write-up has to be the reproducible one.
 DIVERSIFICATION_SHRINKAGE: float = 0.0
+
+# ---------------------------------------------------------------------------
+# Run summary reporting (step 29)
+# ---------------------------------------------------------------------------
+# Presentation only. Neither of these changes a single number the engine
+# computes -- they govern how the run summary talks about numbers it was given,
+# and they live here because this file is where a reader looks for a threshold
+# rather than because they are policy.
+#
+# How many offending dates a summary line names before it collapses to a count.
+# Six fits one terminal line at these label widths; the full list is always in
+# meta["diagnostics"], which is the machine-readable record.
+SUMMARY_MAX_DATES_LISTED: int = 6
+
+# Wrap width for the summary's continuation lines. 88 rather than 79 because the
+# lines carry dates and percentages that read worse broken up, and rather than
+# unlimited because a terminal wrapping a 190-character sentence at whatever
+# column it happens to be breaks it mid-word.
+SUMMARY_LINE_WIDTH: int = 88
+
+# Above this share of rebalances at the leverage CEILING, the summary adds a
+# sentence saying the overlay is saturated. A saturated overlay is not targeting
+# volatility any more, it is holding a constant notional, and that is invisible
+# in the leverage series itself -- which just looks flat. The exact cut is a
+# judgement about when the reader should be told, not a policy limit: the cap
+# itself is LEVERAGE_CAP, and the fraction is printed at every level regardless.
+SATURATION_REPORT_FRACTION: float = 0.25
