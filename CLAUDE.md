@@ -64,10 +64,6 @@ case: the restart ladder can say it left a local minimum, but only an independen
 say the escaped answer is the *global* optimum rather than a second, prettier local one. It is, to
 2.9e-09, after 8 restarts.
 
-Next up: **21–23** for Person A (`overlay.py` vol targeting and financing, then `backtest.py`) and
-**24–27** for Person B (`stress.py`, then `viz.py`). Those two tracks are parallel and neither
-blocks the other.
-
 Two things the solver work established that stay true downstream:
 
 - The least-squares ERC objective `Σ(RC_i − σ_p/N)²` is **not convex**. It has local minima that pin
@@ -115,7 +111,7 @@ python3 -m venv .venv
 .venv/bin/python tests/test_stress.py         # crisis table, diversification ratio, the four charts
 .venv/bin/python tests/test_riskparity.py     # RC identity, the ERC oracle, degenerate cases
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
-.venv/bin/python run_backtest.py              # full run -> reports/   (exists from step 30)
+.venv/bin/python run_backtest.py              # full run -> reports/   (NOT YET BUILT — step 30)
 ```
 
 Engine modules also carry a `__main__` self-check, which is where Person A's steps assert their
