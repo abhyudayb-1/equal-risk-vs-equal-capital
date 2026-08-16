@@ -140,8 +140,9 @@ python3 -m venv .venv
 .venv/bin/python tests/test_crisis_slices.py  # crisis-window slicing and summary metrics
 .venv/bin/python tests/test_stress.py         # crisis table, diversification ratio, the four charts
 .venv/bin/python tests/test_riskparity.py     # RC identity, the ERC oracle, degenerate cases
+.venv/bin/python tests/test_lookahead.py      # the <= t guard, incl. removing it to prove the teeth
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
-.venv/bin/python run_backtest.py              # full run -> reports/   (NOT YET BUILT — step 30)
+.venv/bin/python run_backtest.py              # full run -> reports/
 ```
 
 Engine modules also carry a `__main__` self-check, which is where Person A's steps assert their
