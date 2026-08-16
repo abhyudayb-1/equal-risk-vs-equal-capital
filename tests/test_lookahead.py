@@ -139,6 +139,21 @@ def _rows_before(result, date: pd.Timestamp) -> np.ndarray:
     return result.weights.index < date
 
 
+def _leverage_in_force(result, index: pd.DatetimeIndex) -> pd.Series:
+    """The leverage that earned each date: the last decision STRICTLY before it.
+
+    Derived here rather than imported from ``overlay._in_force_before`` on
+    purpose. A test that reconstructs the engine's alignment by calling the
+    engine's alignment agrees with it by construction, including when both are
+    wrong; ``searchsorted(side="left") - 1`` is the same rule written out
+    independently.
+    """
+    positions = result.leverage.index.searchsorted(index, side="left") - 1
+    if np.any(positions < 0):
+        raise AssertionError("a return date precedes every leverage decision")
+    return pd.Series(result.leverage.to_numpy()[positions], index=index)
+
+
 # ---------------------------------------------------------------------------
 # Removing the guard -- used by the last test, defined here because it explains
 # what "the guard" actually is
@@ -189,7 +204,7 @@ def _one_day_rule_removed():
 
     overlay._in_force_before = naive
     try:
-        yield
+        yield original
     finally:
         overlay._in_force_before = original
 
@@ -405,11 +420,24 @@ def test_a_future_rate_change_cannot_move_a_past_return() -> None:
         np.array_equal(clean.returns.to_numpy()[earned_before],
                        hiked.returns.to_numpy()[earned_before]),
     )
-    check(
-        "returns after it are lower (leverage is financed, so the hike bites)",
-        float(hiked.returns.to_numpy()[~earned_before].mean())
-        < float(clean.returns.to_numpy()[~earned_before].mean()),
-    )
+    # The positive control, as an identity rather than a comparison of means.
+    # Weights and leverage are identical between the two runs, so the whole
+    # difference after the hike must be the financing leg and nothing else:
+    # (L-1) * (r_f_hiked - r_f_clean), with L the decision in force that day.
+    # Asserting the exact quantity beats asserting "returns fell", which would
+    # also hold for a bug that scaled the returns.
+    after = clean.returns.index[~earned_before]
+    lev = _leverage_in_force(clean, after)
+    predicted = (lev - 1.0) * (stepped.loc[after] - flat.loc[after])
+    observed = clean.returns.loc[after] - hiked.returns.loc[after]
+    worst = float((observed - predicted).abs().max())
+    # Not exact equality: `observed` is a difference of two ~1e-2 returns, so it
+    # carries a few ulps of cancellation error (~2e-18 measured). The bar is set
+    # a couple of decades above that and still twelve below the ~2e-4 quantity
+    # being predicted, which is what makes it an identity rather than a fit.
+    check(f"the hike costs exactly (L-1)*delta_rate per day ({worst:.1e})", worst < 1e-16)
+    check("and it is charged on every day after it, not just on average",
+          bool((observed.abs() > 0).all()))
 
     # align_risk_free forward-fills only. Back-filling would hand a past day a
     # rate published after it -- the same leak in the one series nobody thinks of
@@ -519,19 +547,24 @@ def test_the_guard_is_what_makes_the_others_pass() -> None:
             ),
         )
 
-    # Restored, and the restoration is checked -- a context manager that leaked a
-    # patch would turn every later run of this file into a false pass.
-    check("the guard is restored on exit", data.asof_slice is not None
-          and np.array_equal(
-              run_backtest(poisoned, risk_free=_rate(poisoned.index))
-              .weights.to_numpy()[_rows_before(clean, spike)],
-              clean.weights.to_numpy()[_rows_before(clean, spike)],
-          ))
+    # Restored, and checked twice over -- by identity, and by behaviour. A
+    # context manager that leaked its patch would turn every later run of this
+    # file into a false pass, which is the one bug a mutation test cannot
+    # survive having.
+    check("every patched module holds the real asof_slice again",
+          all(getattr(m, "asof_slice", None) is data.asof_slice for m in patched))
+    restored = run_backtest(poisoned, risk_free=_rate(poisoned.index))
+    before = _rows_before(clean, spike)
+    check(
+        "and the spike is invisible again in a fresh run",
+        np.array_equal(restored.weights.to_numpy()[before],
+                       clean.weights.to_numpy()[before]),
+    )
 
     # The same treatment for the one-day rule. It is enforced by a different
     # mechanism (_in_force_before, not asof_slice), so it needs its own mutation.
     rate = _rate(frame.index)
-    with _one_day_rule_removed():
+    with _one_day_rule_removed() as real_rule:
         hindsight = run_backtest(frame, risk_free=rate)
         previous = _implied_return(hindsight, frame, rate, same_day=False)
         same_day = _implied_return(hindsight, frame, rate, same_day=True)
@@ -575,8 +608,7 @@ def test_the_guard_is_what_makes_the_others_pass() -> None:
         print(f"       (hindsight is worth {drift:+.3%}/yr on this path; "
               f"sign is path-dependent, magnitude is not)")
 
-    check("the one-day rule is restored on exit",
-          overlay._in_force_before.__name__ == "_in_force_before")
+    check("the one-day rule is restored on exit", overlay._in_force_before is real_rule)
 
 
 if __name__ == "__main__":
