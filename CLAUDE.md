@@ -2,6 +2,42 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Build ledger — what is done, at a glance
+
+**`git log --oneline` is the truth; this table is a convenience that goes stale.** Commit subjects
+are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
+"done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
+
+**Done: steps 1–27, all on `main`** — the whole engine and the whole analysis layer.
+
+| Step | Owner | Landed as | What it produced |
+| --- | --- | --- | --- |
+| 1–3 | A | `2eac618` `2237b70` `466ab1f` | scaffold, `config.py`, **`types.py` — the contract** |
+| 4–6 | B | `0cd02e7` `728a852` `1c3e089` | `cache.py` (verbatim port), `metrics.py` (daily port), `tests/fixtures.py` |
+| 7 | Both | `54446cf` | Phase 0 gate: `tests/test_contract.py`. **B unblocked from here** |
+| 8–10 | A | `1670e80` `c7f6271` `8683fba` | `data.py`: yfinance prices, keyless FRED `DTB3`, returns + rebalance calendar |
+| 11–13 | B | `43cef53` `1fea96f` `4f6b332` | `benchmarks.py` (equal-weight, 60/40, max-Sharpe), crisis-window slices in `metrics.py` |
+| 14–15 | A | `d51fce7` | `covariance.py`: EWMA covariance, shrinkage, PSD repair in correlation space |
+| 16–17 | A | `f05e03f` | `riskparity.py`: risk contributions, `naive_inv_vol`, the SLSQP ERC solver |
+| 18–20 | B | `5ffd1fd` `6c26f98` | `tests/test_riskparity.py`: RC identity, **the independent convex oracle**, degenerate cases |
+| 21–22 | A | `da0c70c` `46acb51` | `overlay.py`: vol targeting, the leverage cap, financed leverage |
+| 23 | A | `725e120` | `backtest.py`: the rebalance loop → a real validated `BacktestResult` |
+| 24–27 | B | `f0b2758` | `stress.py` (crisis table, diversification ratio) and `viz.py` (the four charts) |
+
+Follow-up fixes that landed on top of those steps and are worth knowing about: `361c995` (reject a
+non-PSD covariance in `solve_erc` rather than solving it), `d61e7bd` (reject out-of-order rows in
+both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `b9916a8` /
+`36a275c` (correct the 2022 thesis against live data), and `bc7c36f` / `1491e6b` / `c5f9c5f`
+(audit passes on Phase 0, Phase 2 and B's step 24–27 branch).
+
+**Remaining:** Person A has **28–29** (`tests/test_lookahead.py`; diagnostics into `meta` + the run
+summary). Person B has **30–31** (`run_backtest.py` CLI, `README.md` — currently an empty stub).
+Then **Phase 5, 32–35**: live run, real charts, the 2022 write-up, tag `v1.0`. A's and B's tracks
+are parallel and neither blocks the other.
+
+Read "Where the build is" next — the live-run numbers and the two findings that constrain the
+write-up are there, and they are the part a summary cannot carry.
+
 ## What this is
 
 Project 16 — a risk-parity + volatility-targeting portfolio engine over four ETF sleeves
@@ -31,11 +67,8 @@ starting work; the step text is the spec.
 
 ## Where the build is
 
-**Check `git log --oneline` before trusting this section — it goes stale, the log does not.**
-Commit subjects are `Step NN [A|B]: ...`, so the log reads as a build ledger. As of the last edit,
-**steps 1–27 are on `main`** — the whole engine and the whole analysis layer. Phase 0, the data
-layer, all four benchmarks, the crisis-window slices, Phase 2 (covariance, the ERC solver, Person
-B's oracle suite), `overlay.py`, `backtest.py`, and Person B's `stress.py` / `viz.py`.
+Which steps are done is in the ledger above; this section is what the finished steps *found*.
+**Check `git log --oneline` before trusting either — they go stale, the log does not.**
 
 **The engine runs end to end on live data.** 234 monthly rebalances, 2007-02-28 → 2026-07-31,
 4896 return days: **CAGR 7.13%, vol 11.26%, Sharpe 0.67, max drawdown −29.10%**, mean leverage
@@ -53,9 +86,6 @@ levers hardest into quiet regimes, and the fastest crash in the sample followed 
 than where the overlay mistimed — but "risk parity's worst month was caused by its own vol target"
 is a finding, and this repo does not hide the ones that look bad.
 
-Remaining: Person A has **28–29** (the look-ahead test, diagnostics + run summary), Person B has
-**30–31** (`run_backtest.py` CLI, README). Then Phase 5 integration. The two tracks are parallel.
-
 **Phase 2 is closed.** The cross-check it existed for passed: Person B's independent convex
 log-barrier oracle agrees with Person A's SLSQP solver to **7.3e-08** on 50 random covariances
 (bar: `ERC_AGREEMENT_TOLERANCE`, 1e-6), and both were checked against the equicorrelation closed
@@ -63,10 +93,6 @@ form so a shared sign error would still have been caught. Its highest-value use 
 case: the restart ladder can say it left a local minimum, but only an independent derivation can
 say the escaped answer is the *global* optimum rather than a second, prettier local one. It is, to
 2.9e-09, after 8 restarts.
-
-Next up: **21–23** for Person A (`overlay.py` vol targeting and financing, then `backtest.py`) and
-**24–27** for Person B (`stress.py`, then `viz.py`). Those two tracks are parallel and neither
-blocks the other.
 
 Two things the solver work established that stay true downstream:
 
@@ -115,7 +141,7 @@ python3 -m venv .venv
 .venv/bin/python tests/test_stress.py         # crisis table, diversification ratio, the four charts
 .venv/bin/python tests/test_riskparity.py     # RC identity, the ERC oracle, degenerate cases
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
-.venv/bin/python run_backtest.py              # full run -> reports/   (exists from step 30)
+.venv/bin/python run_backtest.py              # full run -> reports/   (NOT YET BUILT — step 30)
 ```
 
 Engine modules also carry a `__main__` self-check, which is where Person A's steps assert their
