@@ -69,7 +69,7 @@ minutes; the results are cached under `data/cache/`, so subsequent runs are fast
 
 | Flag | What it does |
 |---|---|
-| `--start YYYY-MM-DD` | First date of price history. Defaults to `2006-02-03`, DBC's inception. |
+| `--start YYYY-MM-DD` | Earliest date price history is requested from. Defaults to `2006-02-03`, DBC's inception; the first close the sleeves share is `2006-02-06` and the first daily return is `2006-02-07`. |
 | `--target-vol SIGMA` | Annualised volatility the overlay targets, as a decimal. Default `0.10`. |
 | `--max-leverage L` | Upper leverage cap. Default `3.0`; the floor stays at `0.5`. |
 | `--refresh-prices` | Bypass the on-disk caches and re-download. |
@@ -189,8 +189,9 @@ untouched and the adjustment is absorbed by the correlation structure.
 
 ### 3. The volatility-targeting overlay
 
-An ERC book over these four sleeves runs roughly 5–7% annualised volatility — safe, and far below
-what an equity investor is comparing it against. The overlay scales the whole portfolio:
+An ERC book over these four sleeves runs at whatever volatility the sleeves happen to offer, which
+for a bond-heavy allocation is well below what an equity investor is comparing it against. The
+overlay scales the whole portfolio to a chosen level instead:
 
 ```
 L_t = TARGET_VOL / σ̂_t,     clipped to [0.5, 3.0]
@@ -238,8 +239,11 @@ a backtest can produce a beautiful equity curve that means nothing.
 ## Data and limitations
 
 - **Universe:** SPY, TLT, DBC, TIP. Daily total-return closes from yfinance.
-- **Start date:** 2006-02-03, DBC's inception. The brief asked for 2005; the data cannot deliver it
-  and no proxy is back-filled in its place.
+- **Start date:** history is requested from 2006-02-03, DBC's inception. The first close the four
+  sleeves share is 2006-02-06, so the first daily *return* is 2006-02-07 — the opening close is
+  consumed computing it. The brief asked for 2005; the data cannot deliver it and no proxy is
+  back-filled in its place. The first *rebalance* is a further ~252 trading days on, once the
+  covariance has its warm-up.
 - **Risk-free rate:** FRED `DTB3`, the 3-month T-bill, de-compounded to a per-trading-day decimal.
 - **Rebalancing:** monthly, at month end.
 - **Not modelled:** transaction costs, bid-ask spread, and any borrow spread over the bill rate.
