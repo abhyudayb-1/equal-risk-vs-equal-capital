@@ -958,42 +958,39 @@ def test_infeasible_is_not_reported_as_non_convergence() -> None:
 
 
 def test_non_psd_covariance_is_rejected() -> None:
-    """KNOWN BUG, Person A, ``src/riskparity.py`` -- **this check fails today.**
+    """Regression: ``solve_erc`` must reject a covariance with a negative eigenvalue.
 
-    ``solve_erc`` does not raise on a covariance with a negative eigenvalue. It
-    returns weights::
+    This check was written against a live bug and has since gone green. The
+    original behaviour was that ``solve_erc`` returned weights for an impossible
+    matrix::
 
         solve_erc([[0.04, 0.10], [0.10, 0.09]])  ->  [0.6, 0.4]
 
     That matrix implies a correlation of 1.67 and has a minimum eigenvalue of
-    -3.808e-02. No portfolio of those two assets exists, so the weights describe
-    nothing, and nothing in the call path says so.
+    -3.808e-02. No portfolio of those two assets exists, so the weights described
+    nothing -- and every field on the returned ``ERCSolution`` read healthy while
+    they did it. Fixed in ``361c995`` by a spectrum check in
+    ``solve_erc_with_status``.
 
-    Why it happens: ``covariance.validate_covariance`` checks square, finite and
+    Why it happened: ``covariance.validate_covariance`` checks square, finite and
     symmetric and stops there -- the spectrum is ``nearest_psd``'s business, and
-    ``solve_erc`` never calls it. ``portfolio_volatility`` does guard against a
+    ``solve_erc`` never called it. ``portfolio_volatility`` does guard against a
     negative variance, but that only fires for weights that land in a negative
     direction of the quadratic form, and the ERC iterate need not land in one.
-    This one does not.
+    This one does not, which is why the failure was silent.
 
-    Why it is a bug rather than a missing feature: ``solve_erc_with_status``
-    documents the opposite behaviour in its own docstring -- "this function will
-    not repair a non-PSD input, it will raise on one". Either the guard or the
-    sentence has to go, and per the repo's rules on surfacing failures it should
-    be the sentence that stays.
+    Kept as its own test rather than folded into
+    :func:`test_bad_input_raises`'s loop because the bar is a *relative* one
+    (``ERC_MIN_EIGENVALUE_RATIO``, measured against the largest variance) and the
+    printed eigenvalue below is the evidence that the bar sits between rounding
+    noise and a genuine violation, not merely that some exception was raised.
 
-    Severity: the live pipeline routes every covariance through
-    ``estimate_covariance`` / ``nearest_psd`` before it reaches the solver, so
-    only a caller bypassing ``src/covariance.py`` can reach this -- which is
-    exactly what a test, a notebook, or step 24's stress code does.
-
-    **Not fixed here on purpose.** ``src/riskparity.py`` is Person A's file and
-    the owner fixes it. The fix is a spectrum check in
-    ``solve_erc_with_status`` next to the existing zero-variance check; when it
-    lands, this test goes green on its own and the case can move up into
-    :func:`test_bad_input_raises`'s loop with the rest.
+    Severity, for whoever changes the guard next: the live pipeline routes every
+    covariance through ``estimate_covariance`` / ``nearest_psd`` before it
+    reaches the solver, so only a caller bypassing ``src/covariance.py`` can
+    reach this -- which is exactly what a test, a notebook, or stress code does.
     """
-    print("non-PSD covariance (KNOWN BUG -- expected to fail):")
+    print("non-PSD covariance (regression -- was silently solved before 361c995):")
     if riskparity is None:
         print("  skip src/riskparity.py is not built yet")
         return
