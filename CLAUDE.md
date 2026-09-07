@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
-**Done: steps 1–34, all on `main`.** The engine, the analysis layer, the hardening, the CLI, the
-live run, the real charts and the write-up. **Only step 35 (final review, tag `v1.0`) is left**,
-then Phase 6 (36–42) can start.
+**Done: steps 1–35, all on `main`, tagged `v1.0`.** The engine, the analysis layer, the hardening,
+the CLI, the live run, the real charts, the write-up, and the final review. **Phase 6 (36–42) is
+the only thing left**, and it is new, additive scope — see "Incremental position analysis" below.
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -30,6 +30,7 @@ then Phase 6 (36–42) can start.
 | 30 | B | `160b8e8` | `run_backtest.py`: the end-to-end CLI, every flag documented |
 | 31 | B | `864a5f6` | `README.md`: install, run, and the method — results sections left for Phase 5 |
 | 32–34 | A/B | `61d7c1f` | The live run, real charts in `reports/`, and the README write-up — see "Where the build is" |
+| 35 | Both | `1dcd185` | Final review: retired both stand-ins in `benchmarks.py`, wired `format_run_summary` into `run_backtest.py`, lowered `MAX_CONDITION_NUMBER` to a value that can actually fire. Tagged `v1.0`. |
 
 Step 32 (the live run itself) has no dedicated commit of its own — it was folded into `61d7c1f`
 rather than landed as a separate A-owned PR first, so the ledger records it as done but the
@@ -42,16 +43,9 @@ both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `
 `36a275c` (correct the 2022 thesis against live data), and `bc7c36f` / `1491e6b` / `c5f9c5f`
 (audit passes on Phase 0, Phase 2 and B's step 24–27 branch).
 
-**Remaining: step 35 only, then Phase 6 (36–42) once `v1.0` is tagged.** Phase 6 is a later,
-purely additive pivot (see "Incremental position analysis" below and `PLAN.md`/`TASKS.md`) that
-starts only after `v1.0` ships; it does not change or delete anything in Phases 0–5.
-
-| Step | Owner | What it needs |
-| --- | --- | --- |
-| 35 | Both | Final review — both people can explain every module — then tag `v1.0`. No tag exists yet. |
-
-**Then, only after `v1.0` is tagged, Phase 6 — a later, additive pivot, not part of the original
-capstone scope:**
+**`v1.0` is tagged. Remaining: Phase 6 (36–42) only**, a later, purely additive pivot (see
+"Incremental position analysis" below and `PLAN.md`/`TASKS.md`) that does not change or delete
+anything in Phases 0–5:
 
 | Step | Owner | What it needs |
 | --- | --- | --- |
@@ -162,9 +156,9 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: every numbered step through 34 is built, so start from step 35 in
-`TASKS.md` (final review, tag `v1.0`) rather than hunting for the lowest unfinished one — and
-only after that does Phase 6 (36–42) open up. The fastest way back into the code is
+To resume in a new session: every numbered step through 35 is built and `v1.0` is tagged, so
+start from Phase 6 (steps 36–42) in `TASKS.md` rather than hunting for the lowest unfinished one.
+The fastest way back into the code is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command.
 
