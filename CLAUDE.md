@@ -8,8 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
-**Done: steps 1–31, all on `main`** — every numbered build step. The engine, the analysis layer,
-the hardening and the CLI. **Only Phase 5 (32–35) is left, and it is joint work.**
+**Done: steps 1–34, all on `main`.** The engine, the analysis layer, the hardening, the CLI, the
+live run, the real charts and the write-up. **Only step 35 (final review, tag `v1.0`) is left**,
+then Phase 6 (36–42) can start.
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -28,6 +29,12 @@ the hardening and the CLI. **Only Phase 5 (32–35) is left, and it is joint wor
 | 29 | A | `9659e8e` | `meta` diagnostics + `backtest.format_run_summary`, marking failures with `!` |
 | 30 | B | `160b8e8` | `run_backtest.py`: the end-to-end CLI, every flag documented |
 | 31 | B | `864a5f6` | `README.md`: install, run, and the method — results sections left for Phase 5 |
+| 32–34 | A/B | `61d7c1f` | The live run, real charts in `reports/`, and the README write-up — see "Where the build is" |
+
+Step 32 (the live run itself) has no dedicated commit of its own — it was folded into `61d7c1f`
+rather than landed as a separate A-owned PR first, so the ledger records it as done but the
+process TASKS.md describes for it did not run exactly as written. Worth knowing if a future
+step here looks "skipped": check the log before assuming it wasn't done.
 
 Follow-up fixes that landed on top of those steps and are worth knowing about: `361c995` (reject a
 non-PSD covariance in `solve_erc` rather than solving it), `d61e7bd` (reject out-of-order rows in
@@ -35,17 +42,13 @@ both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `
 `36a275c` (correct the 2022 thesis against live data), and `bc7c36f` / `1491e6b` / `c5f9c5f`
 (audit passes on Phase 0, Phase 2 and B's step 24–27 branch).
 
-**Remaining: Phase 5 (32–35), then Phase 6 (36–42) once v1.0 is tagged.** Phase 5 is JOINT — the
-parallel A/B split is over for it — and finishes the original four-sleeve capstone. Phase 6 is a
-later, purely additive pivot (see "Incremental position analysis" below and `PLAN.md`/`TASKS.md`)
-that starts only after v1.0 ships; it does not change or delete anything in Phase 5 or earlier.
+**Remaining: step 35 only, then Phase 6 (36–42) once `v1.0` is tagged.** Phase 6 is a later,
+purely additive pivot (see "Incremental position analysis" below and `PLAN.md`/`TASKS.md`) that
+starts only after `v1.0` ships; it does not change or delete anything in Phases 0–5.
 
 | Step | Owner | What it needs |
 | --- | --- | --- |
-| 32 | A | First real end-to-end run on live data; fix whatever breaks |
-| 33 | B | Swap fixtures for the real `BacktestResult` in `viz.py` / `stress.py`, regenerate `reports/` |
-| 34 | Both | The write-up: the 2022 mechanism, the crisis table, the findings below that do not flatter |
-| 35 | Both | Final review, tag `v1.0` |
+| 35 | Both | Final review — both people can explain every module — then tag `v1.0`. No tag exists yet. |
 
 **Then, only after `v1.0` is tagged, Phase 6 — a later, additive pivot, not part of the original
 capstone scope:**
@@ -104,10 +107,20 @@ starting work; the step text is the spec.
 Which steps are done is in the ledger above; this section is what the finished steps *found*.
 **Check `git log --oneline` before trusting either — they go stale, the log does not.**
 
-**The engine runs end to end on live data.** 234 monthly rebalances, 2007-02-28 → 2026-07-31,
-4896 return days: **CAGR 7.13%, vol 11.26%, Sharpe 0.67, max drawdown −29.10%**, mean leverage
-1.76x, **0 solver failures, 0 covariances repaired, worst risk-contribution deviation 1.6e-07**.
-Those are the headline numbers until Phase 5 re-runs them; treat them as current, not final.
+**The engine runs end to end on live data, and the numbers are now final, in `README.md`'s
+Results section.** 234 monthly rebalances, 2007-02-28 → 2026-07-31, 4897 return days: **CAGR
+7.12%, vol 11.26%, return/vol 0.667, max drawdown −29.10%**, mean leverage 1.76x, **0 solver
+failures, 0 covariances repaired, worst risk-contribution deviation 1.6e-07**. (Ratios are
+return-to-volatility at a zero risk-free rate, not a true Sharpe — applied identically across
+strategies so the ranking is fair.)
+
+**The headline result the write-up leads with: risk parity loses.** Plain 60/40 beats it over
+the full sample on both return (8.72% vs 7.12% CAGR) and risk-adjusted return (0.786 vs 0.667),
+running the same volatility with no leverage, no solver and no financing. Charging real
+financing costs 1.06%/yr of risk-adjusted return versus free leverage (0.667 vs 0.761), and the
+unlevered ERC book alone — 5.10% CAGR, 0.754 return/vol, −17.15% max drawdown — is the best
+risk-adjusted result of any row in the table. The overlay bought volatility, not return. See
+`README.md`'s Results section for the full breakdown.
 
 **A live-run finding the write-up has to address, because the project is framed around 2022 and
 this does not fit that frame.** The worst drawdown in the sample is not 2022 — it is **COVID, at
@@ -142,10 +155,11 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: every numbered step is built, so start from Phase 5 in `TASKS.md`
-(steps 32–35) rather than hunting for the lowest unfinished one. The fastest way back into the
-code is `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole
-pipeline on live data in one command.
+To resume in a new session: every numbered step through 34 is built, so start from step 35 in
+`TASKS.md` (final review, tag `v1.0`) rather than hunting for the lowest unfinished one — and
+only after that does Phase 6 (36–42) open up. The fastest way back into the code is
+`.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
+live data in one command.
 
 Two stand-ins in `src/benchmarks.py` are superseded. **One is retired in practice, one is not** —
 and the distinction matters, because the first reads as still-outstanding if you only grep:
