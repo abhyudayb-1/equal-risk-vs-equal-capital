@@ -29,24 +29,19 @@ The claim the whole project rests on is asserted in
 weighting only when every pairwise correlation is equal. If the two were the same
 thing in general, there would be no reason to build a solver at all.
 
-**This file currently ends in a failure, and it is meant to.**
-:func:`test_non_psd_covariance_is_rejected` asserts that ``solve_erc`` rejects a
-covariance with a negative eigenvalue, which its own docstring promises and its
-code does not do -- it returns weights for a matrix implying a correlation of
-1.67. That is a bug in ``src/riskparity.py``, which is Person A's file, so it is
-reported here rather than patched here (see that test's docstring for the cause,
-the severity and the one-line fix). It runs last, so every check that passes is
-printed before it. **Do not silence it to make the suite green** -- deleting the
-check loses the finding, and the ``N checks passed`` line, which this failure
-currently prevents, is the signal that A's fix has landed.
+**Regression: `test_non_psd_covariance_is_rejected`.** ``solve_erc`` used to
+return weights for a covariance with a negative eigenvalue instead of rejecting
+it -- see that test's docstring for the incident and the fix (``361c995``). Kept
+as its own permanent test rather than folded into the general bad-input loop,
+since the bar it checks is a measured, relative one.
 
-**On what is under test.** ``src/riskparity.py`` is Person A's (steps 16-17). If
-it is importable, it is what these checks run against and the fallback below is
-never used. Until then the file still runs end to end against a private stand-in,
-following the ``benchmarks._ewma_cov`` pattern: private to this test module,
-never exported from ``src/``, and displaced automatically the moment A's module
-lands. The banner printed at startup says which one ran, so a green result can
-never be mistaken for evidence about code that does not exist yet.
+**On what is under test.** ``src.riskparity.solve_erc`` (steps 16-17) is what
+every check below runs against, imported directly -- this file no longer carries
+a transitional stand-in for it. ``_oracle_erc`` and ``_risk_contributions`` below
+are a **permanent** independent reimplementation, not a stand-in for missing
+code: step 19's whole point is that they are derived from the maths without
+reference to ``src/riskparity.py``, so agreement between the two is evidence
+neither derivation shares the other's mistake.
 """
 
 from __future__ import annotations
@@ -59,12 +54,12 @@ import numpy as np
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-# Whether Person A's steps 16-17 exist is decided on the file, not on whether it
-# imports -- see :func:`_load_solver`.
-_RISKPARITY_PATH = _REPO_ROOT / "src" / "riskparity.py"
-
-from src import config  # noqa: E402
+from src import config, riskparity  # noqa: E402
 from src.benchmarks import risk_contribution_fractions  # noqa: E402
+
+SOLVER_LABEL = "src.riskparity.solve_erc"
+solve_erc = riskparity.solve_erc
+module_risk_contributions = riskparity.risk_contributions
 
 _checks = 0
 
@@ -73,11 +68,6 @@ _checks = 0
 IDENTITY_TOLERANCE = 1e-10
 AGREEMENT_TOLERANCE = config.ERC_AGREEMENT_TOLERANCE
 N_RANDOM_COVARIANCES = 50
-
-# Only used by the stand-in solver below -- see its docstring for why SLSQP needs
-# its objective inflated and its answer checked.
-_SLSQP_OBJECTIVE_SCALE = 1e5
-_SLSQP_MAX_RC_DEVIATION = 1e-7
 
 
 def check(label: str, condition: bool) -> None:
@@ -247,140 +237,6 @@ def _oracle_erc(cov: np.ndarray, tolerance: float = 1e-14, max_iter: int = 10_00
     return y / y.sum()
 
 
-def _fallback_solve_erc(cov: np.ndarray, **kwargs) -> np.ndarray:
-    """Stand-in for ``riskparity.solve_erc`` until step 17 is merged.
-
-    Deliberately the *other* formulation from :func:`_oracle_erc`, and the one
-    step 17 specifies: SLSQP on the least-squares objective
-    ``sum_i (b_i - sigma_p^2/N)^2`` with ``b_i = w_i (Sigma w)_i``, subject to
-    ``sum w = 1`` and ``w >= MIN_WEIGHT``. Minimising squared deviations under
-    explicit constraints has nothing in common with driving a log barrier to its
-    stationary point, so an agreement between the two is informative -- but this
-    is a stand-in, not A's code, which is why the banner says which one ran.
-
-    Four details, each of which was a wrong answer before it was a line of code:
-
-    * The covariance is rescaled to unit mean variance and the objective is
-      multiplied by ``_SLSQP_OBJECTIVE_SCALE``. SLSQP's ``ftol`` is a tolerance
-      on the *objective value*, and this objective is quartic in the covariance
-      scale: on annualized numbers it sits near 1e-8 at the start, so the search
-      terminates "successfully" while the weights are still 1e-4 out. Weights are
-      invariant to both rescalings, so neither costs anything.
-    * The gradient is analytic. ``sum_i (b_i - c) == 0`` identically (the ``b_i``
-      sum to ``sigma_p^2`` and ``c`` is their mean), which kills the term in
-      ``dc/dw_k`` and leaves ``2[(b_k - c)(Sigma w)_k + (Sigma (d * w))_k]``.
-    * Two starting points, best result wins. The least-squares surface is not
-      convex, and from an inverse-vol start one asset gets pinned at the
-      ``MIN_WEIGHT`` bound on roughly one covariance in fifty -- SLSQP reports
-      success at a corner that is 20 percentage points of risk share away from
-      ERC. That is exactly the failure step 20 exists to catch, so it is caught
-      here rather than tolerated.
-    * The answer is verified before it is returned. A least-squares solver that
-      stalls has no idea it stalled; the risk contributions do.
-    """
-    from scipy.optimize import minimize
-
-    cov = _validate_covariance(cov)
-    n = cov.shape[0]
-    if n == 1:
-        return np.ones(1)
-
-    scaled = cov / float(np.mean(np.diag(cov)))
-
-    def objective(w: np.ndarray) -> float:
-        marginal = scaled @ w
-        deviation = w * marginal - float(w @ marginal) / n
-        return _SLSQP_OBJECTIVE_SCALE * float(deviation @ deviation)
-
-    def gradient(w: np.ndarray) -> np.ndarray:
-        marginal = scaled @ w
-        deviation = w * marginal - float(w @ marginal) / n
-        return _SLSQP_OBJECTIVE_SCALE * 2.0 * (
-            deviation * marginal + scaled @ (deviation * w)
-        )
-
-    best_weights, best_deviation = None, np.inf
-    for start in (inverse_vol_weights(cov), np.full(n, 1.0 / n)):
-        w = start
-        for _ in range(3):  # restart from the previous answer to squeeze out ftol
-            result = minimize(
-                objective,
-                w,
-                jac=gradient,
-                method="SLSQP",
-                bounds=[(config.MIN_WEIGHT, 1.0)] * n,
-                constraints={
-                    "type": "eq",
-                    "fun": lambda w: float(w.sum() - 1.0),
-                    "jac": lambda w: np.ones(n),
-                },
-                options={"maxiter": config.ERC_MAX_ITER, "ftol": config.ERC_TOLERANCE},
-            )
-            if not result.success:
-                break
-            w = result.x / result.x.sum()
-        deviation = float(np.max(np.abs(risk_contribution_fractions(w, cov) - 1.0 / n)))
-        if deviation < best_deviation:
-            best_weights, best_deviation = w, deviation
-
-    if best_weights is None or best_deviation > _SLSQP_MAX_RC_DEVIATION:
-        raise RuntimeError(
-            f"fallback SLSQP stalled: worst risk contribution is {best_deviation:.2e} "
-            f"from 1/N, outside {_SLSQP_MAX_RC_DEVIATION:.0e}"
-        )
-    return best_weights
-
-
-def _load_solver() -> tuple[str, object, object]:
-    """Return ``(label, solve_erc, module)`` for whatever exists.
-
-    Person A's module wins whenever it is there. ``naive_inv_vol``,
-    ``portfolio_volatility`` and ``risk_contributions`` are taken from it too, so
-    steps 16 and 17 are genuinely under test rather than shadowed by the local
-    copies.
-
-    The fallback is chosen on **whether the file exists**, deliberately not on
-    whether it imports. Catching ``ImportError`` around the import reads as the
-    obvious way to write this and is wrong: a bad import *inside* A's module --
-    a typo, a renamed helper in ``src/covariance.py``, a circular import --
-    raises ``ModuleNotFoundError``, which is an ``ImportError``, and is
-    indistinguishable from the module being absent. This file would then quietly
-    switch to the stand-in and print a full page of passing checks about code
-    that is broken, which is the exact misreading the banner exists to prevent.
-    A module that is present and does not import is a hard failure.
-    """
-    if not _RISKPARITY_PATH.exists():
-        return ("fallback (src/riskparity.py not built yet)", _fallback_solve_erc, None)
-
-    try:
-        from src import riskparity  # type: ignore
-    except Exception as exc:
-        raise AssertionError(
-            f"{_RISKPARITY_PATH} exists but does not import: {exc!r}. That is a broken "
-            "engine, not a missing one -- fix the import rather than deleting the file "
-            "to get the stand-in back."
-        ) from exc
-
-    solver = getattr(riskparity, "solve_erc", None)
-    if solver is None:
-        raise AssertionError("src/riskparity.py exists but exports no solve_erc")
-    try:  # the step 3 stub is importable and raises -- that is not a solver
-        solver(np.eye(2) * 0.04)
-    except NotImplementedError:
-        return ("fallback (solve_erc is still the contract stub)", _fallback_solve_erc, None)
-    except Exception:  # a real solver that dislikes this input: still real
-        pass
-    return ("src.riskparity.solve_erc", solver, riskparity)
-
-
-SOLVER_LABEL, solve_erc, riskparity = _load_solver()
-
-# Present only once steps 16-17 are merged; every test that touches them says so
-# and skips rather than failing, so this file keeps running on a checkout that
-# does not have them.
-module_risk_contributions = getattr(riskparity, "risk_contributions", None)
-
-
 # ---------------------------------------------------------------------------
 # Step 18 -- the risk contribution identity
 # ---------------------------------------------------------------------------
@@ -494,12 +350,8 @@ def test_erc_equalises_risk() -> None:
 
 
 def test_module_risk_contributions_agree() -> None:
-    """Cross-check A's step 16 function against the local algebra, when it exists."""
+    """Cross-check the module's function against the local algebra."""
     print("module risk_contributions vs the local form:")
-    if module_risk_contributions is None:
-        print("  skip src.riskparity.risk_contributions is not built yet")
-        return
-
     rng = np.random.default_rng(183)
     worst = 0.0
     for _ in range(50):
@@ -525,10 +377,6 @@ def test_naive_inv_vol_comparator() -> None:
     starts badly and a conclusion that is drawn against the wrong baseline.
     """
     print("naive_inv_vol as the comparator:")
-    if riskparity is None:
-        print("  skip src/riskparity.py is not built yet")
-        return
-
     rng = np.random.default_rng(160)
     worst = 0.0
     for _ in range(50):
@@ -564,10 +412,6 @@ def test_solver_reports_its_status() -> None:
     be true, not merely present.
     """
     print("the solver reports its own status:")
-    if riskparity is None:
-        print("  skip src/riskparity.py is not built yet")
-        return
-
     cov = random_covariance(4, np.random.default_rng(170))
     solution = riskparity.solve_erc_with_status(cov)
 
@@ -601,10 +445,6 @@ def test_non_convex_local_minimum_is_escaped() -> None:
     minimum. That is what the convex form is for: it has exactly one.
     """
     print("the non-convex local minimum:")
-    if riskparity is None:
-        print("  skip src/riskparity.py is not built yet")
-        return
-
     correlation = np.array([
         [1.00, -0.93, 0.67, -0.02],
         [-0.93, 1.00, -0.55, -0.25],
@@ -884,17 +724,13 @@ def test_bad_input_raises() -> None:
         lambda: _risk_contributions(np.zeros(2), np.eye(2) * 0.04),
     )
 
-    if riskparity is None:
-        print("  skip src/riskparity.py is not built yet, so only the oracle is attacked")
-        return
-
-    # The same matrices through A's solver. Step 20's bar is "solve or raise a
-    # clear error", and it applies to the implementation that ships, not only to
-    # the one this file owns.
+    # The same matrices through the module's solver. Step 20's bar is "solve or
+    # raise a clear error", and it applies to the implementation that ships, not
+    # only to the one this file owns.
     #
-    # The non-PSD case is missing from this list on purpose: it is a known bug in
-    # A's solver and it has its own test at the bottom of this file, which fails
-    # today. See :func:`test_non_psd_covariance_is_rejected`.
+    # The non-PSD case is missing from this list on purpose: it has its own
+    # dedicated regression test below, :func:`test_non_psd_covariance_is_rejected`,
+    # since the bar it checks is a measured, relative one worth its own evidence.
     for label, matrix in (
         ("a non-square matrix", np.ones((3, 4))),
         ("an asymmetric matrix", np.array([[0.04, 0.01], [0.02, 0.09]])),
@@ -923,10 +759,6 @@ def test_infeasible_is_not_reported_as_non_convergence() -> None:
     somewhere between them, and it is a data problem when it does.
     """
     print("infeasible vs merely difficult:")
-    if riskparity is None:
-        print("  skip src/riskparity.py is not built yet")
-        return
-
     sigma = np.array([0.15, 0.12, 0.18, 1e-8])
     correlation = np.eye(4)
     correlation[0, 1] = correlation[1, 0] = -0.30
@@ -991,10 +823,6 @@ def test_non_psd_covariance_is_rejected() -> None:
     reach this -- which is exactly what a test, a notebook, or stress code does.
     """
     print("non-PSD covariance (regression -- was silently solved before 361c995):")
-    if riskparity is None:
-        print("  skip src/riskparity.py is not built yet")
-        return
-
     cov = np.array([[0.04, 0.10], [0.10, 0.09]])
     smallest = float(np.linalg.eigvalsh(cov).min())
     print(f"       min eigenvalue {smallest:.3e}, implied correlation "
@@ -1031,10 +859,6 @@ if __name__ == "__main__":
     test_bad_input_raises()
     test_infeasible_is_not_reported_as_non_convergence()
 
-    # Last on purpose. It fails today -- a known bug in Person A's solver, see
-    # the function's docstring -- and the house-style runner stops at the first
-    # failure, so everything that does pass has already printed above it. The
-    # count below is only reached once A's fix lands.
     test_non_psd_covariance_is_rejected()
 
     print(f"\n{_checks} checks passed  [{SOLVER_LABEL}]")

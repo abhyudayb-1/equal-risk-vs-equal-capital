@@ -40,8 +40,11 @@ step here looks "skipped": check the log before assuming it wasn't done.
 Follow-up fixes that landed on top of those steps and are worth knowing about: `361c995` (reject a
 non-PSD covariance in `solve_erc` rather than solving it), `d61e7bd` (reject out-of-order rows in
 both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `b9916a8` /
-`36a275c` (correct the 2022 thesis against live data), and `bc7c36f` / `1491e6b` / `c5f9c5f`
-(audit passes on Phase 0, Phase 2 and B's step 24–27 branch).
+`36a275c` (correct the 2022 thesis against live data), `bc7c36f` / `1491e6b` / `c5f9c5f`
+(audit passes on Phase 0, Phase 2 and B's step 24–27 branch), and `dfd0f84` (retire
+`tests/test_riskparity.py`'s dead Phase-2 fallback solver and its seven permanently-unreachable
+`if riskparity is None` guards, found in a post-v1.0 consistency audit — the suite still prints
+61 checks passed).
 
 **`v1.0` is tagged. Remaining: Phase 6 (36–42) only**, a later, purely additive pivot (see
 "Incremental position analysis" below and `PLAN.md`/`TASKS.md`) that does not change or delete

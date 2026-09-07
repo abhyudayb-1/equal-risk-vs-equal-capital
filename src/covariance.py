@@ -13,16 +13,16 @@ that, in this order:
    covariance even when steps 1-2 left it fractionally indefinite.
 
 :func:`estimate_covariance` composes all three and is the function the rest of
-the project calls. It matches ``src.benchmarks.CovEstimator``, so Phase 5 wires
-the real estimator into the benchmarks by passing ``cov_estimator=`` rather than
-by editing anything::
+the project calls. It matches ``src.benchmarks.CovEstimator``, so it wires into
+the benchmarks by passing ``cov_estimator=`` rather than by editing anything::
 
     from src.covariance import estimate_covariance
     equal_weight(returns, cov_estimator=estimate_covariance)
 
-It supersedes the private ``_ewma_cov`` stand-in in ``src/benchmarks.py``; that
-one stays where it is so Person B's suites keep running standalone, and is not
-forked here.
+It superseded the private ``_ewma_cov`` stand-in that used to live in
+``src/benchmarks.py`` -- retired at step 35, once this module existed to
+replace it. ``src.benchmarks`` now imports this function directly rather than
+carrying a second copy.
 
 Look-ahead: nothing in this module slices by date. Callers pass a window that
 ``src.data.asof_slice`` has already truncated to ``<= t``. Keeping the guard in
