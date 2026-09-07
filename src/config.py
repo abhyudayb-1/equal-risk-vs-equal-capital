@@ -86,7 +86,21 @@ MIN_EIGENVALUE: float = 1e-10
 
 # Log a warning when the covariance condition number exceeds this -- a sign the
 # solver's answer is not trustworthy even if it converges.
-MAX_CONDITION_NUMBER: float = 1e8
+#
+# Set at 1e8 through Phase 4, and measured at that value it could not fire on
+# this project's data: shrinkage maps rho -> 0.9*rho, which caps the shrunk
+# correlation matrix's condition number at 37 for four sleeves even at rho = 1
+# exactly, and reaching 1e8 needs roughly a 1,600:1 volatility ratio between two
+# sleeves. Over 20,000 random covariances built at realistic ETF-like
+# volatilities, the worst observed condition number was 1,183 -- three orders of
+# magnitude below the threshold. A diagnostic that cannot fire on any input this
+# project actually produces is decorative, not a diagnostic, so step 35 (final
+# review) lowers it to 10,000: comfortably above the worst legitimate case
+# measured (1,183, ~8.5x headroom, so a normal run does not start warning on
+# itself) while still three orders of magnitude below the old ceiling, so a
+# genuinely pathological covariance -- a broken price series, a near-duplicate
+# sleeve -- has a threshold it can actually reach.
+MAX_CONDITION_NUMBER: float = 10_000.0
 
 # ---------------------------------------------------------------------------
 # ERC solver

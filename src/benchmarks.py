@@ -39,14 +39,13 @@ import pandas as pd
 
 from .config import (
     ANNUAL_RISK_FREE_RATE,
-    COV_EWMA_HALFLIFE_DAYS,
     COV_WARMUP_TRADING_DAYS,
     MAX_SHARPE_LOOKBACK_DAYS,
-    MIN_EIGENVALUE,
     SIXTY_FORTY_WEIGHTS,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE,
 )
+from .covariance import estimate_covariance, nearest_psd
 from .data import asof_slice, month_end_rebalance_dates
 from .riskparity import naive_inv_vol
 from .types import BacktestResult
@@ -56,32 +55,6 @@ log = logging.getLogger(__name__)
 # A covariance estimator maps a trailing return window (already sliced to <= t)
 # to an annualized covariance matrix.
 CovEstimator = Callable[[pd.DataFrame], np.ndarray]
-
-
-def _ewma_cov(returns: pd.DataFrame) -> np.ndarray:
-    """Annualized exponentially-weighted covariance of daily returns.
-
-    A stand-in for ``src.covariance.ewma_covariance`` (Person A, TASKS.md step
-    14), which does not exist yet. It is kept private and injectable rather than
-    exported so that Phase 5 swaps it out by passing ``cov_estimator=`` at one
-    call site instead of rewriting anything here -- and so nobody imports a
-    second, competing covariance estimator out of this module in the meantime.
-
-    Weights decay with ``COV_EWMA_HALFLIFE_DAYS``, most recent observation
-    heaviest. The ``1 - sum(w^2)`` divisor is the reliability-weight bias
-    correction -- the weighted analogue of ``ddof=1``. Without it the estimate is
-    biased low, which would inflate every Sharpe ratio computed downstream.
-    """
-    x = returns.to_numpy(dtype="float64")
-    n = len(x)
-    decay = 0.5 ** (1.0 / COV_EWMA_HALFLIFE_DAYS)
-    w = decay ** np.arange(n - 1, -1, -1, dtype="float64")
-    w /= w.sum()
-
-    deviations = x - (w @ x)
-    cov = (deviations * w[:, None]).T @ deviations
-    cov /= 1.0 - float((w**2).sum())
-    return cov * TRADING_DAYS_PER_YEAR
 
 
 def risk_contribution_fractions(weights: np.ndarray, cov: np.ndarray) -> np.ndarray:
@@ -132,8 +105,9 @@ def fixed_weight(
         the engine so they can be charted against each other.
     cov_estimator:
         Override the covariance used for ``risk_contributions``. Defaults to
-        :func:`_ewma_cov`; pass ``src.covariance``'s estimator in Phase 5 so the
-        benchmarks and the engine are judged on the same covariance.
+        ``src.covariance.estimate_covariance``, the same estimator the engine
+        uses -- pass a different one only to deliberately judge the benchmarks
+        against a different covariance than the engine saw.
 
     Notes
     -----
@@ -162,7 +136,7 @@ def fixed_weight(
         raise ValueError(f"{strategy} target weights sum to {w.sum():.6f}, not 1.0")
 
     returns = returns[tickers].sort_index()
-    estimate_cov = cov_estimator or _ewma_cov
+    estimate_cov = cov_estimator or estimate_covariance
     rebalance = month_end_rebalance_dates(returns.index, warmup_trading_days)
 
     # Risk contributions move even though capital weights do not -- that is the
@@ -327,12 +301,12 @@ def naive_risk_parity(
 
     returns = returns.sort_index()
     tickers = list(returns.columns)
-    estimate_cov = cov_estimator or _ewma_cov
+    estimate_cov = cov_estimator or estimate_covariance
     rebalance = month_end_rebalance_dates(returns.index, warmup_trading_days)
 
     weight_rows, rc_rows = [], []
     for date in rebalance:
-        cov = _nearest_psd(estimate_cov(asof_slice(returns, date)))
+        cov = nearest_psd(estimate_cov(asof_slice(returns, date)))
         w = naive_inv_vol(cov)
         weight_rows.append(w)
         rc_rows.append(risk_contribution_fractions(w, cov))
@@ -347,23 +321,6 @@ def naive_risk_parity(
             "cov_estimator": getattr(estimate_cov, "__name__", repr(estimate_cov)),
         },
     )
-
-
-def _nearest_psd(cov: np.ndarray) -> np.ndarray:
-    """Symmetrise and clip negative eigenvalues.
-
-    A stand-in for the PSD repair in ``src.covariance`` (Person A, TASKS.md step
-    15), scoped to what cvxpy needs: ``cp.quad_form`` rejects a matrix that is
-    indefinite by even a rounding error, and an EWMA estimate off a short window
-    routinely lands there. Clipping rather than ``cp.psd_wrap`` on purpose --
-    wrapping tells the solver to trust a matrix that may genuinely be indefinite,
-    which converts a loud failure into a quiet wrong answer.
-    """
-    symmetric = 0.5 * (cov + cov.T)
-    eigvals, eigvecs = np.linalg.eigh(symmetric)
-    if eigvals.min() >= MIN_EIGENVALUE:
-        return symmetric
-    return eigvecs @ np.diag(np.clip(eigvals, MIN_EIGENVALUE, None)) @ eigvecs.T
 
 
 def _tangency_weights(mean_excess: np.ndarray, cov: np.ndarray) -> np.ndarray | None:
@@ -471,7 +428,7 @@ def max_sharpe(
 
     returns = returns.sort_index()
     tickers = list(returns.columns)
-    estimate_cov = cov_estimator or _ewma_cov
+    estimate_cov = cov_estimator or estimate_covariance
     rebalance = month_end_rebalance_dates(returns.index, warmup_trading_days)
 
     daily_rf = (1.0 + annual_risk_free_rate) ** (1.0 / TRADING_DAYS_PER_YEAR) - 1.0
@@ -482,7 +439,7 @@ def max_sharpe(
 
     for date in rebalance:
         trailing = asof_slice(returns, date)
-        cov = _nearest_psd(estimate_cov(trailing))
+        cov = nearest_psd(estimate_cov(trailing))
 
         window = trailing.iloc[-lookback_days:]
         mean_excess = (
