@@ -217,22 +217,151 @@ results here remain somewhat optimistic — stated here rather than left to be d
 At every rebalance date `t`, only data timestamped `≤ t` may be used — covariance, volatility
 estimate and risk-free rate alike — and a decision taken at the close of `t` earns returns from
 `t+1` onward, never `t` itself. `data.asof_slice()` is the single chokepoint for the first rule, and every estimator is routed
-through it rather than re-deriving the guard at each call site. A dedicated suite that feeds the
-engine a deliberate future spike and proves it stays invisible at `t` — `tests/test_lookahead.py` —
-lands in a later step. This is the invariant every result in the next section rests on; without it
-a backtest can produce a beautiful equity curve that means nothing.
+through it rather than re-deriving the guard at each call site. A dedicated suite feeds the engine a
+deliberate future spike and proves it stays invisible at `t` — `tests/test_lookahead.py`, which also
+removes the guard and asserts that the spike then *does* leak, so the test cannot pass vacuously.
+This is the invariant every result in the next section rests on; without it a backtest can produce
+a beautiful equity curve that means nothing.
 
 ---
 
 ## Results
 
-*Coming in Phase 5 — populated from the live run.*
+*Every figure below comes from `python run_backtest.py` on live data; the four charts referenced
+are committed under `reports/` so they can be read without running anything.*
+
+Live run, 2007-02-28 → 2026-07-31: **234 monthly rebalances, 4897 return days, 0 solver failures,
+0 covariances repaired**, worst risk-contribution deviation 1.6e-07. The engine hits its own
+specification — every rebalance lands within 2e-07 of equal risk contribution. That is what the
+dead-flat 25% bands in `reports/risk_contributions.png` are showing, and
+`reports/capital_vs_risk_weights.png` puts the thesis in one frame: the capital weights swing
+between roughly 10% and 55% while the risk weights never move off a quarter each. TIP averages
+**42% of the money** to earn its 25% of the risk; SPY averages **20% of the money** for the same
+25%. That gap is the entire argument for allocating risk rather than capital.
+
+Whether that is *worth doing* is a different question, and the table answers it unkindly.
+
+| Strategy | Total return | CAGR | Volatility | Return/vol | Max drawdown | Mean leverage |
+|---|---|---|---|---|---|---|
+| **Risk parity + vol target** | 280.6% | **7.12%** | 11.26% | **0.667** | −29.10% | 1.76x |
+| Equal weight | 195.4% | 5.73% | 8.39% | 0.707 | −28.09% | 1.00x |
+| 60/40 | 407.3% | **8.72%** | 11.47% | **0.786** | −29.92% | 1.00x |
+| Naive 1/vol | 151.6% | 4.86% | 6.66% | 0.746 | **−16.69%** | 1.00x |
+| Max Sharpe | 252.8% | 6.70% | 10.52% | 0.670 | −26.59% | 1.00x |
+
+*Ratios are computed against a zero risk-free rate — a return-to-volatility ratio, applied
+identically to all five rows, so the ranking is fair even though the level is not a true Sharpe.*
+
+**The headline result is that the engine loses.** Over this sample the risk-parity book has the
+**lowest risk-adjusted return of the five strategies**, and plain 60/40 beats it on return
+(8.72% vs 7.12%) *and* on return-per-unit-risk (0.786 vs 0.667) while running the same volatility
+and needing no leverage, no solver and no financing. If the question is "should you have run this
+instead of 60/40 since 2007", the measured answer is no.
+
+Two things drive that, and they are worth separating because only one of them is the strategy's
+fault.
+
+**Leverage is what costs it, once you charge for it.** The same book at three settings:
+
+| | CAGR | Volatility | Return/vol | Max drawdown |
+|---|---|---|---|---|
+| Unlevered ERC | 5.10% | 6.92% | **0.754** | −17.15% |
+| Levered to 10% target, financing charged | 7.12% | 11.26% | **0.667** | −29.10% |
+| Levered to 10% target, financing *ignored* | 8.26% | 11.26% | **0.761** | −29.05% |
+
+Read the third row against the first: with free money, leverage leaves risk-adjusted return
+essentially untouched (0.754 → 0.761), which is exactly the claim the strategy is usually sold on.
+Charge the T-bill and it drops to 0.667. The financing leg is worth **1.06%/yr** here, and it is
+the whole difference between "leverage is free scaling" and "leverage is a cost". A backtest that
+omits that term reports the third row and calls it the second.
+
+Also note the unlevered book has by far the best drawdown of the three (−17.15%). Most of what the
+overlay bought was volatility, not return.
+
+**The worst drawdown is not 2022 — it is COVID, and the strategy caused it.**
+
+| Crisis window | Risk parity | Equal weight | 60/40 | Naive 1/vol | Max Sharpe |
+|---|---|---|---|---|---|
+| GFC (2008) | −25.43% | −28.09% | −29.92% | −16.11% | −20.08% |
+| **COVID (2020)** | **−29.10%** | −16.53% | −17.76% | −13.52% | −12.55% |
+| Rate shock (2022) | −17.72% | −16.33% | −25.83% | −16.34% | −23.19% |
+
+The −29.10% COVID drawdown (peak 2020-02-20, trough 2020-03-18) is the deepest in the whole sample,
+and risk parity is the **worst** of the five strategies in that window by a margin of 11 percentage
+points. The unlevered ERC book fell far less. The gap is leverage: the strategy entered COVID at
+**2.33x, its highest pre-crisis leverage of the entire run** (GFC 1.83x, 2022 1.74x), because 2019
+was calm and a trailing volatility estimator has nothing to say about a shock that has not happened
+yet. The vol target levers hardest into quiet regimes, and the fastest crash in the sample followed
+the quietest year in the sample.
+
+That is not a bug in the overlay — it is the overlay working as specified. No causal filter can
+de-lever before the volatility it is measuring has been realised. Vol targeting is a risk
+*control*, not a risk *forecast*, and this is what that distinction costs.
+`reports/leverage.png` shows the shape plainly: the line peaks just before each crisis band and
+bottoms out inside or after it. In COVID it falls from 2.33x to 0.64x — the de-levering lands at
+the March 2020 low, selling risk at the bottom rather than before the fall.
+
+Risk parity does win the two slow crises. In 2008 and 2022 the drawdown arrives gradually enough
+that the trailing estimator can act, and the book beats 60/40 by 4.5 and 8.1 points respectively.
+The strategy is a good defence against a grinding decline and a poor one against a cliff.
 
 ---
 
 ## The 2022 Failure Mode
 
-*Coming in Phase 5 — populated from the live run.*
+2022 is the more interesting failure, because it is the one where *diversification itself* broke
+rather than where the overlay mistimed. Risk parity still beat 60/40 that year (−17.72% vs
+−25.83%), so the interest is in the mechanism, not the ranking.
+
+**The obvious explanation is wrong, and this repo checked.** The story usually told is that the
+stock/bond correlation flipped positive and destroyed the hedge. Measured over the drawdown window
+`2022-01-03 → 2022-10-12`, the rolling 63-day SPY/TLT correlation **averaged −0.09 and was positive
+on only 31% of days**. It was still negative. The persistent flip is a 2023-onward phenomenon
+(2023 mean **+0.14**, positive on 66% of days) — it shows up *after* the damage, which makes it
+useless as a warning and wrong as an explanation.
+
+**What actually happened is that the hedge lost more than the thing it hedged.** Peak-to-trough
+over that window:
+
+| SPY | TLT | DBC | TIP |
+|---|---|---|---|
+| −24.5% | **−29.3%** | +21.4% | −12.7% |
+
+TLT is the sleeve that exists to rally when SPY falls. It fell *harder than SPY did*. Correlation
+never had to turn positive to break the portfolio — it only had to rise toward zero, which was
+enough to remove the offset while both legs fell together under a common driver, the repricing of
+real rates. A hedge that merely stops helping is survivable; a hedge that loses 29% while the asset
+it protects loses 24% is a second position in the same trade.
+
+This is what makes 2022 a genuine failure of risk parity rather than of leverage. ERC leans on
+bonds *by construction* — TLT and TIP are the low-volatility sleeves, so equal risk contribution
+means an outsized share of capital in duration. At the 2022 rebalances the book held **23.0% of
+capital in TLT** carrying its mandated 25.0% of risk, plus a large TIP position; the risk model,
+looking at trailing covariance, still scored duration as a diversifier right up to and through the
+event. And TIP fell 12.7% too — inflation-linked bonds are still bonds when the shock *is* the
+discount rate.
+
+**The diagnostic that did fire in time is the diversification ratio**, `Σwᵢσᵢ / σₚ` — how much the
+portfolio's volatility is reduced relative to holding its sleeves standalone. 1.0 means no
+diversification at all. Calendar-year means:
+
+| 2008 | 2012 | 2020 | 2021 | **2022** | 2023 |
+|---|---|---|---|---|---|
+| 2.111 | 2.179 | 1.790 | 1.678 | **1.586** | 1.521 |
+
+It falls for three consecutive years and is already at its lowest level of the sample **during**
+2022, while the correlation-sign test is still reading negative and reassuring. That is the
+practical lesson: correlation is the intuitive diagnostic and it is a lagging one, because a sign
+test discards magnitude. The ratio prices in the fact that both legs got more volatile and stopped
+offsetting, and it degrades while the damage is being done rather than the year after. Both panels
+are plotted together in `reports/correlation_diversification.png` for exactly this comparison.
+
+**What the project concludes.** Risk parity is not broken, but it is oversold in two specific ways
+this backtest can measure. It is sold on a risk-adjusted return that mostly disappears once the
+leverage it requires is financed at a real rate. And it is sold as diversification, which is a
+claim about a covariance structure that is estimated from the past and is not stable — 2022 is what
+it looks like when the estimate is still describing the previous regime. The engine did its job at
+every rebalance to seven decimal places. That was never the part at risk.
 
 ---
 
@@ -256,7 +385,7 @@ a backtest can produce a beautiful equity curve that means nothing.
 run_backtest.py     the CLI — the only place the pipeline is wired together
 src/                one module per pipeline stage (table above)
 tests/              standalone test scripts + the synthetic fixture
-reports/            generated CSV and charts (gitignored until Phase 5)
+reports/            generated CSV and charts (the committed set is from a live run)
 data/cache/         cached network pulls (gitignored; delete a file to force a re-pull)
 PLAN.md             design rationale and the pinned maths
 TASKS.md            numbered build order, one owner per step
