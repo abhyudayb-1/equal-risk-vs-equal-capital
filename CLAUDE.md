@@ -35,7 +35,10 @@ both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `
 `36a275c` (correct the 2022 thesis against live data), and `bc7c36f` / `1491e6b` / `c5f9c5f`
 (audit passes on Phase 0, Phase 2 and B's step 24–27 branch).
 
-**Remaining: Phase 5 only (32–35), and it is JOINT — the parallel A/B split is over.**
+**Remaining: Phase 5 (32–35), then Phase 6 (36–42) once v1.0 is tagged.** Phase 5 is JOINT — the
+parallel A/B split is over for it — and finishes the original four-sleeve capstone. Phase 6 is a
+later, purely additive pivot (see "Incremental position analysis" below and `PLAN.md`/`TASKS.md`)
+that starts only after v1.0 ships; it does not change or delete anything in Phase 5 or earlier.
 
 | Step | Owner | What it needs |
 | --- | --- | --- |
@@ -43,6 +46,22 @@ both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `
 | 33 | B | Swap fixtures for the real `BacktestResult` in `viz.py` / `stress.py`, regenerate `reports/` |
 | 34 | Both | The write-up: the 2022 mechanism, the crisis table, the findings below that do not flatter |
 | 35 | Both | Final review, tag `v1.0` |
+
+**Then, only after `v1.0` is tagged, Phase 6 — a later, additive pivot, not part of the original
+capstone scope:**
+
+| Step | Owner | What it needs |
+| --- | --- | --- |
+| 36 | A | `src/config.py`: the incremental-analysis constants (lookback window, candidate weights, minimum history) |
+| 37 | A | `src/incremental.py`: candidate + universe data on a trailing window, baseline ERC snapshot, the 1%/5%/10% perturbation scan, the unconstrained 5-asset ERC re-solve |
+| 38 | A | `src/incremental.py`: the compensation test `SR_i > SR_p · ρ(i, p)` and per-sleeve correlations |
+| 39 | B | `tests/test_incremental.py` |
+| 40 | B | `analyze_position.py`: the CLI |
+| 41 | Both | `README.md`: the new section, with the point-in-time and marginal-test caveats stated plainly |
+| 42 | Both | Final review, tag `v1.1` |
+
+See "Incremental position analysis" below for what this answers and why it is a snapshot rather
+than a second historical backtest; `PLAN.md`'s Phase 6 section has the full derivation.
 
 Four things are already known to be waiting there, so nobody rediscovers them cold: the two
 stand-in retirements in "Two stand-ins" below, wiring `format_run_summary` into `run_backtest.py`
@@ -147,6 +166,47 @@ and the distinction matters, because the first reads as still-outstanding if you
   shifts the diagonal and quietly alters asset volatilities, while `covariance.nearest_psd` repairs
   in correlation space and leaves them intact. A tangency portfolio is about as sensitive to those
   volatilities as a portfolio gets.
+
+## Incremental position analysis (Phase 6, post-v1.0 — not started yet)
+
+A single stock is not a risk-parity sleeve — it has idiosyncratic/sector risk and no
+independent structural risk premium the way an asset class does, so it was wrong to frame it as
+a candidate fifth member competing with SPY/TLT/DBC/TIP. The question that **is** well posed,
+and that this phase answers, is narrower: given the existing four-sleeve risk-parity book, what
+happens if you add one more stock — any stock — to it? That is standard incremental risk
+analysis (what a risk desk does whenever someone proposes adding a position to a book), not a
+second backtest, and it ships as new, additive files only:
+
+- **Point-in-time, not historical.** It estimates on a trailing window ending today
+  (`INCREMENTAL_LOOKBACK_DAYS`, ~3 years) through the same `covariance.estimate_covariance` the
+  core engine already uses — no new estimator. This is the deliberate trade against a full
+  2006-to-present backtest: most candidate stocks people actually ask about don't have 20 years
+  of history, and splicing pre-IPO years is not a real portfolio. The report always says which
+  kind of analysis it is.
+- **`data.fetch_prices` already accepts any ticker** and already fails loudly
+  (`DataUnavailableError`) on one with no data, so "any stock the user chooses" needs zero
+  changes to `data.py` — only a new minimum-history guard (`INCREMENTAL_MIN_HISTORY_DAYS`) for
+  a candidate too thinly traded for a trailing-window covariance to be trustworthy.
+- **Three pieces of math, all built from primitives `riskparity.py` already validates:** (1) a
+  perturbation scan — scale the 4-asset ERC weights by `(1−w)` and add the candidate at
+  `w ∈ {1%, 5%, 10%}`, read its risk contribution and the portfolio vol at each; (2) an
+  unconstrained 5-asset `solve_erc_with_status` re-solve, diffed against the baseline weights,
+  answering the different question of what equal risk contribution would actually assign the
+  stock; (3) the compensation test, `SR_i > SR_p · ρ(i, p)` — a known result (Treynor–Black /
+  Elton–Gruber), not invented here: adding asset `i` at an infinitesimal weight improves
+  portfolio `p`'s Sharpe ratio iff the candidate's own Sharpe exceeds the portfolio's Sharpe
+  times its correlation to the portfolio. It is a **marginal** test (does the direction help),
+  answered alongside — not instead of — the perturbation scan (does this amount help). The full
+  derivation is in `PLAN.md`'s Phase 6 section.
+- **Nothing in `src/types.py`, `backtest.py`, `overlay.py`, `benchmarks.py`, `stress.py`,
+  `viz.py` or `run_backtest.py` changes for this.** `src/incremental.py` is a new, independent
+  consumer of `covariance.py`/`riskparity.py`, the same way `stress.py` is an independent
+  consumer of `BacktestResult` — and it ships behind its own CLI, `analyze_position.py`, not a
+  flag on `run_backtest.py`.
+- **Do not start Phase 6 before `v1.0` is tagged (step 35).** It is scoped and sequenced in
+  `TASKS.md` as steps 36–42, but it is additive scope layered on top of the original capstone,
+  not a replacement for any part of it — nothing in Phases 0–5 is superseded or deleted by this
+  pivot.
 
 ## Setup and commands
 

@@ -237,3 +237,119 @@ rebalance provably uses only past data; the crisis table reproduces the known si
 parity wins 2008/2020, loses 2022); and five charts land in `reports/` — RC stacked area,
 capital-vs-risk weight comparison, leverage time series, rolling correlation, and the crisis
 drawdown table.
+
+---
+
+## Phase 6 — Incremental position analysis (post-v1.0 extension)
+
+**Added after v1.0 is tagged (step 35). Nothing in Phases 0–5 changes for this — it is a pure
+addition, not a rewrite.** The prompt for it: a single stock is not a risk-parity sleeve. It
+has idiosyncratic/sector risk and no independent structural risk premium the way an asset
+class does, so it cannot "compete" against SPY/TLT/DBC/TIP as a candidate fifth member of the
+equal-risk-contribution book. The question that *is* well posed, and that risk desks answer
+routinely, is narrower: **if we already hold the four-sleeve risk-parity book, what happens if
+we add this one stock to it?** That is incremental risk analysis, and it is the shape of this
+feature.
+
+### Point-in-time, not a second backtest
+
+Phase 0–5 answer "how would this strategy have performed since 2006." Phase 6 answers a
+different question — "what does adding this position look like *right now*" — and answering it
+the same way (a 2006-to-present monthly rebalance with a fifth sleeve) would fail for most
+candidate stocks by construction: plenty of names investors actually ask about didn't trade in
+2006, and splicing a stock's return history onto years before it existed is not a real
+portfolio. So Phase 6 estimates on a **trailing window ending today** (`INCREMENTAL_LOOKBACK_DAYS`,
+default ~756 trading days / 3 years) using the same EWMA-covariance machinery `covariance.py`
+already provides — no new estimator, no new statistical assumptions, just a shorter window fed
+through `estimate_covariance`. The tradeoff this buys: **any ticker with enough recent trading
+history works**, at the cost of not being a 20-year backtest. The tool says exactly which one
+it is every time it prints a report, so it is never mistaken for the other.
+
+`data.fetch_prices` already accepts an arbitrary ticker list and already fails loudly
+(`DataUnavailableError`) when a ticker returns nothing — Phase 6 needs no change to `data.py`
+to support "any stock." The one new guard is `INCREMENTAL_MIN_HISTORY_DAYS`: if the candidate
+has less trading history than that inside the lookback window (a recent IPO, a thinly-traded
+name), the estimate is unreliable and the tool raises rather than silently returning a
+covariance estimated from too few points — the same "fail loudly instead of degrading" policy
+`data.py` already uses for the core universe.
+
+### What gets computed, and why it's three things, not one
+
+The pasted framing this phase is built from asked for four outputs; they collapse into three
+pieces of math, all built from primitives `covariance.py` and `riskparity.py` already have and
+already test — Phase 6 adds no new solver, no new risk model:
+
+1. **Marginal risk contribution at fixed candidate weights (1%, 5%, 10%).** Scale the current
+   4-asset ERC weights by `(1 − w)` and add the candidate at `w`, for each
+   `w in INCREMENTAL_CANDIDATE_WEIGHTS`. Feed the resulting 5-weight vector and the 5×5
+   covariance through `riskparity.risk_contributions` — the same identity `Σ RC_i = σ_p` used
+   everywhere else in this project — and report the candidate's RC in isolation alongside the
+   portfolio vol at each weight. This is a perturbation scan, not a re-optimization: it answers
+   "what if I just add this much," which is how a position actually gets sized in practice.
+
+2. **The full 5-asset ERC re-solve.** Separately, call `riskparity.solve_erc_with_status` on the
+   5×5 covariance with no weight pinned, and diff the result against the baseline 4-asset ERC
+   weights. This answers a different question than (1) — not "what if I add 5%" but "what would
+   equal risk contribution actually assign this stock, and how much does it reshuffle the other
+   four" — and it is why both analyses ship rather than either alone. A stock the solver assigns
+   3% at equilibrium and a stock it assigns 25% are very different findings even before looking
+   at return.
+
+3. **The compensation test — is the added risk paid for.** This is the piece that turns "it adds
+   risk" into a yes/no answer, and it is a known result rather than something invented for this
+   project (Treynor–Black / Elton–Gruber active-portfolio theory): adding an asset `i` at an
+   infinitesimal weight improves portfolio `p`'s Sharpe ratio if and only if
+
+   ```
+   SR_i > SR_p · ρ(i, p)
+   ```
+
+   where `SR_i = (μ_i − r_f)/σ_i` is the candidate's own Sharpe ratio, `SR_p` is the baseline
+   4-asset portfolio's Sharpe ratio (same trailing window), and `ρ(i, p)` is the candidate's
+   correlation to the *portfolio's* returns (not to any one sleeve). Derivation: write the
+   blended return as `(1−ε)r_p + ε r_i`, differentiate `Sharpe(ε)` at `ε = 0`, and the sign of
+   the derivative reduces to exactly this inequality. It is why correlation is "the real driver
+   of whether it helps or hurts," stated precisely instead of asserted: a stock with a mediocre
+   or even negative own Sharpe can still pass this test if `ρ(i, p)` is low or negative, and a
+   stock with an excellent own Sharpe can still fail it if it is highly correlated with the book.
+   This is a **marginal** test — it says whether increasing the weight from 0 helps, not what the
+   optimal weight is — which is exactly complementary to (1) and (2), and the report says so.
+
+   `ρ(i, p)` in the formula above is one number (candidate vs. portfolio); the report also shows
+   the candidate's correlation to each of the four sleeves individually, since that decomposes
+   *why* `ρ(i, p)` came out where it did (e.g. a stock uncorrelated with SPY but correlated with
+   DBC is not diversifying the equity risk it looks like it's diversifying).
+
+### File layout added by Phase 6
+
+```
+src/incremental.py     candidate data alignment, the perturbation scan, the 5-asset ERC
+                        re-solve, the compensation test, per-sleeve correlations
+analyze_position.py    CLI entry point: analyze_position.py --ticker <TICKER> [--lookback-days N]
+                        [--weights 0.01,0.05,0.10] [--refresh-prices]
+tests/test_incremental.py   perturbation weights sum to 1; the compensation-test formula against
+                        a hand-derivable synthetic case; the 5-asset re-solve's limiting case
+                        (a candidate identical to an existing sleeve must split that sleeve's RC);
+                        correlation-table correctness
+```
+
+`src/config.py` gains one new append-only block (`INCREMENTAL_LOOKBACK_DAYS`,
+`INCREMENTAL_CANDIDATE_WEIGHTS`, `INCREMENTAL_MIN_HISTORY_DAYS`). No existing file in
+`src/` is modified — `types.py`, `backtest.py`, `overlay.py`, `benchmarks.py`, `stress.py`,
+`viz.py` and `run_backtest.py` are all untouched by this phase, because none of them need to
+know this feature exists: `incremental.py` is a second, independent consumer of the same
+covariance/risk-parity primitives the core engine already validated, the same way `stress.py`
+and `viz.py` are independent consumers of `BacktestResult`.
+
+### Explicit caveats the tool must state every time it runs
+
+- **Point-in-time, not historical.** The report is a snapshot as of the run date on a trailing
+  window; it is not a claim about how the position would have performed since 2006, and it will
+  change on a re-run next month as the trailing window moves.
+- **A marginal test, not a sizing recommendation.** The compensation test says whether the
+  *direction* of adding the position helps; it says nothing about whether 1%, 5%, or 10% is the
+  right amount — that is what the perturbation scan in (1) is for, read alongside it.
+- **Still a single stock.** Passing the compensation test does not manufacture a structural risk
+  premium the way holding an asset class does. It answers "does this improve this portfolio's
+  risk-adjusted return, given the correlation structure right now" — a narrower and more honest
+  question than "should I own this stock."

@@ -164,3 +164,31 @@ or start reviewing. Two people editing one file is what this whole structure exi
 
 **Later:** UI and backend get their own plan after step 35. Don't build toward them now — the
 contract in `src/types.py` is the seam a dashboard would attach to, and it's already in place.
+
+---
+
+## Phase 6 — Incremental position analysis (JOINT, starts only after v1.0 is tagged)
+
+**Nothing in Phases 0–5 is superseded by this phase — there is nothing to delete.** Every step
+1–35 still builds the deliverable those phases describe (the four-sleeve engine and its v1.0
+write-up), and this phase does not touch `types.py`, `backtest.py`, `overlay.py`,
+`benchmarks.py`, `stress.py`, `viz.py` or `run_backtest.py`. It is a new, independent consumer
+of `covariance.py` and `riskparity.py`, the same way `stress.py` is a consumer of
+`BacktestResult` — see PLAN.md's "Phase 6" section for the full design and the math.
+
+**Do not start this phase until step 35 has tagged `v1.0`.** The pivot that motivated it — "let
+someone add any stock to the risk-parity book and see whether it's compensated, not whether it
+belongs as a fifth sleeve" — is additive scope, and the original capstone deliverable ships on
+its own timeline first.
+
+| # | Who | Branch | What | Done when |
+|---|---|---|---|---|
+| 36 | A | `feat/a36-incremental-config` | `src/config.py`: append `INCREMENTAL_LOOKBACK_DAYS` (~756 trading days), `INCREMENTAL_CANDIDATE_WEIGHTS` (`(0.01, 0.05, 0.10)`), `INCREMENTAL_MIN_HISTORY_DAYS`. | Constants exist at the bottom of the file; nothing else in `config.py` reformatted |
+| 37 | A | `feat/a37-incremental-core` | `src/incremental.py`: fetch the candidate + universe on the trailing window (any ticker — `data.fetch_prices` already supports this); baseline 4-asset ERC snapshot on that same window; the perturbation scan at `INCREMENTAL_CANDIDATE_WEIGHTS`; the unconstrained 5-asset `solve_erc_with_status` re-solve and its diff against baseline weights. Reuse `covariance.estimate_covariance` and `riskparity`'s primitives — no new statistical machinery. | Runs end to end against a real live ticker; raises `DataUnavailableError` (not a silent empty result) when the candidate has less than `INCREMENTAL_MIN_HISTORY_DAYS` of history |
+| 38 | A | `feat/a38-compensation-test` | `src/incremental.py`: the compensation test `SR_i > SR_p · ρ(i, p)` (derivation in PLAN.md) plus the candidate's correlation to each of the four sleeves individually. | Verified against a hand-derivable two-asset synthetic case where the sign of the inequality is known in advance |
+| 39 | B | `feat/b39-incremental-tests` | `tests/test_incremental.py`: perturbation weights sum to 1 at every candidate weight; the compensation-test formula regression; the 5-asset re-solve's limiting case (a candidate identical to an existing sleeve must split that sleeve's risk contribution); correlation-table correctness. Standalone script, no framework, matches the house style. | `python tests/test_incremental.py` prints `N checks passed` and exits 0 |
+| 40 | B | `feat/b40-incremental-cli` | `analyze_position.py`: `--ticker` (required, any ticker), `--lookback-days`, `--weights`, `--refresh-prices`, `--help`. Formatted report output in the style of `backtest.format_run_summary`, naming plainly that this is a point-in-time snapshot, not a historical backtest. | `analyze_position.py --help` documents every flag; a run against a real live ticker prints a complete report including the caveats in PLAN.md |
+| 41 | Both | `feat/incremental-writeup` | `README.md`: new section covering what the tool answers, a worked example against one real stock, and the explicit caveats (point-in-time, marginal test only, idiosyncratic risk is not a structural risk premium). | Someone who has never seen the tool can run it and correctly interpret what its output does and does not claim |
+| 42 | Both | — | Final review, tag `v1.1`. | Both can explain the compensation-test derivation and every new module, not just their own |
+
+---
