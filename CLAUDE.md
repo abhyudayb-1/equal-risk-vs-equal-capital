@@ -66,11 +66,18 @@ capstone scope:**
 See "Incremental position analysis" below for what this answers and why it is a snapshot rather
 than a second historical backtest; `PLAN.md`'s Phase 6 section has the full derivation.
 
-Four things are already known to be waiting there, so nobody rediscovers them cold: the two
-stand-in retirements in "Two stand-ins" below, wiring `format_run_summary` into `run_backtest.py`
-(one line, noted at the end of the `backtest.py` bullets), and deciding whether
-`MAX_CONDITION_NUMBER` should come down, since as set it cannot fire — the measurement is in the
-same bullets.
+Four loose ends flagged during Phase 4 as "Phase 5 work" were resolved as part of step 35's final
+review, rather than left for whoever noticed next: both stand-ins in `src/benchmarks.py` are
+retired (`_ewma_cov` and `_nearest_psd` are gone; the module now imports
+`covariance.estimate_covariance` / `covariance.nearest_psd` directly, so the real estimator is
+the default even for a caller that omits `cov_estimator`), `format_run_summary` is wired into
+`run_backtest.py` (printed right after the engine runs, alongside the generic `_print_meta`
+dump), and `MAX_CONDITION_NUMBER` came down from `1e8` to `10_000` — the old value measured at
+three orders of magnitude above anything this project's data can produce, so the diagnostic
+could never fire; the new one sits ~8.5x above the worst legitimate case measured (1,183) and
+would still catch a genuinely pathological covariance. See "Two stand-ins" below for what
+changed and why, and the `MAX_CONDITION_NUMBER` comment in `config.py` for the measurement
+behind the new value.
 
 Read "Where the build is" next — the live-run numbers and the two findings that constrain the
 write-up are there, and they are the part a summary cannot carry.
@@ -161,25 +168,28 @@ only after that does Phase 6 (36–42) open up. The fastest way back into the co
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command.
 
-Two stand-ins in `src/benchmarks.py` are superseded. **One is retired in practice, one is not** —
-and the distinction matters, because the first reads as still-outstanding if you only grep:
+Two stand-ins that used to live in `src/benchmarks.py` are **retired as of step 35**, not just
+superseded at the call site. Worth knowing why both had to go, since the reasoning is still what
+would stop someone from reintroducing either as a "simplification":
 
-- `_ewma_cov` → `src.covariance.estimate_covariance`. **Done at the call site that matters:**
-  `run_backtest.py` passes `cov_estimator=estimate_covariance` to all four benchmarks, so every
-  number in a real run already comes from the engine's own estimator. What remains is the module
-  *default* — `estimate_cov = cov_estimator or _ewma_cov` — which still applies to any caller that
-  omits the argument, including the `__main__` self-check and the fixtures. Deleting the default
-  is a Phase 5 tidy, not a correctness fix.
-- `_nearest_psd` → `src.covariance.nearest_psd`. **Still in the path even under injection:**
-  `max_sharpe` and `naive_risk_parity` both call `_nearest_psd(estimate_cov(...))`, so the
-  stand-in runs on top of whatever estimator you inject. It is harmless as things stand — it
-  early-returns the symmetrised input untouched when the smallest eigenvalue is already above
-  `MIN_EIGENVALUE`, which `estimate_covariance`'s output always is — so today it is a no-op
-  symmetrise rather than a second, different repair. It should still go, because the two are **not**
-  equivalent if it ever fires: `_nearest_psd` clips eigenvalues of the covariance directly, which
-  shifts the diagonal and quietly alters asset volatilities, while `covariance.nearest_psd` repairs
-  in correlation space and leaves them intact. A tangency portfolio is about as sensitive to those
-  volatilities as a portfolio gets.
+- `_ewma_cov` → `src.covariance.estimate_covariance`. Already done at the call site that matters
+  before step 35 — `run_backtest.py` passes `cov_estimator=estimate_covariance` to all four
+  benchmarks, so every number in a real run already came from the engine's own estimator. What
+  step 35 removed was the module *default* (`estimate_cov = cov_estimator or _ewma_cov`), which
+  had still applied to any caller that omitted the argument, including the `__main__` self-check
+  and the fixtures. `_ewma_cov` is deleted outright now that nothing references it.
+- `_nearest_psd` → `src.covariance.nearest_psd`. This one mattered more to retire, because it was
+  **still in the path even under injection**: `max_sharpe` and `naive_risk_parity` both called
+  `_nearest_psd(estimate_cov(...))`, so the stand-in ran on top of whatever estimator was
+  injected. It was harmless as long as `estimate_cov` was `estimate_covariance` — it early-returned
+  the symmetrised input untouched, since `estimate_covariance`'s output is always above
+  `MIN_EIGENVALUE` already — but the two are **not** equivalent in general: `_nearest_psd` clips
+  eigenvalues of the covariance directly, which shifts the diagonal and quietly alters asset
+  volatilities, while `covariance.nearest_psd` repairs in correlation space and leaves them
+  intact. A tangency portfolio is about as sensitive to those volatilities as a portfolio gets, so
+  a future `cov_estimator` that actually needed repair would have gotten the wrong one silently.
+  `src/benchmarks.py` now imports `nearest_psd` from `src.covariance` directly; there is no
+  private copy left to diverge.
 
 ## Incremental position analysis (Phase 6, post-v1.0 — not started yet)
 

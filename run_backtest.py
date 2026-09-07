@@ -21,14 +21,14 @@ be -- anyone who clones the repo can run this command.
 
 **Three decisions this file makes, because a call site is where they belong:**
 
-1. ``cov_estimator=estimate_covariance`` is passed to all four benchmarks. They
-   default to ``benchmarks._ewma_cov``, a stand-in from Phase 1 written before
-   ``src/covariance.py`` existed. Injecting the real estimator here is how that
-   stand-in was always meant to be retired (CLAUDE.md, "Two stand-ins"): one call
-   site changes, no module forks a second copy, and the benchmarks are then
-   judged on **exactly** the covariance the engine uses. A strategy comparison
-   where the comparators saw a different covariance than the engine is not a
-   comparison of strategies.
+1. ``cov_estimator=estimate_covariance`` is passed to all four benchmarks
+   explicitly, even though ``src/benchmarks.py`` now defaults to the same
+   estimator itself (the Phase 1 stand-ins it used before ``src/covariance.py``
+   existed are retired -- see CLAUDE.md, "Two stand-ins"). Passing it here too is
+   not redundant: it is what makes it unmistakable, at the one place a reader
+   would check, that the benchmarks are judged on **exactly** the covariance the
+   engine uses. A strategy comparison where the comparators saw a different
+   covariance than the engine is not a comparison of strategies.
 2. The engine is levered and every benchmark is not. That asymmetry is real --
    it is the strategy being tested -- and it is why ``mean_leverage`` is a
    column of the crisis table rather than a footnote. Nothing here hides it.
@@ -38,10 +38,15 @@ be -- anyone who clones the repo can run this command.
    worth sweeping.
 
 **What this prints is a run summary, not a finding.** Step 29 adds the solver and
-conditioning diagnostics to ``meta``; the summary block below surfaces whatever
-``meta`` carries at the time, so it picks those up without needing an edit here.
-Nothing that lands in the README comes from a single invocation of this script
-without being checked against the charts and the crisis table it writes.
+conditioning diagnostics to ``meta`` and ``src.backtest.format_run_summary`` renders
+them into the curated block printed right after the engine runs -- a bad rebalance
+is marked with a leading ``!`` there rather than being one number among twenty.
+``_print_meta`` below it is the generic, complete dump of the same ``meta`` dict,
+read key-by-key so it picks up new fields without an edit here; the two blocks
+answer different questions ("can this run be trusted" vs. "what exactly is in
+here") and both are printed rather than one replacing the other. Nothing that
+lands in the README comes from a single invocation of this script without being
+checked against the charts and the crisis table it writes.
 """
 
 from __future__ import annotations
@@ -53,7 +58,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.backtest import run_backtest
+from src.backtest import format_run_summary, run_backtest
 from src.benchmarks import equal_weight, max_sharpe, naive_risk_parity, sixty_forty
 from src.config import (
     DATA_START_DATE,
@@ -207,13 +212,13 @@ def load_data(start: str, refresh: bool) -> tuple[pd.DataFrame, pd.Series]:
 def build_benchmarks(returns: pd.DataFrame) -> dict[str, object]:
     """The four comparators, all unlevered, all on the engine's covariance.
 
-    ``cov_estimator=estimate_covariance`` is the retirement of
-    ``benchmarks._ewma_cov`` described in this module's docstring. It matters
-    most for ``max_sharpe``: the real estimator repairs a non-PSD matrix in
-    *correlation* space and leaves the asset volatilities intact, where the
-    stand-in clipped the covariance's eigenvalues directly and quietly shifted
-    them. A tangency portfolio is about as sensitive to those volatilities as a
-    portfolio gets, so this is a behaviour change and not a rename.
+    ``cov_estimator=estimate_covariance`` is passed explicitly here (see this
+    module's docstring) even though it is also ``src.benchmarks``' own default
+    now. It matters most for ``max_sharpe``: the real estimator repairs a
+    non-PSD matrix in *correlation* space and leaves the asset volatilities
+    intact, where the retired stand-in clipped the covariance's eigenvalues
+    directly and quietly shifted them. A tangency portfolio is about as
+    sensitive to those volatilities as a portfolio gets.
     """
     return {
         "Equal weight": equal_weight(returns, cov_estimator=estimate_covariance),
@@ -317,7 +322,9 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
 
-    print("Running the benchmarks (unlevered)...")
+    print(f"\n{format_run_summary(engine)}")
+
+    print("\nRunning the benchmarks (unlevered)...")
     results = {ENGINE_LABEL: engine, **build_benchmarks(returns)}
 
     with pd.option_context("display.width", 160, "display.max_columns", 20):
