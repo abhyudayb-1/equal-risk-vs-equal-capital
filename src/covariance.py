@@ -259,15 +259,26 @@ def nearest_psd(cov: np.ndarray, min_eigenvalue: float = MIN_EIGENVALUE) -> np.n
 
 
 def condition_number(cov: np.ndarray) -> float:
-    """Ratio of largest to smallest eigenvalue -- ``inf`` if singular.
+    """Ratio of largest to smallest eigenvalue -- ``inf`` if singular or non-PSD.
 
     Reported rather than acted on. A high condition number does not stop the ERC
     solver from converging; it means the answer it converged to is not stable
     against small changes in the input, which is a thing the run summary should
     say out loud (TASKS.md step 29) rather than something to silently correct.
+
+    Deliberately reads the raw (signed) eigenvalues, not their magnitudes.
+    ``validate_covariance`` checks square/finite/symmetric only -- the spectrum
+    is ``nearest_psd``'s business, not this function's -- so a genuinely
+    indefinite matrix can reach here. Taking ``abs()`` first would let a large
+    NEGATIVE eigenvalue hide behind a small POSITIVE one (e.g. eigenvalues
+    ``[-5.0, 0.01, 1.0, 2.0]`` would report condition number 500, a plausible
+    finite number, instead of correctly reporting the matrix as not a valid
+    covariance at all). Reading the sign means any non-positive eigenvalue --
+    genuinely negative or merely singular -- returns ``inf``, which is what
+    "not a valid covariance" should report.
     """
     cov = validate_covariance(cov, "cov")
-    eigenvalues = np.abs(np.linalg.eigvalsh(cov))
+    eigenvalues = np.linalg.eigvalsh(cov)
     smallest = float(eigenvalues.min())
     if smallest <= 0.0:
         return float("inf")

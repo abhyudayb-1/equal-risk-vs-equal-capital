@@ -460,6 +460,14 @@ def plot_correlation_and_diversification(
     )
     _style_axes(top, ylabel=f"{pair[0]}/{pair[1]} correlation")
     top.set_ylim(-1.0, 1.0)
+    # Set explicitly, matching every other _shade_crises call site in this
+    # file, and BEFORE _shade_crises reads it: _shade_crises clips against
+    # ax.get_xlim() at call time, and the two panels share an x-axis
+    # (sharex=True), so leaving this on matplotlib's transient autoscaled
+    # range let bottom's LATER set_xlim(ratio...) retroactively change what
+    # top's shading had already been clipped against. Invisible today only
+    # because correlation's and ratio's date ranges happen to nearly match.
+    top.set_xlim(correlation.index[0], correlation.index[-1])
     _shade_crises(top)
     _title(
         top,

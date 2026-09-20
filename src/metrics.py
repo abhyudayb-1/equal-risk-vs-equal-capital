@@ -276,7 +276,17 @@ def _as_window(start: Window | str | pd.Timestamp, end) -> Window:
                 f"got start={start!r} and end={end!r}"
             )
         return start
-    if end is None and isinstance(start, str) and start in CRISIS_WINDOWS:
+    if isinstance(start, str) and start in CRISIS_WINDOWS:
+        if end is not None:
+            # Without this, a name+end mix silently fell through to
+            # `return (start, end)`, which reads the NAME as a literal date
+            # string later -- pd.Timestamp("GFC (2008)") raises an unrelated
+            # parsing error instead of a message that names the real mistake.
+            raise ValueError(
+                f"{start!r} is a config.CRISIS_WINDOWS name, which already carries "
+                f"its own end date -- pass the name alone, or pass an explicit "
+                f"(start_date, end_date) pair, not a name mixed with end={end!r}"
+            )
         return start
     return (start, end)
 
