@@ -93,13 +93,16 @@ Standalone scripts — no pytest, no test runner. Run a file to run its suite; e
 .venv/bin/python tests/test_crisis_slices.py   # crisis-window slicing and summary metrics
 .venv/bin/python tests/test_stress.py          # crisis table, diversification ratio, charts
 .venv/bin/python tests/test_riskparity.py      # risk-contribution identity, ERC oracle, edge cases
+.venv/bin/python tests/test_incremental.py     # Phase 6: perturbation scan, compensation test, 5-asset limit
 ```
 
 Only `test_data.py` and `test_contract.py` touch the network; the suites are expected to pass
 offline. Most engine modules also carry a `__main__` self-check — `.venv/bin/python -m src.riskparity`
 verifies the analytic gradient against central differences and solves 500 random covariances,
 `.venv/bin/python -m src.covariance` checks that an infinite halflife reproduces the sample
-covariance and that PSD repair fires on an indefinite input.
+covariance and that PSD repair fires on an indefinite input. `.venv/bin/python -m src.incremental`
+is the one exception to "self-checks run offline": it demonstrates the live-ticker path
+`analyze_position.py` needs, so it reaches the network on purpose, once.
 
 ---
 
@@ -379,14 +382,143 @@ every rebalance to seven decimal places. That was never the part at risk.
   Monthly rebalancing of four liquid ETFs keeps turnover low, so these would not change the shape
   of the conclusions — but they would move the levels.
 
+---
+
+## Incremental Position Analysis
+
+The engine above answers "how would this strategy have performed since 2006." A different,
+narrower question comes up constantly in practice: **given the risk-parity book we already hold,
+what happens if we add one more stock to it?** A single stock is not a risk-parity sleeve — it
+carries idiosyncratic and sector risk with no independent structural risk premium the way an asset
+class does, so it cannot compete against SPY/TLT/DBC/TIP for a slot in the equal-risk-contribution
+book. But "what does adding this position do to the book we have" is exactly the incremental risk
+analysis a trading desk runs whenever someone proposes a new position, and it is well posed for any
+ticker. `analyze_position.py` answers it.
+
+This is new, additive scope layered on top of the engine above — **nothing in `src/types.py`,
+`backtest.py`, `overlay.py`, `benchmarks.py`, `stress.py`, `viz.py` or `run_backtest.py` changes for
+it.** `src/incremental.py` is a second, independent consumer of `covariance.py` and `riskparity.py`,
+the same way `stress.py` is an independent consumer of `BacktestResult`. See `PLAN.md`'s "Phase 6"
+section for the full derivation.
+
+### Running it
+
+```bash
+.venv/bin/python analyze_position.py --ticker AAPL
+```
+
+| Flag | What it does |
+|---|---|
+| `--ticker TICKER` | The candidate stock, e.g. `AAPL`. Required. Any ticker yfinance covers. |
+| `--lookback-days N` | Target trailing window in trading days, ending today. Default `756` (~3 years). |
+| `--weights W1,W2,...` | Comma-separated perturbation weights, each strictly between 0 and 1. Default `0.01,0.05,0.10`. |
+| `--refresh-prices` | Bypass the on-disk price cache and re-download. |
+| `--verbose` | Show INFO logging — downloads, the minimum-history retry, PSD repairs. |
+| `--help` | The above, from the CLI. |
+
+### Why a snapshot, not a second backtest
+
+Replaying the four-sleeve approach — a 2006-to-present monthly rebalance with a fifth sleeve —
+would fail for most tickers by construction: plenty of names investors actually ask about did not
+trade in 2006, and splicing a stock's return history onto years before it existed is not a real
+portfolio. Instead this estimates on a **trailing window ending today**
+(`INCREMENTAL_LOOKBACK_DAYS`, ~3 years) through the same `covariance.estimate_covariance` the core
+engine already uses — no new estimator, no new statistical assumption. The trade this makes
+explicit: any ticker with enough recent history works, at the cost of not being a 20-year backtest.
+A candidate younger than the full lookback but with at least `INCREMENTAL_MIN_HISTORY_DAYS`
+(~1 year) of history is still analysed, on a shorter window rather than being rejected outright; a
+name with less than that raises rather than silently estimating a covariance from too few points.
+
+### What it computes
+
+Three pieces of math, all built from primitives `covariance.py` and `riskparity.py` already
+validate — no new solver, no new risk model.
+
+1. **Perturbation scan.** Scale the existing four-sleeve ERC weights by `(1 − w)` and add the
+   candidate at `w`, for `w` in `0.01`, `0.05`, `0.10`. Read the candidate's own risk contribution
+   and the portfolio volatility at each. A perturbation, not a re-optimisation: "what if I just add
+   this much," which is how a position actually gets sized.
+2. **The unconstrained 5-asset re-solve.** Re-run the ERC solver with the candidate free to compete
+   for an equal share of risk, and diff the result against the four-sleeve baseline. A different
+   question from (1): not "what if I add 5%" but "what would equal risk contribution actually
+   assign this stock, and how much does it reshuffle the other four."
+3. **The compensation test.** A known result (Treynor–Black / Elton–Gruber active-portfolio
+   theory), not invented here: adding asset *i* at an infinitesimal weight improves portfolio *p*'s
+   Sharpe ratio if and only if
+
+   ```
+   SR_i > SR_p · ρ(i, p)
+   ```
+
+   where `SR_i` is the candidate's own Sharpe ratio, `SR_p` is the baseline portfolio's, and
+   `ρ(i, p)` is the candidate's correlation to the *portfolio's* returns — not to any one sleeve.
+   This is a **marginal** test: it says whether increasing the candidate's weight from zero helps,
+   not what the optimal weight is, which is why it ships alongside the perturbation scan rather
+   than instead of it. A stock with a mediocre or even negative own Sharpe can still pass if its
+   correlation to the book is low or negative; a stock with an excellent own Sharpe can still fail
+   if it is highly correlated with the book. The candidate's correlation to each of the four
+   sleeves individually is reported too, since that decomposes *why* the portfolio-level
+   correlation came out where it did.
+
+### Worked example
+
+`.venv/bin/python analyze_position.py --ticker AAPL`, run against live data:
+
+```
+window: 2023-09-14 -> 2026-09-18 (756 obs)
+
+Baseline (existing book)          AAPL added, 5-asset re-solve
+  SPY  0.1660                       AAPL  0.0736
+  TLT  0.2259                       SPY   0.1419   (-0.0241 vs baseline)
+  DBC  0.1549                       TLT   0.2051   (-0.0207 vs baseline)
+  TIP  0.4532                       DBC   0.1522   (-0.0027 vs baseline)
+                                     TIP   0.4272   (-0.0260 vs baseline)
+
+Perturbation scan
+  candidate weight   portfolio vol   AAPL risk-contribution fraction
+  1%                 4.59%           0.9%
+  5%                 4.70%           10.9%
+  10%                5.17%           31.8%
+
+Compensation test:  SR_i = +0.97   SR_p = +1.14   ρ(i,p) = +0.35   threshold = +0.40
+  PASSES -- 0.97 > 0.40
+```
+
+Read together: the solver would assign AAPL 7.4% of the book at full equilibrium — a real, not
+token, allocation — reshuffling every existing sleeve down to make room, most of it out of TIP and
+SPY. The compensation test passes: AAPL's own risk-adjusted return (0.97) is comfortably above the
+0.40 bar its ~0.35 correlation to the book sets, so adding a small position would improve the
+portfolio's risk-adjusted return at current estimates. Note what "comfortably passes" is not
+saying — see the caveats immediately below.
+
+### What this is, and is not
+
+Printed at the end of every report, not just here, because a CLI user should see it every run, not
+once in a document:
+
+1. **Point-in-time, not historical.** This is a snapshot on the trailing window above, as of the
+   run date. It is not a claim about how the position would have performed since 2006, and a
+   re-run next month will read differently as the window moves — this is the deliberate trade
+   against a full historical backtest (see "Why a snapshot" above).
+2. **A marginal test, not a sizing recommendation.** The compensation test says whether the
+   *direction* of adding the candidate helps, not what weight to add it at — read it alongside the
+   perturbation scan, which is for that question.
+3. **Still a single stock.** Passing the compensation test does not manufacture a structural risk
+   premium the way holding an asset class does. It answers whether this improves *this*
+   portfolio's risk-adjusted return given the correlation structure right now — a narrower and
+   more honest question than "should I own this stock."
+
+---
+
 ## Repository layout
 
 ```
-run_backtest.py     the CLI — the only place the pipeline is wired together
-src/                one module per pipeline stage (table above)
-tests/              standalone test scripts + the synthetic fixture
-reports/            generated CSV and charts (the committed set is from a live run)
-data/cache/         cached network pulls (gitignored; delete a file to force a re-pull)
-PLAN.md             design rationale and the pinned maths
-TASKS.md            numbered build order, one owner per step
+run_backtest.py       the core-engine CLI — the only place that pipeline is wired together
+analyze_position.py   the incremental-analysis CLI (Phase 6) — see above
+src/                  one module per pipeline stage (table above), plus incremental.py (Phase 6)
+tests/                standalone test scripts + the synthetic fixture
+reports/              generated CSV and charts (the committed set is from a live run)
+data/cache/           cached network pulls (gitignored; delete a file to force a re-pull)
+PLAN.md               design rationale and the pinned maths
+TASKS.md              numbered build order, one owner per step
 ```
