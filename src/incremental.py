@@ -899,6 +899,25 @@ def _format_delta(value: float, kind: str) -> str:
     return f"{value:+.3f}"
 
 
+def format_metric_table(realized: pd.DataFrame) -> str:
+    """Metrics as rows, one column per series, from a :func:`realized_risk_table` frame.
+
+    Shared by this module's position report and ``src/compare.py``'s head-to-head
+    report, so the two print an identical set of rows in an identical format.
+    Undefined metrics print ``--`` and an unrecovered longest drawdown is flagged
+    ``(open)``.
+    """
+    cells: dict[str, dict[str, str]] = {}
+    for label, key, kind in _REALIZED_ROWS:
+        cells[label] = {}
+        for book in realized.index:
+            text = _format_metric(realized.at[book, key], kind)
+            if key == "longest_drawdown_days" and realized.at[book, "longest_drawdown_open"]:
+                text += " (open)"
+            cells[label][book] = text
+    return pd.DataFrame(cells).T.to_string()
+
+
 def _format_realized_section(report: IncrementalReport) -> list[str]:
     """The "Realized risk, before vs after" block of the position report."""
     realized = report.realized
@@ -909,15 +928,7 @@ def _format_realized_section(report: IncrementalReport) -> list[str]:
         f"({report.n_observations} obs), unlevered"
     ]
 
-    cells: dict[str, dict[str, str]] = {}
-    for label, key, kind in _REALIZED_ROWS:
-        cells[label] = {}
-        for book in realized.index:
-            text = _format_metric(realized.at[book, key], kind)
-            if key == "longest_drawdown_days" and realized.at[book, "longest_drawdown_open"]:
-                text += " (open)"
-            cells[label][book] = text
-    lines.append(textwrap.indent(pd.DataFrame(cells).T.to_string(), "  "))
+    lines.append(textwrap.indent(format_metric_table(realized), "  "))
     lines.append(
         "  VaR / CVaR / worst day / max drawdown: more negative = worse. "
         "(open) = still underwater at window end."
