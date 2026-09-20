@@ -360,3 +360,17 @@ COMPARE_MIN_OVERLAP_DAYS: int = COV_WARMUP_TRADING_DAYS
 # calendars would then pair a multi-day return on one side with a single day's
 # on the other -- a silently wrong comparison, so it raises instead.
 COMPARE_MIN_CALENDAR_MATCH: float = 0.95
+
+# Below this calendar match the comparison still runs but prints a warning. The
+# 0.95 refusal above catches a calendar that cannot be aligned at all (crypto,
+# which trades weekends: measured 69%). It does not catch a foreign weekday
+# exchange, and measured on live tickers every one sits in a narrow band just
+# under a US listing's 100%: Toronto 98.1-98.2%, London 97.8%, Zurich 97.5%,
+# Hong Kong 97.5%, Frankfurt 97.4%, Sydney 97.4%, Tokyo 96.6%. Those pass the
+# refusal and are still not clean -- the ~2-3% of days one market was shut pair
+# a multi-day return with a one-day one, and a market that closes at a different
+# time of day reacts to US news on a different date, which pulls correlation and
+# beta toward zero (the non-synchronous-trading effect). 0.99 sits between the
+# two populations: every US listing and US-traded ADR measured 100%, every
+# foreign exchange measured under 98.3%.
+COMPARE_CALENDAR_WARN_BELOW: float = 0.99

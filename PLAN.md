@@ -452,10 +452,22 @@ project's existing "a year of daily data is the least we trust" floor), not the 
 ### Guards
 
 Two failures are properties of the data, not of the call, and raise `DataUnavailableError`: an overlap
-under `COMPARE_MIN_OVERLAP_DAYS`, and a trading calendar that does not match the strategy's
-(`COMPARE_MIN_CALENDAR_MATCH`, 95% of the ticker's days must also be strategy days — a listing on another
-exchange's calendar would otherwise pair a multi-day return on one side with a single day's on the
-other). Non-finite, unsorted or duplicate-dated inputs raise `ValueError`.
+under `COMPARE_MIN_OVERLAP_DAYS`, and a trading calendar that cannot be aligned
+(`COMPARE_MIN_CALENDAR_MATCH`, 95% of the ticker's days must also be strategy days). Non-finite, unsorted
+or duplicate-dated inputs raise `ValueError`.
+
+**The calendar has two tiers, and the second was added after measuring rather than assumed.** The 95%
+refusal catches a series that cannot be aligned at all (crypto, which trades weekends: measured 69%). It
+does not catch a foreign *weekday* exchange, and measured on live tickers every one sits in a narrow band
+just under a US listing's 100%: Toronto 98.1–98.2%, London 97.8%, Zurich and Hong Kong 97.5%, Frankfurt and
+Sydney 97.4%, Tokyo 96.6%. Those pass the refusal and are still not clean — on the ~2–3% of days one market
+was shut, a multi-day return is paired with a one-day one, and a market that closes at a different time of
+day reacts to US news on a different date, which pulls correlation, beta, capture and the tail block toward
+zero (non-synchronous trading). So below `COMPARE_CALENDAR_WARN_BELOW` (99%, between the two populations:
+every US listing and US-traded ADR measured 100%, every foreign exchange under 98.3%) the comparison runs
+but `TickerComparison.calendar_warning` is set and the report prints it, marked `!`. It warns rather than
+refuses because comparing the strategy against a foreign stock is a legitimate thing to want; the failure
+to avoid is silence, not the comparison. A US-traded ADR of the same company is the clean route.
 
 ### File layout added by Phase 7
 
@@ -472,7 +484,7 @@ tests/test_data.py     fetch_ticker_prices against a monkeypatched yfinance: a l
                         accepted where fetch_prices' guard rejects it, the shared cache is untouched
 ```
 
-`src/config.py` gains one append-only block (`COMPARE_MIN_OVERLAP_DAYS`, `COMPARE_MIN_CALENDAR_MATCH`).
+`src/config.py` gains one append-only block (`COMPARE_MIN_OVERLAP_DAYS`, `COMPARE_MIN_CALENDAR_MATCH`, `COMPARE_CALENDAR_WARN_BELOW`).
 `incremental.py` gains a public `format_metric_table` extracted from its own report code, so the two
 reports cannot drift apart; nothing else in `src/` changes.
 

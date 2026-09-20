@@ -646,9 +646,23 @@ Printed at the end of every report:
 5. **Short windows are noisy.** A 5% tail is 5% of the observation count, and a max drawdown is a
    single episode. Below `COMPARE_MIN_OVERLAP_DAYS` (252) the comparison refuses to print at all.
 
-A ticker on another exchange's trading calendar is refused rather than silently misaligned: if fewer
-than 95% of its trading days are also strategy trading days, intersecting the two would pair a
-multi-day return on one side with a single day's on the other.
+**Which tickers work.** Any ticker yfinance has daily prices for, with at least 252 overlapping
+trading days. US-listed stocks, ETFs, indices (`^GSPC`) and US-traded ADRs of foreign companies
+(`TM` for Toyota) all match the strategy's calendar exactly. Two tiers guard the calendar, both
+measured on live tickers rather than assumed:
+
+| Calendar match | What happens | Measured examples |
+|---|---|---|
+| 99% or better | Runs cleanly | US listings and ADRs: 100% |
+| 95% to 99% | **Runs, with a printed warning** | Toronto 98.1–98.2%, London 97.8%, Zurich 97.5%, Hong Kong 97.5%, Frankfurt 97.4%, Sydney 97.4%, Tokyo 96.6% |
+| under 95% | Refused (`DataUnavailableError`) | Bitcoin (trades weekends): 69% |
+
+The warning exists because a foreign weekday exchange is usable but not clean. On the ~2–3% of days
+one market was shut and the other open, a multi-day return is paired with a one-day one; and a
+market that closes at a different time of day reacts to US news on a different date, which pulls
+correlation, beta, capture and the tail block toward zero (the non-synchronous-trading effect).
+Those numbers are printed with a `! calendar warning` and should be read as indicative, not exact.
+The volatility, drawdown and return figures are unaffected by the pairing.
 
 ---
 

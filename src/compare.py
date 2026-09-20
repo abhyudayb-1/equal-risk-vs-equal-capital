@@ -43,6 +43,7 @@ import pandas as pd
 from .backtest import DEFAULT_STRATEGY_NAME
 from .config import (
     ANNUAL_RISK_FREE_RATE,
+    COMPARE_CALENDAR_WARN_BELOW,
     COMPARE_MIN_CALENDAR_MATCH,
     COMPARE_MIN_OVERLAP_DAYS,
     CRISIS_WINDOWS,
@@ -244,6 +245,18 @@ class TickerComparison:
     relative: pd.DataFrame
     tail: pd.DataFrame
     crisis: pd.DataFrame
+    calendar_warning: str | None = None
+
+
+def _calendar_warning(candidate: str, match: float) -> str:
+    return (
+        f"only {match:.1%} of {candidate}'s trading days are also strategy trading days. "
+        f"That is a different exchange's calendar: on days one market was shut and the "
+        f"other open a multi-day return is paired with a one-day one, and a market that "
+        f"closes at a different time of day reacts to US news on a different date. "
+        f"Correlation, beta, capture and the tail block are likely UNDERSTATED; treat "
+        f"them as indicative, not exact."
+    )
 
 
 def compare_to_ticker(
@@ -256,6 +269,7 @@ def compare_to_ticker(
     annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
     min_overlap_days: int = COMPARE_MIN_OVERLAP_DAYS,
     min_calendar_match: float = COMPARE_MIN_CALENDAR_MATCH,
+    warn_calendar_below: float = COMPARE_CALENDAR_WARN_BELOW,
     confidence: float = VAR_CONFIDENCE,
 ) -> TickerComparison:
     """Compare the strategy's daily returns with a ticker's, on their overlap.
@@ -277,6 +291,13 @@ def compare_to_ticker(
         If the ticker's trading calendar does not match the strategy's (see
         :func:`_calendar_match`), or the overlap is shorter than
         ``min_overlap_days``. Both are properties of the data, not of the call.
+
+    Two tiers on the calendar, deliberately. Below ``min_calendar_match`` (crypto,
+    which trades weekends) it raises: the series cannot be aligned. Between that
+    and ``warn_calendar_below`` (a foreign weekday exchange) it runs and sets
+    ``calendar_warning``, which the report prints: the comparison is usable but
+    its relative metrics are biased, and silence there would be the same failure
+    the refusal exists to prevent, one notch quieter.
     ValueError
         If an input is not a clean, dated, finite return series, or ``candidate``
         collides with a strategy column name.
@@ -343,6 +364,9 @@ def compare_to_ticker(
         relative=relative,
         tail=tail,
         crisis=crisis,
+        calendar_warning=(
+            _calendar_warning(candidate, match) if match < warn_calendar_below else None
+        ),
     )
 
 
@@ -413,7 +437,7 @@ def format_comparison_report(comp: TickerComparison) -> str:
     lines = [
         f"{comp.strategy_name} vs {comp.candidate} buy-and-hold -- head-to-head comparison",
         f"  overlap window: {comp.window_start.date()} -> {comp.window_end.date()} "
-        f"({comp.n_observations} obs; {comp.calendar_match:.0%} of {comp.candidate}'s "
+        f"({comp.n_observations} obs; {comp.calendar_match:.1%} of {comp.candidate}'s "
         "trading days are strategy days)",
         f"  strategy: {len(UNIVERSE)}-sleeve equal-risk-contribution book "
         f"({'/'.join(UNIVERSE)}), levered to {TARGET_VOL:.0%} vol "
@@ -421,6 +445,14 @@ def format_comparison_report(comp: TickerComparison) -> str:
         "history, then cut to this window",
         f"  {comp.candidate}: bought and held, total return (dividends reinvested)",
     ]
+    if comp.calendar_warning:
+        lines.extend(
+            textwrap.wrap(
+                f"! calendar warning: {comp.calendar_warning}",
+                width=SUMMARY_LINE_WIDTH,
+                subsequent_indent="    ",
+            )
+        )
 
     lines.append("\nRisk and return on the overlap window")
     lines.append(textwrap.indent(format_metric_table(comp.summary), "  "))

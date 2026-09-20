@@ -322,6 +322,49 @@ def test_identity_check_can_fail() -> None:
 # ---------------------------------------------------------------------------
 # The report
 # ---------------------------------------------------------------------------
+def test_calendar_warning_tier() -> None:
+    """Two tiers: refuse what cannot be aligned, warn about what merely can be.
+
+    A foreign weekday exchange (Tokyo, London, Toronto ... measured 96.6-98.2%
+    against a US listing's 100%) is not refused, but its relative metrics are
+    biased, so the comparison must say so rather than print them cleanly.
+    """
+    result, gold, _ = _fixture_pair()
+    clean = compare.compare_to_ticker(result.returns, gold, "GLD", strategy_name=result.strategy)
+    check("a ticker on the strategy's own calendar (100% match) carries no warning",
+          clean.calendar_warning is None)
+    check("...and its report prints none",
+          "calendar warning" not in compare.format_comparison_report(clean))
+
+    # Add ~3% extra Saturday returns: days the ticker traded and the strategy did
+    # not, which is exactly what a foreign exchange's differing holidays look like.
+    lo, hi = result.returns.index[0], result.returns.index[-1]
+    n_in_range = int(((gold.index >= lo) & (gold.index <= hi)).sum())
+    saturdays = pd.date_range(lo, hi, freq="W-SAT")[: round(0.031 * n_in_range)]
+    foreign = pd.concat([gold, pd.Series(0.0005, index=saturdays)]).sort_index()
+
+    in_range = foreign.index[(foreign.index >= lo) & (foreign.index <= hi)]
+    expected = len(in_range.intersection(result.returns.index)) / len(in_range)
+    check("the constructed ticker sits between the refusal and the warning thresholds",
+          config.COMPARE_MIN_CALENDAR_MATCH < expected < config.COMPARE_CALENDAR_WARN_BELOW)
+
+    warned = compare.compare_to_ticker(result.returns, foreign, "FOREIGN", strategy_name=result.strategy)
+    check("it still runs (it is not refused)", warned.n_observations > 0)
+    check("...the measured match agrees with the hand calculation",
+          _close(warned.calendar_match, expected))
+    check("...and it carries a warning that says the metrics are understated",
+          isinstance(warned.calendar_warning, str) and "UNDERSTATED" in warned.calendar_warning)
+    check("...which the printed report shows, marked with a leading !",
+          "! calendar warning" in compare.format_comparison_report(warned))
+    check("the weekend-only extra days are dropped, not paired: the overlap is unchanged",
+          warned.n_observations == len(gold.index.intersection(result.returns.index)))
+
+    silenced = compare.compare_to_ticker(
+        result.returns, foreign, "FOREIGN", strategy_name=result.strategy, warn_calendar_below=0.0
+    )
+    check("the warning threshold is a parameter", silenced.calendar_warning is None)
+
+
 def test_report_formatting() -> None:
     result, gold, unlevered = _fixture_pair()
     comp = compare.compare_to_ticker(result.returns, gold, config.GOLD_TICKER, unlevered=unlevered)
@@ -365,6 +408,7 @@ if __name__ == "__main__":
     test_overlap_is_the_intersection_for_a_young_ticker()
     test_guards_raise()
     test_identity_check_can_fail()
+    test_calendar_warning_tier()
 
     test_report_formatting()
 
