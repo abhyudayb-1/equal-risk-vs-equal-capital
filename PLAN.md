@@ -50,7 +50,7 @@ src/backtest.py     monthly rebalance loop, daily accrual, weight/leverage/RC hi
 src/metrics.py      PORTED from sp500-factor-backtester + crisis-window helpers
 src/benchmarks.py   equal-weight, 60/40, max-Sharpe (cvxpy), naive 1/vol risk parity
 src/stress.py       crisis decomposition, drawdown table, correlation-regime diagnostics
-src/viz.py          the five charts
+src/viz.py          the report charts: four PNGs (the crisis table is the fifth deliverable, a CSV from stress.py)
 run_backtest.py     entry point wiring it end to end
 tests/fixtures.py   synthetic BacktestResult generator — B's unblocking mechanism
 tests/test_riskparity.py   ERC math + B's independent convex oracle
@@ -142,7 +142,7 @@ until this PR is on `main`** — it is what makes the next three phases genuinel
 |---|---|---|
 | 1 (~5h) | `data.py`: yfinance ETF pull through `cache.py`; keyless FRED CSV endpoint (`fredgraph.csv?id=DTB3`) — no API key, consistent with the house rule | `benchmarks.py` + crisis-window helpers in `metrics.py`, built against `fixtures.py` |
 | 2 (~6h) | `covariance.py` (EWMA + shrinkage + PSD repair) and `riskparity.py` SLSQP solver with analytic gradient | `tests/test_riskparity.py`: RC identity, convex oracle, degenerate cases (perfect correlation, near-singular Σ, single asset) |
-| 3 (~6h) | `overlay.py` vol targeting with financing cost; `backtest.py` monthly loop with daily accrual | `stress.py` crisis decomposition + drawdown table; `viz.py` all five charts against fixtures |
+| 3 (~6h) | `overlay.py` vol targeting with financing cost; `backtest.py` monthly loop with daily accrual | `stress.py` crisis decomposition + drawdown table; `viz.py` the report charts against fixtures |
 | 4 (~5h) | `tests/test_lookahead.py`; solver diagnostics (convergence failures must be logged and surfaced, never silently swallowed) | `run_backtest.py` CLI; README with the 2022 failure-mode write-up |
 
 **Phase 5 — joint, ~3h.** First real end-to-end run, swap `fixtures.py` for live data in B's
@@ -234,9 +234,10 @@ question lives — whether 2022 was an episode or a regime change.
 
 Done means: `Σ RC_i = σ_p` holds to 1e-10; SLSQP and convex solutions agree to 1e-6; every
 rebalance provably uses only past data; the crisis table reproduces the known signs (risk
-parity wins 2008/2020, loses 2022); and five charts land in `reports/` — RC stacked area,
-capital-vs-risk weight comparison, leverage time series, rolling correlation, and the crisis
-drawdown table.
+parity wins 2008/2020, loses 2022); and the report artifacts land in `reports/` — four PNGs (RC
+stacked area, capital-vs-risk weight comparison, leverage time series, and the rolling correlation
+drawn with the diversification ratio) plus the crisis drawdown table as a CSV. (Planned as five
+charts; the correlation and diversification ratio share one figure, and the table is a CSV.)
 
 ---
 

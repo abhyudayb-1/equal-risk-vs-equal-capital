@@ -93,17 +93,21 @@ Standalone scripts — no pytest, no test runner. Run a file to run its suite; e
 .venv/bin/python tests/test_crisis_slices.py   # crisis-window slicing and summary metrics
 .venv/bin/python tests/test_stress.py          # crisis table, diversification ratio, charts
 .venv/bin/python tests/test_riskparity.py      # risk-contribution identity, ERC oracle, edge cases
+.venv/bin/python tests/test_lookahead.py       # the <= t guard, including removing it to prove the check has teeth
 .venv/bin/python tests/test_incremental.py     # Phase 6: perturbation scan, compensation test, 5-asset limit, realized risk
 .venv/bin/python tests/test_compare.py         # head-to-head vs a ticker: relative metrics, tail block, crisis windows
 ```
 
-Only `test_data.py` and `test_contract.py` touch the network; the suites are expected to pass
-offline. Most engine modules also carry a `__main__` self-check — `.venv/bin/python -m src.riskparity`
+No suite touches the network: all nine pass offline, checked by blocking `socket.connect` and
+re-running each one, and yfinance is monkeypatched wherever a fetch is
+exercised. Most engine modules also carry a `__main__` self-check — `.venv/bin/python -m src.riskparity`
 verifies the analytic gradient against central differences and solves 500 random covariances,
 `.venv/bin/python -m src.covariance` checks that an infinite halflife reproduces the sample
 covariance and that PSD repair fires on an indefinite input. `.venv/bin/python -m src.incremental`
 is the one exception to "self-checks run offline": it demonstrates the live-ticker path
 `analyze_position.py` needs, so it reaches the network on purpose, once.
+`.venv/bin/python -m src.compare` prints a full head-to-head report from fixtures, offline, and
+writes nothing to disk.
 
 ---
 
