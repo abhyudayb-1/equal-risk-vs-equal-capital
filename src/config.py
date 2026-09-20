@@ -62,8 +62,6 @@ DATA_START_DATE: str = "2006-02-03"
 # ~8 months ahead of the October 2007 GFC peak.
 COV_WARMUP_TRADING_DAYS: int = 252
 
-BENCHMARK_TICKER: str = EQUITY_TICKER
-
 # ---------------------------------------------------------------------------
 # Calendar
 # ---------------------------------------------------------------------------
