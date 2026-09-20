@@ -8,15 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
-**Done: steps 1–43, all on `main`, tagged `v1.0` (steps 1–35), `v1.1` (steps 36–42) and `v1.2`
-(a post-tag correctness audit, no numbered steps); step 43 landed after `v1.2` and is not
-tagged.** The engine, the analysis layer, the hardening, the CLI, the live run, the real charts,
-the write-up, the final review, the incremental position analysis layered on top as new additive
-scope, in `v1.2` five bugs and one dead-code removal found by auditing the whole repo after
-`v1.1` shipped, and — in step 43 — realized before/after risk metrics added to that incremental
-analysis. Nothing is left in any of the four; see "Incremental position analysis" below for what
-`v1.1` and step 43 added and found, and "What the v1.2 audit found" below for the fifth commit
-table.
+**Done: steps 1–43, all on `main`, tagged `v1.0` (steps 1–35), `v1.1` (steps 36–42), `v1.2`
+(a post-tag correctness audit, no numbered steps), `v1.3` (step 43) and `v1.3.1` (a small
+cleanup and one tooling fix, no numbered steps).** The engine, the analysis layer, the hardening,
+the CLI, the live run, the real charts, the write-up, the final review, the incremental position
+analysis layered on top as new additive scope, in `v1.2` five bugs and one dead-code removal found
+by auditing the whole repo after `v1.1` shipped, in `v1.3` — step 43 — realized before/after risk
+metrics added to that incremental analysis, and in `v1.3.1` two dead items removed plus a fix so
+the `src.viz` / `src.stress` self-checks stop overwriting the tracked `reports/` files. Nothing is
+left in any of the five; see "Incremental position analysis" below for what `v1.1` and step 43
+added and found, and "What the v1.2 audit found" below for the fifth commit table.
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -102,7 +103,7 @@ close gaps an already-passing test suite didn't reach, which is why `README.md` 
 needed no update alongside them. All 8 offline test suites and all 7 module self-checks stayed
 green throughout.
 
-**Step 43 landed after `v1.2` and is not tagged.** New scope, not an audit: `analyze_position.py`
+**`v1.3` is tagged (step 43).** New scope, not an audit: `analyze_position.py`
 reported only *model-based* numbers (covariance-derived vol and risk contribution, the 5-asset
 re-solve, the compensation test), so it could not say what adding a stock had actually done to a
 book's drawdown or tail losses. It now also replays the trailing window and reports realized risk
@@ -114,6 +115,14 @@ for each book. Like Phase 6 it is not on `TASKS.md`, so this row is its only led
 
 See "Incremental position analysis" below for the design choices in it that are easy to undo by
 accident.
+
+**`v1.3.1` is tagged.** Not a phase and not on `TASKS.md` — a cleanup pass after `v1.3`, each item
+its own PR, with no change to any number, formula or design decision:
+
+| What it produced | Landed as |
+| --- | --- |
+| `src/data.py` / `src/config.py`: removed an unused `import numpy as np` and the unreferenced `BENCHMARK_TICKER` constant, found by scanning every module for imports and config constants with no reference in code or docs. Deliberately kept: the unreferenced helpers in `src/cache.py` and `metrics.cumulative_curve`, because both files are documented verbatim ports that must not be rewritten. | `b226867` (PR #54) |
+| `src/viz.py` / `src/stress.py`: the `python -m` self-checks wrote fixture output into `reports/`, silently replacing the tracked real charts and `crisis_drawdowns.csv`; they now render into a temporary directory. `CLAUDE.md`'s claim that `reports/` is gitignored was corrected (see "Architecture"). | `1f93dfc` (PR #55) |
 
 Read "Where the build is" next — the live-run numbers and the two findings that constrain the
 write-up are there, and they are the part a summary cannot carry.
@@ -198,10 +207,10 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: every numbered step through 43 is built, `v1.1` is tagged, `v1.2`
-adds a post-tag audit's bug fixes on top, and step 43 (realized before/after risk) landed after
-`v1.2` untagged — there is no unfinished step in `TASKS.md` to pick up, and `main` already has
-everything through step 43. New work here is a fresh scope, not a continuation.
+To resume in a new session: every numbered step through 43 is built and tagged — `v1.1` closed
+Phase 6, `v1.2` adds a post-tag audit's bug fixes, `v1.3` is step 43 (realized before/after risk)
+and `v1.3.1` a small cleanup — there is no unfinished step in `TASKS.md` to pick up, and `main`
+already has everything `v1.3.1` does. New work here is a fresh scope, not a continuation.
 The fastest way back into the core engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command; `.\.venv\Scripts\python.exe analyze_position.py --ticker AAPL` does the
@@ -449,8 +458,8 @@ four charts and `crisis_drawdowns.csv` **are tracked** (force-added in Phase 5 f
 `run_backtest.py`; see `.gitignore`), so anything that writes to `reports/` overwrites the real
 results. Nothing but `run_backtest.py` may: the `python -m src.viz` and `python -m src.stress`
 self-checks write to a temporary directory for exactly this reason (they used to write into
-`reports/` and silently replaced the tracked files with fixture output — found and fixed after
-`v1.3`). If `git status` ever shows `reports/` modified after running a self-check, that is this
+`reports/` and silently replaced the tracked files with fixture output — found after `v1.3`,
+fixed in `v1.3.1`). If `git status` ever shows `reports/` modified after running a self-check, that is this
 bug back; restore with `git checkout -- reports/`, and do not commit the fixture versions.
 
 Two notes on the Phase 2 modules, because both encode a decision that looks like a detail:
