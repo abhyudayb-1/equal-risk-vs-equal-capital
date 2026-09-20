@@ -8,11 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
-**Done: steps 1–42, all on `main`, tagged `v1.0` (steps 1–35) and `v1.1` (steps 36–42).** The
-engine, the analysis layer, the hardening, the CLI, the live run, the real charts, the write-up,
-the final review — and, in `v1.1`, the incremental position analysis layered on top as new,
-additive scope. Nothing is left in either phase; see "Incremental position analysis" below for
-what `v1.1` added and found.
+**Done: steps 1–42, all on `main`, tagged `v1.0` (steps 1–35), `v1.1` (steps 36–42) and `v1.2`
+(a post-tag correctness audit, no numbered steps).** The engine, the analysis layer, the
+hardening, the CLI, the live run, the real charts, the write-up, the final review, the
+incremental position analysis layered on top as new additive scope, and — in `v1.2` — five bugs
+and one dead-code removal found by auditing the whole repo after `v1.1` shipped. Nothing is left
+in any of the three; see "Incremental position analysis" below for what `v1.1` added and found,
+and "What the v1.2 audit found" below for the fifth commit table.
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -77,6 +79,26 @@ could never fire; the new one sits ~8.5x above the worst legitimate case measure
 would still catch a genuinely pathological covariance. See "Two stand-ins" below for what
 changed and why, and the `MAX_CONDITION_NUMBER` comment in `config.py` for the measurement
 behind the new value.
+
+**`v1.2` is tagged.** Not a phase and not on `TASKS.md` — a correctness audit run after `v1.1`
+shipped, the same instinct as step 35's and step 42's final reviews but scoped to the whole repo
+rather than one phase's diff. Four parallel passes (config/cache/types/data; the math core;
+metrics/benchmarks/stress/viz; Phase 6 plus both CLIs and the full test suite) read every source
+file for bugs the existing test suite didn't reach. Five real issues and one piece of dead code,
+each landed as its own PR and verified against a constructed failure scenario, not just re-read:
+
+| What it produced | Landed as |
+| --- | --- |
+| `src/types.py`: `BacktestResult.validate()`'s look-ahead check used `<` instead of `<=`, silently permitting `returns.index[0] == weights.index[0]` — a decision earning its own rebalance day's return. `tests/test_contract.py` already asserted the strict inequality on a fixture; `validate()` itself, the one function every result is required to pass through, didn't enforce it. | `9b21a38` |
+| `run_backtest.py`: added the `ERCSolverError` handling `analyze_position.py` already had, so a genuinely infeasible ERC problem on a live run reports cleanly instead of crashing with a raw traceback. | `6ac2526` |
+| `src/covariance.py` / `src/viz.py` / `src/metrics.py`: `condition_number()` took `abs()` of the eigenvalues before finding the smallest, letting an indefinite matrix report a finite number instead of `inf`; the correlation/diversification chart's crisis shading read a transient axis range instead of the final one; mixing a crisis-window name with an explicit end date produced a confusing downstream parse error instead of a clear one. | `bd51290` |
+| `src/incremental.py` / `analyze_position.py`: five edge-case fixes — a misleading NaN-vs-missing-label message in `compensation_test`, an empty-`candidate_weights` guard in `perturbation_scan`, duplicate-`--weights` rejection, a NaN Sharpe reporting as a silent "FAILS" instead of "UNDEFINED", and an empty-`--ticker` check. | `33e093e` |
+| `src/types.py`: removed the dead `ERCSolver` Protocol and `solve_erc` stub — Phase 0-1 scaffolding unreferenced since the real solver landed in `src/riskparity.py` at step 17. | `f6868af` |
+
+None of these changed a design decision, a documented formula, or a number in `README.md` — they
+close gaps an already-passing test suite didn't reach, which is why `README.md` and `PLAN.md`
+needed no update alongside them. All 8 offline test suites and all 7 module self-checks stayed
+green throughout.
 
 Read "Where the build is" next — the live-run numbers and the two findings that constrain the
 write-up are there, and they are the part a summary cannot carry.
@@ -161,8 +183,9 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: every numbered step through 42 is built and `v1.1` is tagged, so there
-is no unfinished step in `TASKS.md` to pick up — new work here is a fresh scope, not a continuation.
+To resume in a new session: every numbered step through 42 is built, `v1.1` is tagged, and `v1.2`
+adds a post-tag audit's bug fixes on top — there is no unfinished step in `TASKS.md` to pick up,
+and `main` already has everything `v1.2` does. New work here is a fresh scope, not a continuation.
 The fastest way back into the core engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command; `.\.venv\Scripts\python.exe analyze_position.py --ticker AAPL` does the
