@@ -33,8 +33,16 @@ The report always says which kind of analysis it is.
    ``solve_erc_with_status`` re-solve, diffed against the baseline. A
    different question from (1): what would equal risk contribution actually
    assign the stock, and how much does it reshuffle the other four.
-3. The compensation test, ``SR_i > SR_p * rho(i, p)`` -- step 38, not yet in
-   this file.
+3. :func:`compensation_test` -- ``SR_i > SR_p * rho(i, p)``, a known result
+   (Treynor-Black / Elton-Gruber active-portfolio theory) rather than
+   something invented here: adding asset ``i`` at an infinitesimal weight
+   improves portfolio ``p``'s Sharpe ratio iff its own Sharpe exceeds the
+   portfolio's Sharpe times its correlation to the *portfolio's returns* (not
+   to any one sleeve). It is a **marginal** test -- whether the direction of
+   adding the candidate helps, not what weight to add it at -- which is
+   exactly complementary to (1) and (2). The candidate's correlation to each
+   of the four sleeves individually ships alongside it, since that decomposes
+   *why* the portfolio correlation came out where it did.
 
 Run a self-check from the repo root (this one, unlike the seven Phase 0-5
 module self-checks, touches the network for its live-ticker demonstration --
@@ -53,13 +61,16 @@ import numpy as np
 import pandas as pd
 
 from .config import (
+    ANNUAL_RISK_FREE_RATE,
     INCREMENTAL_CANDIDATE_WEIGHTS,
     INCREMENTAL_LOOKBACK_DAYS,
     INCREMENTAL_MIN_HISTORY_DAYS,
+    TRADING_DAYS_PER_YEAR,
     UNIVERSE,
 )
 from .covariance import estimate_covariance
 from .data import DataUnavailableError, daily_returns, fetch_prices
+from .metrics import sharpe_ratio
 from .riskparity import ERCSolution, portfolio_volatility, risk_contributions, solve_erc_with_status
 
 log = logging.getLogger(__name__)
@@ -214,6 +225,84 @@ def resolve_five_asset_erc(
     return solve_erc_with_status(cov)
 
 
+# ---------------------------------------------------------------------------
+# Step 38 -- the compensation test
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class CompensationTest:
+    """Treynor-Black / Elton-Gruber: is the candidate's added risk paid for.
+
+    ``passes`` is ``candidate_sharpe > portfolio_sharpe * correlation_to_portfolio``
+    -- derived by writing the blended return as ``(1-eps)*r_p + eps*r_i``,
+    differentiating ``Sharpe(eps)`` at ``eps = 0``, and reducing the sign of the
+    derivative to exactly this inequality (PLAN.md's Phase 6 section has the
+    full derivation). It is a **marginal** test: it says whether increasing the
+    candidate's weight from 0 helps, not what the optimal weight is -- read
+    alongside :func:`perturbation_scan`, which answers that complementary
+    question. A candidate with a mediocre or even negative own Sharpe can still
+    pass this if ``correlation_to_portfolio`` is low or negative; a candidate
+    with an excellent own Sharpe can still fail it if it is highly correlated
+    with the book -- correlation, not the candidate's own return, is the real
+    driver of the sign.
+
+    Both Sharpe ratios are computed at ``config.ANNUAL_RISK_FREE_RATE`` (0.0 by
+    default project-wide), matching every other Sharpe/return-to-vol ratio in
+    this project so the test is internally consistent with the rest of the
+    write-up rather than mixing conventions.
+    """
+
+    candidate_sharpe: float
+    portfolio_sharpe: float
+    correlation_to_portfolio: float
+    correlation_threshold: float
+    passes: bool
+    correlation_to_sleeves: pd.Series
+
+
+def compensation_test(
+    returns: pd.DataFrame,
+    candidate: str,
+    baseline_weights: pd.Series | np.ndarray,
+    universe: tuple[str, ...] = UNIVERSE,
+    periods_per_year: int = TRADING_DAYS_PER_YEAR,
+    annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
+) -> CompensationTest:
+    """Run the compensation test for ``candidate`` against the baseline book.
+
+    ``portfolio_returns`` holds the baseline ERC weights **constant** over the
+    whole window rather than replaying a rebalance sequence -- this is a
+    point-in-time snapshot's Sharpe on its current weights, not a backtest, so
+    there is no decision-timing question for a one-day lag to resolve (unlike
+    ``overlay.py``'s ``_in_force_before``, which exists specifically for a
+    walk-forward sequence of *changing* decisions).
+
+    ``correlation_to_portfolio`` is ``rho(i, p)`` in the formula above: the
+    candidate's correlation to the *portfolio's* returns, not to any one
+    sleeve. ``correlation_to_sleeves`` is the per-sleeve breakdown that
+    decomposes why that number came out where it did -- e.g. a candidate
+    uncorrelated with SPY but correlated with DBC is not diversifying the
+    equity risk it looks like it is diversifying.
+    """
+    weights = pd.Series(np.asarray(baseline_weights, dtype="float64"), index=list(universe))
+    sleeve_returns = returns[list(universe)]
+    portfolio_returns = sleeve_returns.mul(weights, axis=1).sum(axis=1)
+    candidate_returns = returns[candidate]
+
+    candidate_sharpe = sharpe_ratio(candidate_returns, periods_per_year, annual_risk_free_rate)
+    portfolio_sharpe = sharpe_ratio(portfolio_returns, periods_per_year, annual_risk_free_rate)
+    correlation_to_portfolio = float(candidate_returns.corr(portfolio_returns))
+    threshold = portfolio_sharpe * correlation_to_portfolio
+
+    return CompensationTest(
+        candidate_sharpe=candidate_sharpe,
+        portfolio_sharpe=portfolio_sharpe,
+        correlation_to_portfolio=correlation_to_portfolio,
+        correlation_threshold=threshold,
+        passes=bool(candidate_sharpe > threshold),
+        correlation_to_sleeves=sleeve_returns.corrwith(candidate_returns).rename("correlation"),
+    )
+
+
 @dataclass(frozen=True)
 class IncrementalReport:
     """Everything one run of the incremental analysis produces.
@@ -228,6 +317,12 @@ class IncrementalReport:
     book reshuffles when the candidate is allowed to compete on equal terms.
     The candidate itself has no baseline counterpart to diff against, so it is
     not in this series; its 5-asset weight is in ``five_asset_weights``.
+
+    ``compensation`` is the marginal test (:class:`CompensationTest`): does
+    adding the candidate at an infinitesimal weight improve the baseline
+    portfolio's Sharpe ratio. Complementary to ``perturbation``, not a
+    substitute for it -- one says whether the direction helps, the other says
+    what a specific amount does.
     """
 
     candidate: str
@@ -243,6 +338,7 @@ class IncrementalReport:
     five_asset_weights: pd.Series
     five_asset_solution: ERCSolution
     weight_diff: pd.Series
+    compensation: CompensationTest
 
 
 def analyze_position(
@@ -290,6 +386,8 @@ def analyze_position(
     five_weights = pd.Series(five.weights, index=[candidate, *universe], name="five_asset_weight")
     weight_diff = (five_weights[list(universe)] - baseline_weights).rename("weight_diff")
 
+    compensation = compensation_test(returns, candidate, baseline.weights, universe)
+
     return IncrementalReport(
         candidate=candidate,
         universe=universe,
@@ -304,6 +402,7 @@ def analyze_position(
         five_asset_weights=five_weights,
         five_asset_solution=five,
         weight_diff=weight_diff,
+        compensation=compensation,
     )
 
 
@@ -339,6 +438,85 @@ if __name__ == "__main__":  # pragma: no cover
     finally:
         module.fetch_prices = real_fetch_prices
 
+    # --- step 38's "done when": a hand-derivable two-asset synthetic case ---
+    # Built exactly, not merely approximately -- a Gram-Schmidt construction
+    # gives a candidate series with the REQUESTED sample correlation and
+    # sample mean/std to floating-point precision, not a value a large-enough
+    # random draw happens to land near. That sidesteps the house rule "never
+    # assert on a single simulated path" (CLAUDE.md) at the root: there is no
+    # sampling noise here to be unlucky about, so one seed is enough.
+    print("\ncompensation test: hand-derivable two-asset synthetic cases")
+
+    def _exact_series(n: int, mean_target: float, std_target: float, seed: int) -> np.ndarray:
+        """A series with sample mean/std (ddof=1) equal to the targets, exactly."""
+        raw = np.random.default_rng(seed).normal(size=n)
+        raw = raw - raw.mean()
+        raw = raw / raw.std(ddof=1)
+        return mean_target + std_target * raw
+
+    def _exact_corr_partner(
+        base: np.ndarray, rho: float, mean_target: float, std_target: float, seed: int
+    ) -> np.ndarray:
+        """A series with EXACT sample correlation ``rho`` to ``base`` and the
+        requested sample mean/std, via Gram-Schmidt: an independent draw is
+        orthogonalised against ``base`` then blended back at the angle that
+        gives the requested correlation. Affine rescaling afterward sets the
+        mean/std without touching the correlation (Pearson's r is invariant to
+        a positive affine transform of either series).
+        """
+        base_centered = base - base.mean()
+        u = base_centered / np.linalg.norm(base_centered)
+        raw = np.random.default_rng(seed).normal(size=len(base))
+        raw_centered = raw - raw.mean()
+        orthogonal = raw_centered - (raw_centered @ u) * u
+        v = orthogonal / np.linalg.norm(orthogonal)
+        z = rho * u + math.sqrt(max(0.0, 1.0 - rho * rho)) * v
+        z = z / z.std(ddof=1)
+        return mean_target + std_target * z
+
+    n_days = 2000
+    portfolio_returns = pd.Series(
+        _exact_series(n_days, 0.0006, 0.01, seed=1),
+        index=pd.bdate_range("2020-01-01", periods=n_days),
+        name="portfolio",
+    )
+    sr_p = sharpe_ratio(portfolio_returns, TRADING_DAYS_PER_YEAR)
+    print(f"  baseline portfolio Sharpe (SR_p) = {sr_p:.4f}")
+
+    # Each scenario's expected pass/fail is derived by hand from the formula
+    # BEFORE running it: at rho=+1 the test reduces to SR_i > SR_p; at rho=0
+    # the threshold is 0 regardless of SR_p, so any positive SR_i passes; at
+    # rho=-1 it reduces to SR_i > -SR_p, so a candidate can pass with a
+    # NEGATIVE own Sharpe as long as it is not too negative -- the case that
+    # makes "correlation, not the candidate's own return, is the real driver"
+    # concrete rather than asserted.
+    scenarios = [
+        ("rho=+1, SR_i far above SR_p", +1.0, 0.0012, 0.01, True),
+        ("rho=+1, SR_i far below SR_p", +1.0, 0.0002, 0.01, False),
+        ("rho=0,  SR_i clearly positive", 0.0, 0.0003, 0.01, True),
+        ("rho=-1, SR_i<0 but above -SR_p", -1.0, -0.0002, 0.01, True),
+        ("rho=-1, SR_i far below -SR_p", -1.0, -0.0010, 0.01, False),
+    ]
+    all_ok = True
+    for label, rho, mu_i, sigma_i, expected_pass in scenarios:
+        candidate_returns = pd.Series(
+            _exact_corr_partner(portfolio_returns.to_numpy(), rho, mu_i, sigma_i, seed=2),
+            index=portfolio_returns.index,
+            name="candidate",
+        )
+        sr_i = sharpe_ratio(candidate_returns, TRADING_DAYS_PER_YEAR)
+        measured_rho = float(candidate_returns.corr(portfolio_returns))
+        threshold = sr_p * measured_rho
+        passes = bool(sr_i > threshold)
+        ok = passes == expected_pass
+        all_ok &= ok
+        print(
+            f"  {label:32s}: SR_i={sr_i:+.4f} rho={measured_rho:+.4f} "
+            f"threshold={threshold:+.4f} passes={passes} "
+            f"({'ok' if ok else 'MISMATCH -- regression!'})"
+        )
+    print(f"  all scenarios matched their hand-derived expectation: {bool(all_ok)}")
+
     # --- the live path: a real ticker, real data, real network --------------
     print("\nLive run against a real ticker (network required)")
     DEMO_TICKER = "AAPL"
@@ -364,6 +542,13 @@ if __name__ == "__main__":  # pragma: no cover
                 ["portfolio_vol", f"weight_{DEMO_TICKER}", f"rc_fraction_{DEMO_TICKER}"]
             ].round(4).to_string()
         )
+        comp = report.compensation
+        print(f"\n  compensation test : SR_i={comp.candidate_sharpe:+.4f} "
+              f"SR_p={comp.portfolio_sharpe:+.4f} "
+              f"rho(i,p)={comp.correlation_to_portfolio:+.4f} "
+              f"threshold={comp.correlation_threshold:+.4f} passes={comp.passes}")
+        print(f"  correlation to sleeves: "
+              f"{comp.correlation_to_sleeves.round(4).to_dict()}")
 
         # sum-to-one, at every stage -- the cheapest possible regression check
         print(f"\n  baseline sums to 1  : {abs(report.baseline_weights.sum() - 1.0):.2e}")
