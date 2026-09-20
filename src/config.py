@@ -342,3 +342,21 @@ INCREMENTAL_MIN_HISTORY_DAYS: int = COV_WARMUP_TRADING_DAYS
 # would be ~8 (~3) -- too few for the average-of-the-tail CVaR to mean anything.
 # The report prints the observation count next to the table for the same reason.
 VAR_CONFIDENCE: float = 0.95
+
+# ---------------------------------------------------------------------------
+# Head-to-head comparison against a ticker (step 44) -- src/compare.py
+# ---------------------------------------------------------------------------
+# Fewest overlapping trading days between the strategy and the ticker for which
+# the comparison prints at all. Set equal to COV_WARMUP_TRADING_DAYS, the same
+# "a year of daily data is the least we trust" floor the covariance estimate and
+# the incremental analysis already use: below it, a max drawdown or a 5% tail is
+# a handful of observations, and printing it would look more authoritative than
+# it is.
+COMPARE_MIN_OVERLAP_DAYS: int = COV_WARMUP_TRADING_DAYS
+
+# Smallest share of the ticker's trading days (inside the strategy's date range)
+# that must also be strategy trading days. A US-listed ticker is ~100%. A ticker
+# on another exchange's calendar falls well short, and intersecting the two
+# calendars would then pair a multi-day return on one side with a single day's
+# on the other -- a silently wrong comparison, so it raises instead.
+COMPARE_MIN_CALENDAR_MATCH: float = 0.95

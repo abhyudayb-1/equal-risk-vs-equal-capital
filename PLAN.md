@@ -392,3 +392,96 @@ and `viz.py` are independent consumers of `BacktestResult`.
   describes the risk this mix has realized, not what the strategy would have earned, and its
   levels sit below the 10%-vol-target strategy's. A window this short rarely contains a crisis,
   and the VaR / CVaR rest on few observations.
+
+---
+
+## Phase 7 — Head-to-head against any ticker (post-v1.3 extension)
+
+**Added after `v1.3` (step 44). Nothing in Phases 0–6 changes for this except one additive function
+in `data.py` and a small refactor in `incremental.py`.** Phase 6 asks what *adding* a stock does to the
+book. The question a reader asks first is plainer: **how did the risk-parity strategy do against
+simply buying and holding this ticker, and what was the difference in risk?** `run_backtest.py`
+could not answer it, since it compares the strategy only against four fixed, unlevered benchmarks.
+
+### What is compared, and on what dates
+
+Three columns, on the dates both series exist (the *overlap window*):
+
+1. **The strategy** — the engine's daily returns, levered to the vol target and **net of financing**;
+   exactly what `run_backtest.py` reports.
+2. **The same equal-risk book unlevered** (`overlay.unlevered_returns(returns, result.weights)`).
+   The ticker is unlevered, so this is the like-for-like risk comparison; the levered column is not.
+3. **The ticker**, buy-and-hold, total return.
+
+The strategy is run over its **whole 2006+ history first and cut to the overlap window afterwards**.
+Running it only on the overlap would make its covariance warm-up, and therefore its weights, depend on
+when the ticker happened to list — a leak of the ticker's history into the strategy's decisions. Cutting
+afterwards keeps every weight and leverage decision exactly what the headline run made.
+
+### The ticker's data path
+
+`data.fetch_prices([*UNIVERSE, ticker], start=DATA_START_DATE)` cannot be used, for two independent
+reasons: `data._validate`'s late-start guard rejects any ticker that listed more than
+`MAX_LATE_START_DAYS` after 2006 (correct for the sleeves, where a late start is a configuration error;
+wrong for a 2019 IPO), and `cache.write_frame` replaces the whole shared price cache, so a candidate
+passed alongside the universe rewrites the cached SPY/TLT/DBC/TIP history too. `data.fetch_ticker_prices`
+therefore fetches the ticker alone into **its own** cache file (`ticker_<SAFE>.csv`) and validates it
+against its own first date, so an empty pull, a non-positive price or an interior gap longer than
+`MAX_INTERIOR_GAP_DAYS` still raise `DataUnavailableError`. "Short history" is deliberately not one of
+them — how much overlap is enough is the comparison's question (`COMPARE_MIN_OVERLAP_DAYS`, 252, the
+project's existing "a year of daily data is the least we trust" floor), not the fetch's.
+
+### What is computed
+
+- **Risk and return** for all three columns via `incremental.risk_summary` (volatility, max drawdown and
+  dates, longest drawdown, VaR/CVaR at `VAR_CONFIDENCE`, worst day, downside deviation, Sortino, Calmar,
+  skew, kurtosis, CAGR, Sharpe), formatted by `incremental.format_metric_table` so this report and
+  Phase 6's print identical rows.
+- **Relative metrics** for each risk-parity column against the ticker: correlation; beta
+  `cov(s, t) / var(t)`; tracking error (annualised std of the daily difference); and up/down capture
+  (the strategy's mean return on the days the ticker rose / fell, as a multiple of the ticker's own mean
+  on those days).
+- **A tail block** — the ticker's worst `1 − VAR_CONFIDENCE` of days, the ticker's and the strategy's mean
+  on them, and the share of them on which the strategy beat the ticker. Correlation and beta average over
+  the whole sample and can hide exactly this, which is the diversification claim being tested.
+- **Crisis windows**, per `config.CRISIS_WINDOWS`, measured from the peak close (returns stamped strictly
+  after the window's start, as `metrics.slice_to_window` does for a `BacktestResult`). A window counts
+  as covered only if the overlap reaches both its ends; otherwise the row is `n/a`, never a partial window
+  that reads like a full one.
+
+### Guards
+
+Two failures are properties of the data, not of the call, and raise `DataUnavailableError`: an overlap
+under `COMPARE_MIN_OVERLAP_DAYS`, and a trading calendar that does not match the strategy's
+(`COMPARE_MIN_CALENDAR_MATCH`, 95% of the ticker's days must also be strategy days — a listing on another
+exchange's calendar would otherwise pair a multi-day return on one side with a single day's on the
+other). Non-finite, unsorted or duplicate-dated inputs raise `ValueError`.
+
+### File layout added by Phase 7
+
+```
+src/compare.py         alignment and guards, relative metrics, the tail block, the crisis table,
+                        the comparison dataclass and the report (pure functions of return series)
+compare_ticker.py      CLI entry point: compare_ticker.py --ticker <TICKER> [--refresh-prices]
+                        — fetches, runs the engine, prints; owns no maths
+tests/test_compare.py  relative metrics on hand-derived pairs (s = 0.5 t, s = -t, a four-day example);
+                        the tail block on a hundred returns with a known worst five; crisis windows
+                        (day-count compounding, peak-day exclusion, n/a coverage); alignment and both
+                        guards; a check that the identities FAIL when the ticker is one day out of step
+tests/test_data.py     fetch_ticker_prices against a monkeypatched yfinance: a late-listed ticker is
+                        accepted where fetch_prices' guard rejects it, the shared cache is untouched
+```
+
+`src/config.py` gains one append-only block (`COMPARE_MIN_OVERLAP_DAYS`, `COMPARE_MIN_CALENDAR_MATCH`).
+`incremental.py` gains a public `format_metric_table` extracted from its own report code, so the two
+reports cannot drift apart; nothing else in `src/` changes.
+
+### Explicit caveats the tool must state every time it runs
+
+- **Overlap window only.** The numbers will not match `run_backtest.py`'s full-history headline.
+- **Not like-for-like on leverage.** The strategy is levered and financed; the ticker is not. Read the
+  unlevered column and the scale-free ratios.
+- **Chosen with hindsight.** A ticker someone asks about today is more often a winner than not, which
+  flatters it against a strategy that never got to pick it.
+- **No costs.** No transaction costs, bid-ask spread or borrow spread over the bill rate, on either side.
+- **Short windows are noisy.** A 5% tail is 5% of the observation count and a max drawdown is one episode.
