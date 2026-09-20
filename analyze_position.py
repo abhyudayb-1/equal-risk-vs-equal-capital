@@ -30,9 +30,15 @@ import argparse
 import logging
 import sys
 
-from src.config import INCREMENTAL_CANDIDATE_WEIGHTS, INCREMENTAL_LOOKBACK_DAYS, UNIVERSE
+from src.config import (
+    INCREMENTAL_CANDIDATE_WEIGHTS,
+    INCREMENTAL_LOOKBACK_DAYS,
+    INCREMENTAL_MIN_HISTORY_DAYS,
+    UNIVERSE,
+)
 from src.data import DataUnavailableError
 from src.incremental import analyze_position, format_position_report
+from src.riskparity import ERCSolverError
 
 log = logging.getLogger("analyze_position")
 
@@ -138,6 +144,19 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
+    # Same shape as run_backtest.py's --max-leverage check: a flag combination
+    # that analyze_position() would reject anyway, caught here with a message
+    # that names the flag rather than propagating a ValueError that mentions
+    # min_history_days -- a constant this CLI never exposes as its own flag.
+    if args.lookback_days < INCREMENTAL_MIN_HISTORY_DAYS:
+        print(
+            f"error: --lookback-days {args.lookback_days} is below the built-in "
+            f"minimum-history floor (INCREMENTAL_MIN_HISTORY_DAYS = "
+            f"{INCREMENTAL_MIN_HISTORY_DAYS}); pass a larger --lookback-days.",
+            file=sys.stderr,
+        )
+        return 2
+
     ticker = args.ticker.strip().upper()
     print(
         f"Analyzing {ticker} against the {'/'.join(UNIVERSE)} book "
@@ -151,6 +170,14 @@ def main(argv: list[str] | None = None) -> int:
             candidate_weights=args.weights,
             refresh=args.refresh_prices,
         )
+    except ERCSolverError as exc:
+        # riskparity.ERCSolverError subclasses ValueError, so this has to be
+        # caught BEFORE the generic ValueError clause below -- it means no
+        # equal-risk portfolio exists (a near-zero-vol asset, a non-PSD
+        # covariance), an economic/data problem like DataUnavailableError,
+        # not a CLI misconfiguration like the two ValueError cases are.
+        print(f"\nerror: {exc}", file=sys.stderr)
+        return 1
     except ValueError as exc:
         # candidate already in the universe, or min_history_days > lookback_days
         # -- both are misconfigurations, not data problems.
