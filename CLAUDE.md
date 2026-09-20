@@ -391,7 +391,7 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.backtest      # full synthetic run: contract, alignment, look-ahead, meta
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
-.venv/bin/python -m src.viz           # the four charts -> reports/, from fixtures
+.venv/bin/python -m src.viz           # the four charts from fixtures, into a temp dir (never reports/)
 .venv/bin/python -m src.incremental   # Phase 6: hand-derivable compensation-test cases, the
                                       # MIN_HISTORY_DAYS guard, and a live-ticker demonstration
 ```
@@ -443,8 +443,15 @@ financing leg is visible side by side with the return it was charged against.
 
 `stress.py` and `viz.py` consume `BacktestResult` and a daily asset-return frame and nothing else,
 so they already run end to end against `tests/fixtures.py`. Phase 5 swaps the fixture for the real
-result and re-renders; no call site changes. `reports/` is gitignored until then, because a
-committed fixture chart is indistinguishable from a real one to anyone browsing the repo.
+result and re-renders; no call site changes. `reports/` is gitignored by default, because a
+committed fixture chart is indistinguishable from a real one to anyone browsing the repo — but the
+four charts and `crisis_drawdowns.csv` **are tracked** (force-added in Phase 5 from a live
+`run_backtest.py`; see `.gitignore`), so anything that writes to `reports/` overwrites the real
+results. Nothing but `run_backtest.py` may: the `python -m src.viz` and `python -m src.stress`
+self-checks write to a temporary directory for exactly this reason (they used to write into
+`reports/` and silently replaced the tracked files with fixture output — found and fixed after
+`v1.3`). If `git status` ever shows `reports/` modified after running a self-check, that is this
+bug back; restore with `git checkout -- reports/`, and do not commit the fixture versions.
 
 Two notes on the Phase 2 modules, because both encode a decision that looks like a detail:
 
