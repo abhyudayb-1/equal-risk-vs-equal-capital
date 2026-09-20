@@ -77,19 +77,34 @@ from .riskparity import ERCSolution, portfolio_volatility, risk_contributions, s
 
 log = logging.getLogger(__name__)
 
-# Calendar-days-per-trading-day ratio used to size the fetch window, padded
-# generously above the raw weekday ratio (7/5 = 1.4) so the ~9-10 NYSE holidays
-# a year cannot leave the fetch short of the trading days actually wanted --
-# the window is trimmed to the exact row count wanted afterward regardless, so
-# overshooting here costs nothing but a slightly larger download.
-_CALENDAR_DAYS_PER_TRADING_DAY: float = 1.6
-_CALENDAR_BUFFER_DAYS: int = 20
+# Padding above the requested trading-day count, in BUSINESS days, so the
+# ~9-10 NYSE holidays a year cannot leave the fetch short of what was wanted.
+# The window is trimmed to the exact row count wanted afterward regardless
+# (see _fetch_window), so overshooting here costs nothing but a slightly
+# larger download.
+#
+# Measured, not guessed: a 756-trading-day request (~3 years) with a 30-day
+# buffer returned only 754 real rows from a live fetch -- short by 2, because
+# 3 years of NYSE holidays (~28-30) plus the one row daily_returns drops ate
+# the whole buffer with nothing left over. 40 returned 763 (7-day margin); 45
+# is used here for headroom against a year with a slightly heavier holiday
+# calendar, still comfortably short of a wasteful over-fetch.
+_BUSINESS_DAY_HOLIDAY_BUFFER: int = 45
 
 
 def _window_start(trading_days: int) -> str:
-    """A calendar start date comfortably covering ``trading_days`` of trading."""
-    calendar_days = math.ceil(trading_days * _CALENDAR_DAYS_PER_TRADING_DAY) + _CALENDAR_BUFFER_DAYS
-    start = pd.Timestamp.today().normalize() - pd.Timedelta(days=calendar_days)
+    """A calendar start date comfortably covering ``trading_days`` of trading.
+
+    Built from ``pd.bdate_range`` -- exact business-day (Mon-Fri) arithmetic,
+    the same primitive ``src/data.py`` already uses for its own calendar work
+    -- rather than a hand-tuned calendar-day ratio. Business days still
+    overcount true NYSE trading days by the holiday calendar, hence the
+    buffer on top; padding rather than exactness is fine because the caller
+    trims to the exact row count it wants afterward.
+    """
+    start = pd.bdate_range(
+        end=pd.Timestamp.today().normalize(), periods=trading_days + _BUSINESS_DAY_HOLIDAY_BUFFER
+    )[0]
     return start.strftime("%Y-%m-%d")
 
 
@@ -102,12 +117,31 @@ def _fetch_window(
 ) -> pd.DataFrame:
     """Daily returns for ``[candidate, *universe]`` on the trailing window.
 
-    Fetches candidate and universe **together**, so the on-disk price cache
-    (shared with the core engine's ``fetch_prices(UNIVERSE)`` calls) only ever
-    gains the candidate's column rather than being overwritten down to it --
-    ``cache.write_frame`` replaces the whole file, and a call for the candidate
-    alone would silently wipe out the cached SPY/TLT/DBC/TIP history the next
-    ``run_backtest.py`` run expects to find.
+    Fetches candidate and universe **together**, in one ``fetch_prices`` call,
+    rather than the candidate alone: a candidate-only call would write the
+    candidate's single column as the *entire* on-disk price cache --
+    ``cache.write_frame`` replaces the whole file rather than merging into it
+    -- wiping out the cached SPY/TLT/DBC/TIP history ``run_backtest.py``
+    expects to find. The combined call keeps the universe's columns present.
+
+    **What this does not fully avoid, and why it is still safe.** A fresh
+    combined download still writes the cache at *this* call's short window,
+    not the core engine's full ``DATA_START_DATE``-to-present range -- so a
+    candidate not already cached alongside the universe can temporarily
+    shrink the shared cache's covered history for SPY/TLT/DBC/TIP too, not
+    only add the candidate. This is bounded and self-healing rather than
+    silent corruption: ``run_backtest.py`` always requests
+    ``fetch_prices(UNIVERSE, start=DATA_START_DATE)``, which checks the
+    cache's coverage before trusting it (see ``data._cached_prices``) and
+    re-downloads the full history itself if the cache falls short -- the
+    engine never uses truncated universe data, it just occasionally pays for
+    one extra download. Avoiding this outright would mean either writing
+    ``data.py``'s cache merge-aware, which PLAN.md's Phase 6 design
+    deliberately avoids, or requesting ``DATA_START_DATE`` here too, which
+    would force every candidate younger than 2006 -- most of them -- into
+    the ``min_history_days`` retry below even when they comfortably cover
+    the full target lookback. Between those two costs, the bounded,
+    self-healing one is the smaller.
 
     Tries the full ``lookback_days`` window first, which is the common case:
     most tickers anyone would ask about have traded longer than the ~3-year
@@ -116,11 +150,15 @@ def _fetch_window(
     late-start guard) -- that is also exactly the signature of a recent IPO,
     so on that specific failure the fetch is retried against the shorter
     ``min_history_days`` window instead of surfacing the first attempt's
-    error. A candidate younger than the ideal lookback but with enough history
-    to trust a covariance estimate still gets analysed, on a window sized to
-    what it actually has -- which is the point of ``INCREMENTAL_MIN_HISTORY_DAYS``
-    existing as a *floor* distinct from ``INCREMENTAL_LOOKBACK_DAYS``, the
-    *target*.
+    error. Note this retry is sized to the *floor*, not to however much
+    history the candidate actually has: a candidate with, say, 500 trading
+    days (above the floor, below the target) is still analysed on a
+    ``min_history_days``-sized window rather than its full 500 -- a
+    deliberate simplicity trade-off (finding the candidate's true available
+    history without it would need a search, not a single retry), not a bug.
+    Either way the candidate is still analysed rather than rejected, which is
+    the point of ``INCREMENTAL_MIN_HISTORY_DAYS`` existing as a *floor*
+    distinct from ``INCREMENTAL_LOOKBACK_DAYS``, the *target*.
     """
     tickers = (candidate, *universe)
     try:
@@ -136,9 +174,18 @@ def _fetch_window(
                 tickers, start=_window_start(min_history_days), refresh=refresh
             )
         except DataUnavailableError as exc2:
+            # Both underlying errors are surfaced verbatim rather than
+            # collapsed into a single "insufficient history" diagnosis: that
+            # framing is only correct when the cause really is a recent IPO.
+            # data._validate raises the same DataUnavailableError for a
+            # typo'd ticker, a data gap, or non-positive prices, none of
+            # which a shorter retry window fixes -- asserting "not enough
+            # history" over one of those would send a reader chasing the
+            # wrong flag.
             raise DataUnavailableError(
-                f"{candidate} does not have the {min_history_days} trading days of "
-                f"recent history INCREMENTAL_MIN_HISTORY_DAYS requires: {exc2}"
+                f"{candidate}: could not fetch enough recent history after two "
+                f"attempts. Full {lookback_days}-day lookback: {exc}. Retry at "
+                f"the {min_history_days}-day floor: {exc2}"
             ) from exc2
 
     returns = daily_returns(prices)
@@ -173,7 +220,29 @@ def baseline_erc(returns: pd.DataFrame, universe: tuple[str, ...] = UNIVERSE) ->
     backtest date.
     """
     cov = estimate_covariance(returns[list(universe)])
-    return solve_erc_with_status(cov)
+    solution = solve_erc_with_status(cov)
+    if not solution.converged:
+        # solve_erc_with_status already warns on its own non-convergence; this
+        # adds the one thing it cannot know -- which analysis stage this was --
+        # so a caller reading logs (rather than IncrementalReport's converged
+        # flags) can still tell the baseline snapshot apart from the 5-asset
+        # re-solve below.
+        log.warning(
+            "baseline_erc did not converge on %s (deviation %.3e)",
+            universe, solution.max_rc_deviation,
+        )
+    return solution
+
+
+def _five_asset_covariance(
+    returns: pd.DataFrame, candidate: str, universe: tuple[str, ...]
+) -> np.ndarray:
+    """The 5x5 covariance :func:`perturbation_scan` and :func:`resolve_five_asset_erc`
+    both need -- factored out so :func:`analyze_position` can compute it once
+    and hand it to both rather than paying the EWMA/shrinkage/PSD-repair cost
+    twice on an identical input.
+    """
+    return estimate_covariance(returns[[candidate, *universe]])
 
 
 def perturbation_scan(
@@ -182,6 +251,7 @@ def perturbation_scan(
     baseline_weights: np.ndarray,
     universe: tuple[str, ...] = UNIVERSE,
     candidate_weights: tuple[float, ...] = INCREMENTAL_CANDIDATE_WEIGHTS,
+    cov: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Add the candidate at each fixed weight and read what it costs and does.
 
@@ -195,9 +265,17 @@ def perturbation_scan(
     This is a perturbation, not a re-optimisation -- :func:`resolve_five_asset_erc`
     is the re-optimisation, and the two answer different questions on purpose
     (see the module docstring).
+
+    ``cov``, if given, must be the 5x5 covariance over ``[candidate, *universe]``
+    in that column order -- pass it when the caller (:func:`analyze_position`)
+    already computed it for :func:`resolve_five_asset_erc`, to avoid deriving
+    the same estimate twice. Left as ``None`` it is computed here, so calling
+    this function on its own (as the tests and the ``__main__`` self-check do)
+    needs nothing extra.
     """
     columns = [candidate, *universe]
-    cov = estimate_covariance(returns[columns])
+    if cov is None:
+        cov = _five_asset_covariance(returns, candidate, universe)
 
     rows = []
     for w in candidate_weights:
@@ -213,7 +291,10 @@ def perturbation_scan(
 
 
 def resolve_five_asset_erc(
-    returns: pd.DataFrame, candidate: str, universe: tuple[str, ...] = UNIVERSE
+    returns: pd.DataFrame,
+    candidate: str,
+    universe: tuple[str, ...] = UNIVERSE,
+    cov: np.ndarray | None = None,
 ) -> ERCSolution:
     """The unconstrained equal-risk answer with the candidate free to compete.
 
@@ -222,9 +303,20 @@ def resolve_five_asset_erc(
     stock, and how much does it reshuffle the other four." A candidate the
     solver assigns 3% at equilibrium and one it assigns 25% are very
     different findings before return ever enters the picture.
+
+    ``cov``, if given, must be the 5x5 covariance over ``[candidate, *universe]``
+    -- see :func:`perturbation_scan`'s matching parameter.
     """
-    cov = estimate_covariance(returns[[candidate, *universe]])
-    return solve_erc_with_status(cov)
+    if cov is None:
+        cov = _five_asset_covariance(returns, candidate, universe)
+    solution = solve_erc_with_status(cov)
+    if not solution.converged:
+        log.warning(
+            "resolve_five_asset_erc did not converge for candidate %s against "
+            "%s (deviation %.3e)",
+            candidate, universe, solution.max_rc_deviation,
+        )
+    return solution
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +376,25 @@ def compensation_test(
     decomposes why that number came out where it did -- e.g. a candidate
     uncorrelated with SPY but correlated with DBC is not diversifying the
     equity risk it looks like it is diversifying.
+
+    ``baseline_weights`` as a ``pd.Series`` is aligned by **label** (its own
+    index), not by position -- a plain ``np.ndarray`` is still read
+    positionally, matched to ``universe`` in order. Every call site in this
+    module passes the ndarray ERC solutions carry, so the label path is
+    exercised only by a caller supplying its own Series; without it, a Series
+    whose index order differed from ``universe`` would silently relabel
+    weights onto the wrong sleeves instead of raising.
     """
-    weights = pd.Series(np.asarray(baseline_weights, dtype="float64"), index=list(universe))
+    if isinstance(baseline_weights, pd.Series):
+        weights = baseline_weights.reindex(list(universe))
+        if weights.isna().any():
+            missing = [t for t in universe if t not in baseline_weights.index]
+            raise ValueError(
+                f"baseline_weights is missing an entry for {missing}; its index "
+                f"must cover every ticker in universe {universe}"
+            )
+    else:
+        weights = pd.Series(np.asarray(baseline_weights, dtype="float64"), index=list(universe))
     sleeve_returns = returns[list(universe)]
     portfolio_returns = sleeve_returns.mul(weights, axis=1).sum(axis=1)
     candidate_returns = returns[candidate]
@@ -389,9 +498,15 @@ def analyze_position(
     baseline = baseline_erc(returns, universe)
     baseline_weights = pd.Series(baseline.weights, index=universe, name="baseline_weight")
 
-    scan = perturbation_scan(returns, candidate, baseline.weights, universe, candidate_weights)
+    # Computed once and handed to both: perturbation_scan and
+    # resolve_five_asset_erc both need the identical 5x5 covariance, and
+    # estimate_covariance's EWMA/shrinkage/PSD-repair pipeline is not free.
+    five_asset_cov = _five_asset_covariance(returns, candidate, universe)
+    scan = perturbation_scan(
+        returns, candidate, baseline.weights, universe, candidate_weights, cov=five_asset_cov
+    )
 
-    five = resolve_five_asset_erc(returns, candidate, universe)
+    five = resolve_five_asset_erc(returns, candidate, universe, cov=five_asset_cov)
     five_weights = pd.Series(five.weights, index=[candidate, *universe], name="five_asset_weight")
     weight_diff = (five_weights[list(universe)] - baseline_weights).rename("weight_diff")
 
@@ -438,6 +553,15 @@ _CAVEATS: tuple[str, ...] = (
 )
 
 
+def _convergence_line(solution: ERCSolution) -> str:
+    """The "! converged: ..." line shared by the baseline and 5-asset blocks."""
+    marker = " " if solution.converged else "!"
+    return (
+        f"{marker} converged: {solution.converged} "
+        f"(max risk-contribution deviation {solution.max_rc_deviation:.2e})"
+    )
+
+
 def format_position_report(report: IncrementalReport) -> str:
     """Human-readable account of one :func:`analyze_position` run.
 
@@ -462,19 +586,11 @@ def format_position_report(report: IncrementalReport) -> str:
     )
 
     lines.append("\nBaseline -- existing 4-asset ERC book on this window")
-    baseline_ok = report.baseline_solution.converged
-    lines.append(
-        f"{'!' if not baseline_ok else ' '} converged: {baseline_ok} "
-        f"(max risk-contribution deviation {report.baseline_solution.max_rc_deviation:.2e})"
-    )
+    lines.append(_convergence_line(report.baseline_solution))
     lines.append(textwrap.indent(report.baseline_weights.round(4).to_frame("weight").to_string(), "  "))
 
     lines.append(f"\n5-asset re-solve -- {report.candidate} free to compete for equal risk")
-    five_ok = report.five_asset_solution.converged
-    lines.append(
-        f"{'!' if not five_ok else ' '} converged: {five_ok} "
-        f"(max risk-contribution deviation {report.five_asset_solution.max_rc_deviation:.2e})"
-    )
+    lines.append(_convergence_line(report.five_asset_solution))
     five_table = pd.DataFrame(
         {
             "weight": report.five_asset_weights,
