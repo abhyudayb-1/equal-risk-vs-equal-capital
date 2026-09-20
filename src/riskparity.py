@@ -457,10 +457,12 @@ def solve_erc_with_status(
 def solve_erc(cov: np.ndarray, **kwargs) -> np.ndarray:
     """Long-only equal-risk-contribution weights, summing to 1.0.
 
-    Satisfies ``src.types.ERCSolver``, which is the signature Person B's
-    independent oracle asserts against. Use :func:`solve_erc_with_status` when
-    the convergence diagnostics are wanted -- the backtest loop does, so a failed
-    rebalance lands in ``BacktestResult.meta`` rather than vanishing.
+    ``(cov: np.ndarray, **kwargs) -> np.ndarray`` is the signature Person B's
+    independent oracle in ``tests/test_riskparity.py`` (step 19) asserts
+    against -- the two are checked to agree to ``config.ERC_AGREEMENT_TOLERANCE``.
+    Use :func:`solve_erc_with_status` when the convergence diagnostics are
+    wanted -- the backtest loop does, so a failed rebalance lands in
+    ``BacktestResult.meta`` rather than vanishing.
     """
     return solve_erc_with_status(cov, **kwargs).weights
 
