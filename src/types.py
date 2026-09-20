@@ -140,11 +140,23 @@ class BacktestResult:
         # Anchor the return series to the allocation that produced it. Without
         # this, a returns Series covering a completely different date range
         # validates cleanly and every chart silently plots misaligned data.
-        if self.returns.index[0] < w.index[0]:
+        #
+        # <= , not < : the project's one-day rule (overlay.py, backtest.py) is
+        # that a decision taken at the close of day t earns the return from
+        # t+1 onward, never t itself -- so the FIRST return must be strictly
+        # after the first rebalance date, not merely not-before it. A `<`
+        # check here let returns.index[0] == w.index[0] through, which is
+        # exactly the look-ahead this project is built to prevent, silently
+        # validated by the one function every BacktestResult is supposed to
+        # pass through. tests/test_contract.py already asserts the strict
+        # inequality on a fixture; this makes the contract itself enforce it.
+        if self.returns.index[0] <= w.index[0]:
             raise ContractViolation(
-                f"returns start {self.returns.index[0].date()} precedes the first "
-                f"rebalance {w.index[0].date()} -- a return before any allocation "
-                f"decision cannot be explained by these weights"
+                f"returns start {self.returns.index[0].date()} is not strictly "
+                f"after the first rebalance {w.index[0].date()} -- a decision "
+                f"taken at the close of a rebalance date cannot earn that same "
+                f"day's return (the one-day rule), and a return before any "
+                f"allocation decision cannot be explained by these weights"
             )
 
         if not np.isfinite(self.leverage.to_numpy(dtype="float64")).all():
