@@ -84,6 +84,7 @@ from src.stress import (
     regime_summary,
     write_crisis_table,
 )
+from src.riskparity import ERCSolverError
 from src.types import ContractViolation
 from src.viz import render_all
 
@@ -315,6 +316,17 @@ def main(argv: list[str] | None = None) -> int:
             target_vol=args.target_vol,
             leverage_cap=leverage_cap,
         )
+    except ERCSolverError as exc:
+        # Economic, not numerical: no equal-risk portfolio exists above the
+        # weight floor (a sleeve's volatility collapsed, or the covariance
+        # isn't PSD). backtest.py deliberately lets this propagate rather
+        # than catching it -- see CLAUDE.md's "two solver failures are
+        # different events" -- so this is where it has to stop being a raw
+        # traceback and become a reported error, the same treatment
+        # analyze_position.py already gives the identical exception.
+        print(f"\nerror: the engine could not solve for equal risk contribution: {exc}",
+              file=sys.stderr)
+        return 1
     except ContractViolation as exc:
         # validate() is deliberately loud: a malformed result is the one failure
         # that lets the engine and the analysis layer diverge unnoticed.
