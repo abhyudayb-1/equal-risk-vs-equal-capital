@@ -727,9 +727,16 @@ if __name__ == "__main__":  # pragma: no cover
     }
 
     decomposition = crisis_decomposition(strategies)
-    written = write_crisis_table(decomposition)
+    # Written into a throwaway directory, NOT reports/: write_crisis_table's
+    # default destination is the tracked crisis_drawdowns.csv holding the real
+    # Phase 5 result, and a self-check that wrote there replaced it with fixture
+    # numbers. tests/test_stress.py already writes to a temp directory too.
+    import tempfile
 
-    print(f"crisis decomposition -> {written}  ({len(decomposition)} rows)")
+    with tempfile.TemporaryDirectory() as scratch:
+        written = write_crisis_table(decomposition, Path(scratch) / CRISIS_TABLE_FILENAME)
+        print(f"crisis decomposition -> {written.name} (temporary, discarded)  "
+              f"({len(decomposition)} rows)")
     print(
         decomposition[
             ["window", "strategy", "total_return", "max_drawdown",

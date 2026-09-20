@@ -547,9 +547,18 @@ if __name__ == "__main__":  # pragma: no cover
     fake_returns = make_fake_returns()
     fake_result = make_fake_result(strategy="Risk parity (fixture)")
 
-    written = render_all(fake_result, fake_returns)
-    for name, destination in written.items():
-        size_kb = destination.stat().st_size / 1024
-        print(f"  {name:28s} -> {destination}  ({size_kb:.0f} KB)")
-    print(f"\n{len(written)} charts written from fixture data. Shape, not magnitude -- "
-          f"the real ones come from the Phase 5 run (TASKS.md step 33).")
+    # Rendered into a throwaway directory, NOT reports/. The four charts and
+    # crisis_drawdowns.csv tracked in reports/ are the real Phase 5 results the
+    # README cites, and render_all's default destination is exactly those paths:
+    # a self-check that wrote there overwrote them with fixture charts, which
+    # look identical to real ones. tests/test_stress.py already does the same.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as scratch:
+        written = render_all(fake_result, fake_returns, reports_dir=scratch)
+        for name, destination in written.items():
+            size_kb = destination.stat().st_size / 1024
+            print(f"  {name:28s} -> {destination.name}  ({size_kb:.0f} KB)")
+    print(f"\n{len(written)} charts rendered from fixture data into a temporary directory "
+          f"and discarded. Shape, not magnitude -- the real ones come from "
+          f"run_backtest.py and live in reports/.")
