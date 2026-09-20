@@ -277,7 +277,8 @@ covariance estimated from too few points — the same "fail loudly instead of de
 
 The pasted framing this phase is built from asked for four outputs; they collapse into three
 pieces of math, all built from primitives `covariance.py` and `riskparity.py` already have and
-already test — Phase 6 adds no new solver, no new risk model:
+already test — Phase 6 adds no new solver, no new risk model. (Step 43 later added a fourth,
+different kind of output — a replay of the window rather than more math; see item 4.)
 
 1. **Marginal risk contribution at fixed candidate weights (1%, 5%, 10%).** Scale the current
    4-asset ERC weights by `(1 − w)` and add the candidate at `w`, for each
@@ -320,21 +321,54 @@ already test — Phase 6 adds no new solver, no new risk model:
    *why* `ρ(i, p)` came out where it did (e.g. a stock uncorrelated with SPY but correlated with
    DBC is not diversifying the equity risk it looks like it's diversifying).
 
+4. **Realized before/after risk (step 43, added after `v1.2`).** (1)–(3) all read risk off a
+   covariance matrix, so the report could not say what adding a stock had actually done to a
+   book's drawdown or tail losses. This piece replays the same trailing window for the baseline
+   book, the book with the candidate at each `INCREMENTAL_CANDIDATE_WEIGHTS` entry, and the
+   candidate alone, and reports realized risk for each: max drawdown with its peak/trough dates,
+   the longest time spent below a prior peak (flagged open if unrecovered at window end),
+   historical VaR and CVaR at `VAR_CONFIDENCE` (95%), worst day, downside deviation, Sortino,
+   Calmar, skew and excess kurtosis, plus CAGR / total return / Sharpe for context, and a
+   change-vs-baseline table. Design choices:
+
+   - **In-sample, on purpose.** Weights are held constant and rebalanced daily on the window's own
+     history — a historical simulation of *current holdings*, the standard risk-desk tool. It
+     describes the risk this mix has realized, not what a strategy running the rule through time
+     would have earned; it is unlevered and cost-free. `compensation_test` already holds its
+     baseline weights constant the same way.
+   - **Not a walk-forward engine run.** A 252-day covariance warm-up would consume a third of a
+     756-day window and all of a recent IPO's data, and a full-history run would hit
+     `data._validate`'s late-start guard for any ticker listed after 2006.
+   - **95%, not 99%.** Over ~756 daily returns a 5% tail is ~38 observations (~14 for a 285-day
+     IPO); a 1% tail would be ~8 (~3), too few for CVaR to mean anything. Undefined metrics
+     (a Sortino with no losing period, a Calmar with no drawdown) print `--`, never a huge number.
+   - **Its volatility differs from (1)'s, and neither is wrong.** The perturbation scan uses the
+     EWMA covariance, which weights recent months heavily; the replay weights the whole window
+     equally.
+   - The "scale the baseline by `(1 − w)`, insert the candidate at `w`" construction is one shared
+     helper (`_mixed_weights`), so (1) and (4) cannot describe different portfolios under the same
+     label.
+
 ### File layout added by Phase 6
 
 ```
 src/incremental.py     candidate data alignment, the perturbation scan, the 5-asset ERC
-                        re-solve, the compensation test, per-sleeve correlations
+                        re-solve, the compensation test, per-sleeve correlations; and (step 43)
+                        the mixed-book replay and the realized-risk metrics
 analyze_position.py    CLI entry point: analyze_position.py --ticker <TICKER> [--lookback-days N]
                         [--weights 0.01,0.05,0.10] [--refresh-prices]
 tests/test_incremental.py   perturbation weights sum to 1; the compensation-test formula against
                         a hand-derivable synthetic case; the 5-asset re-solve's limiting case
                         (a candidate identical to an existing sleeve must split that sleeve's RC);
-                        correlation-table correctness
+                        correlation-table correctness; and (step 43) hand-derived VaR / CVaR /
+                        downside deviation / Sortino / drawdown duration / Calmar, the mixed-book
+                        identities with a positive control, and a mutation check that removing
+                        the (1 - w) scaling makes them fail
 ```
 
 `src/config.py` gains one new append-only block (`INCREMENTAL_LOOKBACK_DAYS`,
-`INCREMENTAL_CANDIDATE_WEIGHTS`, `INCREMENTAL_MIN_HISTORY_DAYS`). No existing file in
+`INCREMENTAL_CANDIDATE_WEIGHTS`, `INCREMENTAL_MIN_HISTORY_DAYS`), and step 43 later appended one
+more (`VAR_CONFIDENCE`). No existing file in
 `src/` is modified — `types.py`, `backtest.py`, `overlay.py`, `benchmarks.py`, `stress.py`,
 `viz.py` and `run_backtest.py` are all untouched by this phase, because none of them need to
 know this feature exists: `incremental.py` is a second, independent consumer of the same
@@ -353,3 +387,8 @@ and `viz.py` are independent consumers of `BacktestResult`.
   premium the way holding an asset class does. It answers "does this improve this portfolio's
   risk-adjusted return, given the correlation structure right now" — a narrower and more honest
   question than "should I own this stock."
+- **The realized-risk table is an in-sample replay** (step 43). Today's weights, held constant and
+  rebalanced daily, applied to the trailing window's own history — unlevered and cost-free, so it
+  describes the risk this mix has realized, not what the strategy would have earned, and its
+  levels sit below the 10%-vol-target strategy's. A window this short rarely contains a crisis,
+  and the VaR / CVaR rest on few observations.
