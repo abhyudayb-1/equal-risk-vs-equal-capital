@@ -273,6 +273,15 @@ def perturbation_scan(
     this function on its own (as the tests and the ``__main__`` self-check do)
     needs nothing extra.
     """
+    if not candidate_weights:
+        # Without this, pd.DataFrame([]).set_index("candidate_weight") below
+        # raises a bare KeyError -- correct that the column doesn't exist on
+        # an empty frame, but it names the wrong thing: the actual mistake is
+        # an empty candidate_weights, not a missing column. The CLI's argparse
+        # already rejects an empty --weights, so this only matters calling
+        # perturbation_scan/analyze_position directly as a library.
+        raise ValueError("candidate_weights must contain at least one value")
+
     columns = [candidate, *universe]
     if cov is None:
         cov = _five_asset_covariance(returns, candidate, universe)
@@ -388,10 +397,21 @@ def compensation_test(
     if isinstance(baseline_weights, pd.Series):
         weights = baseline_weights.reindex(list(universe))
         if weights.isna().any():
+            # reindex() produces NaN both for a label absent from the input's
+            # own index and for a label that WAS present but already held a
+            # NaN value -- these are different mistakes and need different
+            # messages, or "missing an entry for" reports an empty list when
+            # the real problem is a NaN value on a label that is present.
             missing = [t for t in universe if t not in baseline_weights.index]
+            if missing:
+                raise ValueError(
+                    f"baseline_weights is missing an entry for {missing}; its "
+                    f"index must cover every ticker in universe {universe}"
+                )
+            nan_valued = [t for t in universe if pd.isna(weights[t])]
             raise ValueError(
-                f"baseline_weights is missing an entry for {missing}; its index "
-                f"must cover every ticker in universe {universe}"
+                f"baseline_weights has a NaN value for {nan_valued}; every "
+                f"entry must be a finite weight"
             )
     else:
         weights = pd.Series(np.asarray(baseline_weights, dtype="float64"), index=list(universe))
@@ -614,11 +634,27 @@ def format_position_report(report: IncrementalReport) -> str:
         f"rho(i,p)={comp.correlation_to_portfolio:+.3f}  "
         f"threshold={comp.correlation_threshold:+.3f}"
     )
-    verdict = (
-        "PASSES -- adding a small amount would improve risk-adjusted return"
-        if comp.passes
-        else "FAILS -- adding a small amount would not improve risk-adjusted return"
+    # metrics.sharpe_ratio returns NaN on a near-zero-variance return series
+    # (_ZERO_VARIANCE_EPS), which would otherwise read as a silent "FAILS" --
+    # `NaN > x` is False in Python/numpy, so comp.passes gives no sign
+    # anything was actually undefined. Solver non-convergence gets its own
+    # explicit "!" marker elsewhere in this report; a NaN Sharpe deserves the
+    # same visibility rather than being indistinguishable from a real fail.
+    undefined = any(
+        np.isnan(v)
+        for v in (comp.candidate_sharpe, comp.portfolio_sharpe, comp.correlation_threshold)
     )
+    if undefined:
+        verdict = (
+            "UNDEFINED -- a Sharpe ratio is NaN (a near-zero-variance return "
+            "series), so the test cannot be evaluated"
+        )
+    else:
+        verdict = (
+            "PASSES -- adding a small amount would improve risk-adjusted return"
+            if comp.passes
+            else "FAILS -- adding a small amount would not improve risk-adjusted return"
+        )
     lines.append(f"  {verdict}")
     lines.append("  correlation to each sleeve:")
     lines.append(textwrap.indent(comp.correlation_to_sleeves.round(4).to_string(), "    "))
