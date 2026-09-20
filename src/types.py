@@ -15,7 +15,6 @@ it was cut wrong; re-cut it together rather than patching.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
 
 import numpy as np
 import pandas as pd
@@ -166,37 +165,3 @@ class BacktestResult:
 
         if "strategy" not in self.meta:
             raise ContractViolation("meta must carry a 'strategy' name")
-
-
-class ERCSolver(Protocol):
-    """Signature every equal-risk-contribution solver in this project satisfies.
-
-    Person A implements this as ``src.riskparity.solve_erc`` (SLSQP, step 17).
-    Person B implements it independently as the convex log-barrier oracle inside
-    ``tests/test_riskparity.py`` (step 19), and the two are asserted to agree to
-    ``config.ERC_AGREEMENT_TOLERANCE``.
-
-    Parameters
-    ----------
-    cov:
-        (N, N) positive semi-definite covariance matrix, annualised.
-
-    Returns
-    -------
-    np.ndarray
-        (N,) long-only weights summing to 1.0, whose risk contributions are all
-        equal to within the solver's tolerance.
-    """
-
-    def __call__(self, cov: np.ndarray, **kwargs) -> np.ndarray: ...
-
-
-def solve_erc(cov: np.ndarray, **kwargs) -> np.ndarray:
-    """Contract stub -- the real implementation lands in ``src/riskparity.py``.
-
-    Present so that Person B can import and type against the signature during
-    Phase 1-2 while Person A is still building it (step 17).
-    """
-    raise NotImplementedError(
-        "solve_erc is implemented in src/riskparity.py (TASKS.md step 17)"
-    )
