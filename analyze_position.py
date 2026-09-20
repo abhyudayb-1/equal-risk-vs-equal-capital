@@ -74,6 +74,12 @@ def _weight_list(text: str) -> tuple[float, ...]:
         weights.append(value)
     if not weights:
         raise argparse.ArgumentTypeError("--weights needs at least one value")
+    duplicates = {w for w in weights if weights.count(w) > 1}
+    if duplicates:
+        raise argparse.ArgumentTypeError(
+            f"--weights has duplicate value(s) {sorted(duplicates)}; each candidate "
+            "weight should appear once, or the perturbation table gets a duplicate row"
+        )
     return tuple(weights)
 
 
@@ -158,6 +164,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     ticker = args.ticker.strip().upper()
+    if not ticker:
+        # argparse's `required=True` only guarantees --ticker was PASSED, not
+        # that it was non-blank -- "--ticker ' '" reaches here otherwise and
+        # would print "Analyzing  against..." before failing deep in the
+        # fetch pipeline instead of with an immediate, clear CLI error.
+        print("error: --ticker cannot be empty", file=sys.stderr)
+        return 2
+
     print(
         f"Analyzing {ticker} against the {'/'.join(UNIVERSE)} book "
         f"(target lookback {args.lookback_days} trading days)"
