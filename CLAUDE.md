@@ -8,9 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
-**Done: steps 1–35, all on `main`, tagged `v1.0`.** The engine, the analysis layer, the hardening,
-the CLI, the live run, the real charts, the write-up, and the final review. **Phase 6 (36–42) is
-the only thing left**, and it is new, additive scope — see "Incremental position analysis" below.
+**Done: steps 1–42, all on `main`, tagged `v1.0` (steps 1–35) and `v1.1` (steps 36–42).** The
+engine, the analysis layer, the hardening, the CLI, the live run, the real charts, the write-up,
+the final review — and, in `v1.1`, the incremental position analysis layered on top as new,
+additive scope. Nothing is left in either phase; see "Incremental position analysis" below for
+what `v1.1` added and found.
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -46,22 +48,22 @@ both EWMA estimators), `bc39670` (measure crisis windows from the peak close), `
 `if riskparity is None` guards, found in a post-v1.0 consistency audit — the suite still prints
 61 checks passed).
 
-**`v1.0` is tagged. Remaining: Phase 6 (36–42) only**, a later, purely additive pivot (see
-"Incremental position analysis" below and `PLAN.md`/`TASKS.md`) that does not change or delete
-anything in Phases 0–5:
+**`v1.1` is tagged. Phase 6 (36–42) is done**, a later, purely additive pivot (see "Incremental
+position analysis" below and `PLAN.md`/`TASKS.md`) that changes or deletes nothing in Phases 0–5:
 
-| Step | Owner | What it needs |
-| --- | --- | --- |
-| 36 | A | `src/config.py`: the incremental-analysis constants (lookback window, candidate weights, minimum history) |
-| 37 | A | `src/incremental.py`: candidate + universe data on a trailing window, baseline ERC snapshot, the 1%/5%/10% perturbation scan, the unconstrained 5-asset ERC re-solve |
-| 38 | A | `src/incremental.py`: the compensation test `SR_i > SR_p · ρ(i, p)` and per-sleeve correlations |
-| 39 | B | `tests/test_incremental.py` |
-| 40 | B | `analyze_position.py`: the CLI |
-| 41 | Both | `README.md`: the new section, with the point-in-time and marginal-test caveats stated plainly |
-| 42 | Both | Final review, tag `v1.1` |
+| Step | Owner | Landed as | What it produced |
+| --- | --- | --- | --- |
+| 36 | A | `0fda448` | `src/config.py`: `INCREMENTAL_LOOKBACK_DAYS` (756), `INCREMENTAL_CANDIDATE_WEIGHTS` (1%/5%/10%), `INCREMENTAL_MIN_HISTORY_DAYS` (= `COV_WARMUP_TRADING_DAYS`) |
+| 37 | A | `6754098` | `src/incremental.py`: the trailing-window fetch (candidate + universe together, so the shared price cache keeps all five columns rather than being overwritten down to one), the baseline ERC snapshot, the perturbation scan, the unconstrained 5-asset re-solve |
+| 38 | A | `fb726b8` | `src/incremental.py`: the compensation test `SR_i > SR_p · ρ(i, p)` and per-sleeve correlations |
+| 39 | B | `3db9c3a` | `tests/test_incremental.py`: 40 checks, offline — the duplicate-sleeve symmetry, the formula regression, correlation-table correctness |
+| 40 | B | `02b95a1` | `analyze_position.py`: the CLI, plus `format_position_report` in `src/incremental.py` |
+| 41 | Both | `e0bc297` | `README.md`: the "Incremental Position Analysis" section, worked example against a real ticker |
+| 42 | Both | `9ea54e1` | Final review: an independent multi-agent code review over the whole Phase 6 diff, 9 of its 10 findings fixed in `src/incremental.py`/`analyze_position.py` (see "What the final review found" below). Tagged `v1.1`. |
 
-See "Incremental position analysis" below for what this answers and why it is a snapshot rather
-than a second historical backtest; `PLAN.md`'s Phase 6 section has the full derivation.
+See "Incremental position analysis" below for what this answers, why it is a snapshot rather than
+a second historical backtest, and what building it found; `PLAN.md`'s Phase 6 section has the full
+derivation.
 
 Four loose ends flagged during Phase 4 as "Phase 5 work" were resolved as part of step 35's final
 review, rather than left for whoever noticed next: both stand-ins in `src/benchmarks.py` are
@@ -159,11 +161,12 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: every numbered step through 35 is built and `v1.0` is tagged, so
-start from Phase 6 (steps 36–42) in `TASKS.md` rather than hunting for the lowest unfinished one.
-The fastest way back into the code is
+To resume in a new session: every numbered step through 42 is built and `v1.1` is tagged, so there
+is no unfinished step in `TASKS.md` to pick up — new work here is a fresh scope, not a continuation.
+The fastest way back into the core engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
-live data in one command.
+live data in one command; `.\.venv\Scripts\python.exe analyze_position.py --ticker AAPL` does the
+same for the Phase 6 incremental analysis.
 
 Two stand-ins that used to live in `src/benchmarks.py` are **retired as of step 35**, not just
 superseded at the call site. Worth knowing why both had to go, since the reasoning is still what
@@ -188,7 +191,7 @@ would stop someone from reintroducing either as a "simplification":
   `src/benchmarks.py` now imports `nearest_psd` from `src.covariance` directly; there is no
   private copy left to diverge.
 
-## Incremental position analysis (Phase 6, post-v1.0 — not started yet)
+## Incremental position analysis (Phase 6, v1.1 — done)
 
 A single stock is not a risk-parity sleeve — it has idiosyncratic/sector risk and no
 independent structural risk premium the way an asset class does, so it was wrong to frame it as
@@ -196,18 +199,30 @@ a candidate fifth member competing with SPY/TLT/DBC/TIP. The question that **is*
 and that this phase answers, is narrower: given the existing four-sleeve risk-parity book, what
 happens if you add one more stock — any stock — to it? That is standard incremental risk
 analysis (what a risk desk does whenever someone proposes adding a position to a book), not a
-second backtest, and it ships as new, additive files only:
+second backtest, and it shipped as new, additive files only:
 
 - **Point-in-time, not historical.** It estimates on a trailing window ending today
   (`INCREMENTAL_LOOKBACK_DAYS`, ~3 years) through the same `covariance.estimate_covariance` the
   core engine already uses — no new estimator. This is the deliberate trade against a full
   2006-to-present backtest: most candidate stocks people actually ask about don't have 20 years
   of history, and splicing pre-IPO years is not a real portfolio. The report always says which
-  kind of analysis it is.
+  kind of analysis it is. Verified against a real recent IPO, not just reasoned about: RDDT
+  (listed 2024-03-21) correctly falls back to a shrunk window (285 observations, above the
+  252-day `INCREMENTAL_MIN_HISTORY_DAYS` floor, below the 756-day target) rather than being
+  rejected outright.
 - **`data.fetch_prices` already accepts any ticker** and already fails loudly
-  (`DataUnavailableError`) on one with no data, so "any stock the user chooses" needs zero
-  changes to `data.py` — only a new minimum-history guard (`INCREMENTAL_MIN_HISTORY_DAYS`) for
-  a candidate too thinly traded for a trailing-window covariance to be trustworthy.
+  (`DataUnavailableError`) on one with no data, so "any stock the user chooses" needed zero
+  *structural* changes to `data.py` — only a new minimum-history guard
+  (`INCREMENTAL_MIN_HISTORY_DAYS`) for a candidate too thinly traded for a trailing-window
+  covariance to be trustworthy. What this does **not** avoid, and the final review had to
+  document rather than silently fix: `data.py`'s cache (`cache.write_frame`) replaces its whole
+  file rather than merging into it, so fetching an uncached candidate alongside the universe on
+  a short analysis window can temporarily shrink the *universe's* cached history too, not only
+  add the candidate's column. It is bounded and self-healing — `run_backtest.py`'s own fetch
+  always requests `DATA_START_DATE` and checks coverage before trusting the cache — and the
+  alternative (requesting `DATA_START_DATE` here as well) would force most real candidates into
+  the short-history retry unnecessarily. See the "final review" note below and
+  `src/incremental.py`'s `_fetch_window` docstring for the full trade-off.
 - **Three pieces of math, all built from primitives `riskparity.py` already validates:** (1) a
   perturbation scan — scale the 4-asset ERC weights by `(1−w)` and add the candidate at
   `w ∈ {1%, 5%, 10%}`, read its risk contribution and the portfolio vol at each; (2) an
@@ -217,17 +232,51 @@ second backtest, and it ships as new, additive files only:
   Elton–Gruber), not invented here: adding asset `i` at an infinitesimal weight improves
   portfolio `p`'s Sharpe ratio iff the candidate's own Sharpe exceeds the portfolio's Sharpe
   times its correlation to the portfolio. It is a **marginal** test (does the direction help),
-  answered alongside — not instead of — the perturbation scan (does this amount help). The full
-  derivation is in `PLAN.md`'s Phase 6 section.
+  answered alongside — not instead of — the perturbation scan (does this amount help). Verified
+  against five hand-derivable two-asset synthetic cases (ρ = +1, 0, −1) built via an *exact*
+  Gram-Schmidt construction rather than a random draw, so the check has zero sampling noise. The
+  full derivation is in `PLAN.md`'s Phase 6 section.
 - **Nothing in `src/types.py`, `backtest.py`, `overlay.py`, `benchmarks.py`, `stress.py`,
-  `viz.py` or `run_backtest.py` changes for this.** `src/incremental.py` is a new, independent
+  `viz.py` or `run_backtest.py` changed for this.** `src/incremental.py` is a new, independent
   consumer of `covariance.py`/`riskparity.py`, the same way `stress.py` is an independent
   consumer of `BacktestResult` — and it ships behind its own CLI, `analyze_position.py`, not a
   flag on `run_backtest.py`.
-- **Do not start Phase 6 before `v1.0` is tagged (step 35).** It is scoped and sequenced in
-  `TASKS.md` as steps 36–42, but it is additive scope layered on top of the original capstone,
-  not a replacement for any part of it — nothing in Phases 0–5 is superseded or deleted by this
-  pivot.
+
+**What the final review found (step 42).** An independent multi-agent code review of the whole
+Phase 6 diff — the same "derive it a second way" instinct the project already applies to the ERC
+solver (Person B's oracle) and the look-ahead guard (attacked by removal) — surfaced 10 real
+issues, 9 fixed in `9ea54e1`. Worth carrying forward:
+
+- Two were **documentation overclaims caught against actual behaviour**, not just reworded: the
+  cache-sharing note above, and `_fetch_window`'s min-history retry, which is sized to the
+  *floor* (`INCREMENTAL_MIN_HISTORY_DAYS`) rather than to however much history a candidate
+  between the floor and the target actually has — a real gap between the docstring's claim and
+  the code, not a phrasing nit.
+- One was a **live-data-verified bug in a fix made during the same review**: replacing a
+  hand-tuned calendar-day ratio with `pd.bdate_range` (cleaner, reuses the same primitive
+  `data.py` already does its own calendar work with) also needed its holiday buffer
+  re-measured — the first value chosen (30 business days) returned 754 observations against a
+  756-day target on a real fetch, not 756. Caught by testing the fix against live data rather
+  than trusting the reasoning; raised to 45 after measuring the actual shortfall.
+- One was an **exception-hierarchy bug with a real behavioural consequence**:
+  `analyze_position.py` caught `ValueError` before `DataUnavailableError`, and
+  `riskparity.ERCSolverError` subclasses `ValueError`, so a genuine solver/economic failure
+  (a non-PSD covariance, a near-zero-vol asset) was silently reported as a CLI misconfiguration
+  (exit 2) instead of a data problem (exit 1) — the same "two failure modes must stay
+  distinguishable" principle the core engine's `backtest.py` already enforces, missed here on
+  the new code path.
+- One was a **latent contract violation**: `compensation_test`'s type hint promised a `pd.Series`
+  input would be handled safely, but the implementation read it positionally rather than by
+  label — no call site in the shipped code triggers it, but a future caller passing a
+  differently-ordered Series would have gotten silently mismatched weights, exactly the failure
+  mode this project's whole `types.py` contract exists to prevent elsewhere.
+
+The one finding *not* fixed on the code side: `_fetch_window`'s min-history retry always using
+the floor rather than the candidate's true available history was judged a documented trade-off,
+not a bug — computing "however much is actually available" needs a search, not a single retry,
+and the current behavior (analysed on a smaller window than theoretically possible, clearly
+flagged as such) is honestly labelled rather than silently wrong. See `_fetch_window`'s
+docstring for the reasoning.
 
 ## Setup and commands
 
@@ -246,8 +295,10 @@ python3 -m venv .venv
 .venv/bin/python tests/test_stress.py         # crisis table, diversification ratio, the four charts
 .venv/bin/python tests/test_riskparity.py     # RC identity, the ERC oracle, degenerate cases
 .venv/bin/python tests/test_lookahead.py      # the <= t guard, incl. removing it to prove the teeth
+.venv/bin/python tests/test_incremental.py    # Phase 6: perturbation scan, compensation test, 5-asset limit
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py              # full run -> reports/
+.venv/bin/python analyze_position.py --ticker AAPL   # Phase 6: incremental analysis against a live ticker
 ```
 
 Engine modules also carry a `__main__` self-check, which is where Person A's steps assert their
@@ -263,14 +314,22 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
 .venv/bin/python -m src.viz           # the four charts -> reports/, from fixtures
+.venv/bin/python -m src.incremental   # Phase 6: hand-derivable compensation-test cases, the
+                                      # MIN_HISTORY_DAYS guard, and a live-ticker demonstration
 ```
 
-Run every suite after any change to `src/`. **All six suites and all seven module self-checks run
-offline** — verified by blocking `socket.connect` / `getaddrinfo` and re-running each one, not by
-assumption. `src/data.py` imports `requests`, so the import graph touches the network stack, but
-nothing under `tests/` or any `__main__` opens a connection. Keep it that way: live-data checks
-belong in the Phase 5 run, not in a test, because a suite that needs the network fails for reasons
-that have nothing to do with the code.
+Run every suite after any change to `src/`. **All eight test suites run offline, and so do seven
+of the eight module self-checks** — verified by blocking `socket.connect` / `getaddrinfo` and
+re-running each one, not by assumption. `src/data.py` imports `requests`, so the import graph
+touches the network stack, but nothing under `tests/` opens a connection. `src.incremental` is
+the one self-check exception: its live-ticker demonstration reaches the network on purpose (see
+"Incremental position analysis" above) — there is no way to demonstrate `analyze_position.py`'s
+actual behaviour without it. The MIN_HISTORY_DAYS guard and the hand-derivable compensation-test
+cases inside that same self-check are still deterministic and offline; only the final
+"live ticker" block touches yfinance. Keep every other suite and self-check offline: live-data
+checks belong in a live run (Phase 5's `run_backtest.py`, Phase 6's `analyze_position.py`), not in
+a test, because a suite that needs the network fails for reasons that have nothing to do with the
+code.
 
 **Every suite exits 0.** `test_riskparity.py` used to exit 1 by design, on a known bug filed
 against `solve_erc`; that fix has landed and the suite is green. If one exits non-zero now, it is a
