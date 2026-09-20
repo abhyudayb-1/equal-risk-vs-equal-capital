@@ -8,13 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
-**Done: steps 1–42, all on `main`, tagged `v1.0` (steps 1–35), `v1.1` (steps 36–42) and `v1.2`
-(a post-tag correctness audit, no numbered steps).** The engine, the analysis layer, the
-hardening, the CLI, the live run, the real charts, the write-up, the final review, the
-incremental position analysis layered on top as new additive scope, and — in `v1.2` — five bugs
-and one dead-code removal found by auditing the whole repo after `v1.1` shipped. Nothing is left
-in any of the three; see "Incremental position analysis" below for what `v1.1` added and found,
-and "What the v1.2 audit found" below for the fifth commit table.
+**Done: steps 1–43, all on `main`, tagged `v1.0` (steps 1–35), `v1.1` (steps 36–42) and `v1.2`
+(a post-tag correctness audit, no numbered steps); step 43 landed after `v1.2` and is not
+tagged.** The engine, the analysis layer, the hardening, the CLI, the live run, the real charts,
+the write-up, the final review, the incremental position analysis layered on top as new additive
+scope, in `v1.2` five bugs and one dead-code removal found by auditing the whole repo after
+`v1.1` shipped, and — in step 43 — realized before/after risk metrics added to that incremental
+analysis. Nothing is left in any of the four; see "Incremental position analysis" below for what
+`v1.1` and step 43 added and found, and "What the v1.2 audit found" below for the fifth commit
+table.
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -100,6 +102,19 @@ close gaps an already-passing test suite didn't reach, which is why `README.md` 
 needed no update alongside them. All 8 offline test suites and all 7 module self-checks stayed
 green throughout.
 
+**Step 43 landed after `v1.2` and is not tagged.** New scope, not an audit: `analyze_position.py`
+reported only *model-based* numbers (covariance-derived vol and risk contribution, the 5-asset
+re-solve, the compensation test), so it could not say what adding a stock had actually done to a
+book's drawdown or tail losses. It now also replays the trailing window and reports realized risk
+for each book. Like Phase 6 it is not on `TASKS.md`, so this row is its only ledger entry:
+
+| Step | Owner | Landed as | What it produced |
+| --- | --- | --- | --- |
+| 43 | A | `de61034` (PR #52, merged `4a03e34`) | Realized before/after risk in `src/incremental.py`: a constant-weight replay of the baseline book, the book with the stock at each candidate weight, and the stock alone, with max drawdown and its dates, longest drawdown (flagged open), historical VaR/CVaR at 95%, worst day, downside deviation, Sortino, Calmar, skew, excess kurtosis, and a change-vs-baseline table. `config.py` gains `VAR_CONFIDENCE` only. `tests/test_incremental.py` goes from 40 to **76** checks. |
+
+See "Incremental position analysis" below for the design choices in it that are easy to undo by
+accident.
+
 Read "Where the build is" next — the live-run numbers and the two findings that constrain the
 write-up are there, and they are the part a summary cannot carry.
 
@@ -183,9 +198,10 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: every numbered step through 42 is built, `v1.1` is tagged, and `v1.2`
-adds a post-tag audit's bug fixes on top — there is no unfinished step in `TASKS.md` to pick up,
-and `main` already has everything `v1.2` does. New work here is a fresh scope, not a continuation.
+To resume in a new session: every numbered step through 43 is built, `v1.1` is tagged, `v1.2`
+adds a post-tag audit's bug fixes on top, and step 43 (realized before/after risk) landed after
+`v1.2` untagged — there is no unfinished step in `TASKS.md` to pick up, and `main` already has
+everything through step 43. New work here is a fresh scope, not a continuation.
 The fastest way back into the core engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command; `.\.venv\Scripts\python.exe analyze_position.py --ticker AAPL` does the
@@ -214,7 +230,7 @@ would stop someone from reintroducing either as a "simplification":
   `src/benchmarks.py` now imports `nearest_psd` from `src.covariance` directly; there is no
   private copy left to diverge.
 
-## Incremental position analysis (Phase 6, v1.1 — done)
+## Incremental position analysis (Phase 6, v1.1; extended by step 43 — done)
 
 A single stock is not a risk-parity sleeve — it has idiosyncratic/sector risk and no
 independent structural risk premium the way an asset class does, so it was wrong to frame it as
@@ -224,7 +240,9 @@ happens if you add one more stock — any stock — to it? That is standard incr
 analysis (what a risk desk does whenever someone proposes adding a position to a book), not a
 second backtest, and it shipped as new, additive files only:
 
-- **Point-in-time, not historical.** It estimates on a trailing window ending today
+- **Point-in-time, not historical.** (Step 43 adds an in-sample *replay* of the same window —
+  see its bullet below — which is still not a strategy backtest.) It estimates on a trailing
+  window ending today
   (`INCREMENTAL_LOOKBACK_DAYS`, ~3 years) through the same `covariance.estimate_covariance` the
   core engine already uses — no new estimator. This is the deliberate trade against a full
   2006-to-present backtest: most candidate stocks people actually ask about don't have 20 years
@@ -246,7 +264,8 @@ second backtest, and it shipped as new, additive files only:
   alternative (requesting `DATA_START_DATE` here as well) would force most real candidates into
   the short-history retry unnecessarily. See the "final review" note below and
   `src/incremental.py`'s `_fetch_window` docstring for the full trade-off.
-- **Three pieces of math, all built from primitives `riskparity.py` already validates:** (1) a
+- **Three pieces of model-based math (plus step 43's replay, next bullet), all built from
+  primitives `riskparity.py` already validates:** (1) a
   perturbation scan — scale the 4-asset ERC weights by `(1−w)` and add the candidate at
   `w ∈ {1%, 5%, 10%}`, read its risk contribution and the portfolio vol at each; (2) an
   unconstrained 5-asset `solve_erc_with_status` re-solve, diffed against the baseline weights,
@@ -259,8 +278,43 @@ second backtest, and it shipped as new, additive files only:
   against five hand-derivable two-asset synthetic cases (ρ = +1, 0, −1) built via an *exact*
   Gram-Schmidt construction rather than a random draw, so the check has zero sampling noise. The
   full derivation is in `PLAN.md`'s Phase 6 section.
+- **Step 43 — a fourth piece: realized before/after risk.** The three above read risk off a
+  covariance matrix; this replays the same trailing window (`simulate_mixed_books`,
+  `realized_risk_table`, all in `src/incremental.py`) so the report can say what a mix has
+  actually been through. Choices that look like details and are not:
+  - **It is in-sample on purpose.** Today's weights, held constant and rebalanced daily, applied to
+    the window's own history — the standard risk-desk historical simulation of *current holdings*.
+    It describes realized risk, not what a strategy running the rule through time would have
+    earned, and it is unlevered and cost-free. The report's fourth caveat says so every run. A
+    walk-forward engine run was rejected: a 252-day covariance warm-up eats a third of a
+    756-day window and all of a recent IPO's data, and a full-history fetch trips
+    `data._validate`'s late-start guard for anything listed after 2006. `compensation_test`
+    already holds its baseline weights constant the same way, so this is consistent with it.
+  - **The risk functions live in `src/incremental.py`, not `src/metrics.py`.** `metrics.py` is a
+    deliberately verbatim port (see "Conventions inherited"); `historical_var`, `historical_cvar`,
+    `downside_deviation`, `sortino_ratio`, `calmar_ratio`, `drawdown_duration` and `risk_summary`
+    follow its conventions but sit beside their only consumer. Do not move them into `metrics.py`
+    as a tidy-up without deciding that deliberately.
+  - **`_mixed_weights` is shared with `perturbation_scan`.** The "scale the baseline by `(1−w)`,
+    insert the candidate at `w`" construction exists once, so the model-based scan and the replay
+    cannot describe different portfolios under the same `+5%` label.
+  - **VaR/CVaR are 95%, not 99%** (`config.VAR_CONFIDENCE`): over ~756 daily returns a 5% tail is
+    ~38 observations (~14 for a 285-day IPO), a 1% tail ~8 (~3), too few for CVaR to mean anything.
+    Undefined metrics (a Sortino with no losing period, a Calmar with no drawdown) print `--`,
+    never a huge finite number.
+  - **The replay's vol runs above the perturbation scan's, and neither is wrong.** Live AAPL:
+    6.4% realized against 4.6% modelled at a 1% position, because the scan uses the EWMA
+    covariance (recent, calmer months weigh heavily) and the replay weights the whole three years
+    equally. Do not "reconcile" them.
+  - **Verified against live data, not just fixtures:** VaR/CVaR hand-recomputed from the cached
+    prices matched the table to six decimals (tail of 38 of 756), and RDDT's short 285-day window
+    renders with the open-drawdown flag. A first version of the test rebuilt the window from the
+    fixture returns instead of the prices → `daily_returns` → last-756 path `analyze_position`
+    actually takes and failed on that mismatch — a test bug, not a code bug, but the same lesson as
+    the rest of this repo: a check has to reconstruct the real path, not a convenient one.
 - **Nothing in `src/types.py`, `backtest.py`, `overlay.py`, `benchmarks.py`, `stress.py`,
-  `viz.py` or `run_backtest.py` changed for this.** `src/incremental.py` is a new, independent
+  `viz.py` or `run_backtest.py` changed for this** (nor did step 43 touch `metrics.py`, and
+  `config.py` gained only `VAR_CONFIDENCE`). `src/incremental.py` is a new, independent
   consumer of `covariance.py`/`riskparity.py`, the same way `stress.py` is an independent
   consumer of `BacktestResult` — and it ships behind its own CLI, `analyze_position.py`, not a
   flag on `run_backtest.py`.
@@ -318,7 +372,8 @@ python3 -m venv .venv
 .venv/bin/python tests/test_stress.py         # crisis table, diversification ratio, the four charts
 .venv/bin/python tests/test_riskparity.py     # RC identity, the ERC oracle, degenerate cases
 .venv/bin/python tests/test_lookahead.py      # the <= t guard, incl. removing it to prove the teeth
-.venv/bin/python tests/test_incremental.py    # Phase 6: perturbation scan, compensation test, 5-asset limit
+.venv/bin/python tests/test_incremental.py    # Phase 6: perturbation scan, compensation test, 5-asset limit,
+                                              # realized risk (step 43)
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py              # full run -> reports/
 .venv/bin/python analyze_position.py --ticker AAPL   # Phase 6: incremental analysis against a live ticker
