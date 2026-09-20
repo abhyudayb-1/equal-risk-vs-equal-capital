@@ -9,17 +9,16 @@ are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, own
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.
 
 **Done: steps 1–44, all on `main`, tagged `v1.0` (steps 1–35), `v1.1` (steps 36–42), `v1.2`
-(a post-tag correctness audit, no numbered steps), `v1.3` (step 43) and `v1.3.1` (a small
-cleanup and one tooling fix, no numbered steps); step 44 landed after `v1.3.1` and is not
-tagged.** The engine, the analysis layer, the hardening, the CLI, the live run, the real charts,
+(a post-tag correctness audit, no numbered steps), `v1.3` (step 43), `v1.3.1` (a small
+cleanup and one tooling fix, no numbered steps) and `v1.4` (step 44).** The engine, the analysis layer, the hardening, the CLI, the live run, the real charts,
 the write-up, the final review, the incremental position analysis layered on top as new additive
 scope, in `v1.2` five bugs and one dead-code removal found by auditing the whole repo after
 `v1.1` shipped, in `v1.3` — step 43 — realized before/after risk metrics added to that
 incremental analysis, in `v1.3.1` two dead items removed plus a fix so the `src.viz` /
 `src.stress` self-checks stop overwriting the tracked `reports/` files, and in step 44 a
-head-to-head comparison of the strategy against buy-and-hold of any ticker. Nothing is left in any
-of the six; see "Incremental position analysis" and "Head-to-head comparison" below for what
-`v1.1`, step 43 and step 44 added and found, and "What the v1.2 audit found" below for the fifth
+head-to-head comparison of the strategy against buy-and-hold of any ticker, tagged `v1.4`.
+Nothing is left in any of the six; see "Incremental position analysis" and "Head-to-head
+comparison" below for what `v1.1`, step 43 and step 44 added and found, and "What the v1.2 audit found" below for the fifth
 commit table.
 
 | Step | Owner | Landed as | What it produced |
@@ -127,7 +126,7 @@ its own PR, with no change to any number, formula or design decision:
 | `src/data.py` / `src/config.py`: removed an unused `import numpy as np` and the unreferenced `BENCHMARK_TICKER` constant, found by scanning every module for imports and config constants with no reference in code or docs. Deliberately kept: the unreferenced helpers in `src/cache.py` and `metrics.cumulative_curve`, because both files are documented verbatim ports that must not be rewritten. | `b226867` (PR #54) |
 | `src/viz.py` / `src/stress.py`: the `python -m` self-checks wrote fixture output into `reports/`, silently replacing the tracked real charts and `crisis_drawdowns.csv`; they now render into a temporary directory. `CLAUDE.md`'s claim that `reports/` is gitignored was corrected (see "Architecture"). | `1f93dfc` (PR #55) |
 
-**Step 44 landed after `v1.3.1` and is not tagged.** New scope: `run_backtest.py` compares the
+**`v1.4` is tagged (step 44).** New scope: `run_backtest.py` compares the
 strategy only against four fixed, unlevered benchmarks and `analyze_position.py` asks what
 *adding* a stock does to the book, so there was no way to ask how the strategy did against simply
 buying and holding a ticker of your choice. `compare_ticker.py --ticker XYZ` does. Like Phase 6 and
@@ -224,9 +223,9 @@ Two things the solver work established that stay true downstream:
 
 To resume in a new session: every numbered step through 44 is built — `v1.1` closed Phase 6,
 `v1.2` adds a post-tag audit's bug fixes, `v1.3` is step 43 (realized before/after risk), `v1.3.1`
-a small cleanup, and step 44 (the head-to-head comparison) landed after it untagged — there is no
-unfinished step in `TASKS.md` to pick up, and `main` already has everything through step 44. New
-work here is a fresh scope, not a continuation.
+a small cleanup, and `v1.4` is step 44 (the head-to-head comparison) — there is no unfinished step
+in `TASKS.md` to pick up, and `main` already has everything `v1.4` does. New work here is a fresh
+scope, not a continuation.
 The fastest way back into the core engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command; `.\.venv\Scripts\python.exe analyze_position.py --ticker AAPL` does the
