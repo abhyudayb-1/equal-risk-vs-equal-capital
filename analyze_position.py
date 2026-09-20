@@ -3,8 +3,8 @@
 
 Given the existing four-sleeve risk-parity book, what happens if one more
 stock is added to it -- as of right now, not as a second 2006-to-present
-backtest. See ``src/incremental.py``'s module docstring for the three pieces
-of math and PLAN.md's "Phase 6" section for the full derivation; this file
+backtest. See ``src/incremental.py``'s module docstring for the pieces of
+math and PLAN.md's "Phase 6" section for the full derivation; this file
 owns none of that -- it parses arguments, calls ``src.incremental.analyze_position``,
 and prints ``src.incremental.format_position_report``'s account of the result,
 the same "wiring only" role ``run_backtest.py`` plays for the core engine.
@@ -18,10 +18,13 @@ Run it::
 for the candidate and the existing universe, both cached under ``data/``.
 ``--refresh-prices`` forces a re-download. No API keys.
 
-**This is a snapshot, not a backtest.** The printed report says so in its own
-"What this is, and is not" section every time it runs -- see PLAN.md's
-"Explicit caveats the tool must state every time it runs" for why that lives
-in the report itself rather than only in a doc.
+**This is a snapshot, not a backtest.** Alongside the model-based numbers the
+report replays the same trailing window and shows the realized risk of the
+book with and without the stock (drawdown, VaR / CVaR, downside risk) -- an
+in-sample replay of today's weights, not a strategy backtest. The printed
+report says both things in its own "What this is, and is not" section every
+time it runs -- see PLAN.md's "Explicit caveats the tool must state every time
+it runs" for why that lives in the report itself rather than only in a doc.
 """
 
 from __future__ import annotations
@@ -90,7 +93,9 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Incremental position analysis: what happens if one more stock is "
             f"added to the existing {'/'.join(UNIVERSE)} risk-parity book, as a "
-            "point-in-time snapshot rather than a historical backtest."
+            "point-in-time snapshot rather than a historical backtest, with the "
+            "realized risk (drawdown, VaR/CVaR, downside) of an in-sample replay "
+            "of the same window shown before and after."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(

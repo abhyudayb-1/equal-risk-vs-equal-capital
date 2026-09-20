@@ -334,3 +334,13 @@ INCREMENTAL_CANDIDATE_WEIGHTS: tuple[float, ...] = (0.01, 0.05, 0.10)
 # raises DataUnavailableError (data.py's existing "fail loudly, never degrade"
 # policy) rather than returning a covariance estimated from too few points.
 INCREMENTAL_MIN_HISTORY_DAYS: int = COV_WARMUP_TRADING_DAYS
+
+# ---------------------------------------------------------------------------
+# Realized risk, before vs after (Phase 6 extension, step 43) -- src/incremental.py
+# ---------------------------------------------------------------------------
+# Confidence level for the historical VaR / CVaR the realized before/after table
+# reports. 95%, not 99%, on purpose: the trailing window is ~756 daily returns
+# (285 for a recent IPO), so a 5% tail is ~38 observations (~14) while a 1% tail
+# would be ~8 (~3) -- too few for the average-of-the-tail CVaR to mean anything.
+# The report prints the observation count next to the table for the same reason.
+VAR_CONFIDENCE: float = 0.95

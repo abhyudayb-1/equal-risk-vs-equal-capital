@@ -93,7 +93,7 @@ Standalone scripts — no pytest, no test runner. Run a file to run its suite; e
 .venv/bin/python tests/test_crisis_slices.py   # crisis-window slicing and summary metrics
 .venv/bin/python tests/test_stress.py          # crisis table, diversification ratio, charts
 .venv/bin/python tests/test_riskparity.py      # risk-contribution identity, ERC oracle, edge cases
-.venv/bin/python tests/test_incremental.py     # Phase 6: perturbation scan, compensation test, 5-asset limit
+.venv/bin/python tests/test_incremental.py     # Phase 6: perturbation scan, compensation test, 5-asset limit, realized risk
 ```
 
 Only `test_data.py` and `test_contract.py` touch the network; the suites are expected to pass
@@ -431,8 +431,8 @@ name with less than that raises rather than silently estimating a covariance fro
 
 ### What it computes
 
-Three pieces of math, all built from primitives `covariance.py` and `riskparity.py` already
-validate — no new solver, no new risk model.
+Three pieces of model-based math, all built from primitives `covariance.py` and `riskparity.py`
+already validate — no new solver, no new risk model — plus a fourth that replays the window.
 
 1. **Perturbation scan.** Scale the existing four-sleeve ERC weights by `(1 − w)` and add the
    candidate at `w`, for `w` in `0.01`, `0.05`, `0.10`. Read the candidate's own risk contribution
@@ -459,6 +459,16 @@ validate — no new solver, no new risk model.
    if it is highly correlated with the book. The candidate's correlation to each of the four
    sleeves individually is reported too, since that decomposes *why* the portfolio-level
    correlation came out where it did.
+4. **Realized risk, before vs after.** The three pieces above read risk off a covariance matrix.
+   This one replays the same trailing window: the four-sleeve baseline book, the book with the
+   candidate mixed in at each perturbation weight, and the candidate alone, each as a
+   constant-weight daily return series. Each gets the realized risk metrics the covariance view
+   cannot give — max drawdown (with its peak and trough dates) and the longest time spent below a
+   prior peak, historical VaR and CVaR at 95%, worst day, downside deviation, Sortino, Calmar, skew
+   and excess kurtosis — plus CAGR and Sharpe for context, and a second table of each mix's change
+   against the baseline. It is a historical simulation of *today's* weights on the window's own
+   history: in-sample by construction, unlevered, cost-free. It describes the risk this mix has
+   realized, not what a strategy running the rule through time would have earned.
 
 ### Worked example
 
@@ -482,6 +492,16 @@ Perturbation scan
 
 Compensation test:  SR_i = +0.97   SR_p = +1.14   ρ(i,p) = +0.35   threshold = +0.40
   PASSES -- 0.97 > 0.40
+
+Realized risk, before vs after (replay of this window, unlevered)
+                       baseline     +1%     +5%    +10%  stock alone
+  annual volatility       6.34%   6.37%   6.61%   7.11%       26.78%
+  max drawdown           -5.17%  -5.43%  -6.47%  -7.75%      -33.36%
+  VaR 95% (daily)        -0.62%  -0.61%  -0.61%  -0.63%       -2.50%
+  CVaR 95% (daily)       -0.94%  -0.94%  -0.96%  -1.00%       -3.82%
+  worst day              -2.08%  -2.10%  -2.19%  -2.30%       -9.25%
+  Sortino                 1.654   1.692   1.815   1.907        1.451
+  Calmar                  1.407   1.376   1.277   1.192        0.751
 ```
 
 Read together: the solver would assign AAPL 7.4% of the book at full equilibrium — a real, not
@@ -490,6 +510,16 @@ SPY. The compensation test passes: AAPL's own risk-adjusted return (0.97) is com
 0.40 bar its ~0.35 correlation to the book sets, so adding a small position would improve the
 portfolio's risk-adjusted return at current estimates. Note what "comfortably passes" is not
 saying — see the caveats immediately below.
+
+The replay adds what the covariance view cannot say. A 10% AAPL position deepens the realized max
+drawdown from −5.2% to −7.8% and lifts volatility from 6.3% to 7.1%, yet leaves the daily 95% VaR
+almost untouched (−0.62% → −0.63%): the stock's cost shows up in how far the book falls along the
+path, not in how bad an ordinary bad day is. Sortino improves (1.65 → 1.91) because return rose
+faster than downside deviation, while Calmar falls (1.41 → 1.19) because the drawdown deepened
+faster than CAGR. The replay's volatility also runs above the perturbation scan's (6.4% against
+4.6% at a 1% position): the scan uses the EWMA covariance, which weights recent, calmer months
+heavily, while the replay weights the whole three years equally — two different estimates of risk,
+not one of them wrong.
 
 ### What this is, and is not
 
@@ -507,6 +537,11 @@ once in a document:
    premium the way holding an asset class does. It answers whether this improves *this*
    portfolio's risk-adjusted return given the correlation structure right now — a narrower and
    more honest question than "should I own this stock."
+4. **The realized-risk table is an in-sample replay.** Today's weights, held constant and
+   rebalanced daily, applied to the trailing window's own history — unlevered and cost-free, so
+   its levels sit below the 10%-vol-target strategy's. A window this short rarely contains a
+   crisis, and the VaR and CVaR rest on few observations (a 5% tail is 5% of the observation
+   count printed above the table).
 
 ---
 
