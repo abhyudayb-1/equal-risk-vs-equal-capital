@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import logging
 import math
+import textwrap
 from dataclasses import dataclass
 
 import numpy as np
@@ -65,6 +66,7 @@ from .config import (
     INCREMENTAL_CANDIDATE_WEIGHTS,
     INCREMENTAL_LOOKBACK_DAYS,
     INCREMENTAL_MIN_HISTORY_DAYS,
+    SUMMARY_LINE_WIDTH,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE,
 )
@@ -299,7 +301,14 @@ def compensation_test(
         correlation_to_portfolio=correlation_to_portfolio,
         correlation_threshold=threshold,
         passes=bool(candidate_sharpe > threshold),
-        correlation_to_sleeves=sleeve_returns.corrwith(candidate_returns).rename("correlation"),
+        # rename_axis(None) strips whatever the price frame's column index was
+        # named -- yfinance's raw download names it "Ticker", a cache round
+        # trip through cache.read_frame does not, so without this the report
+        # printed a stray "Ticker" header on a fresh download and not on a
+        # cached one. Cosmetic, but the report should read the same either way.
+        correlation_to_sleeves=(
+            sleeve_returns.corrwith(candidate_returns).rename("correlation").rename_axis(None)
+        ),
     )
 
 
@@ -404,6 +413,111 @@ def analyze_position(
         weight_diff=weight_diff,
         compensation=compensation,
     )
+
+
+# ---------------------------------------------------------------------------
+# Step 40 -- the report analyze_position.py prints
+# ---------------------------------------------------------------------------
+# Stated in the report every time it is printed, not just in PLAN.md, because
+# PLAN.md is not what a CLI user reads. Order matches PLAN.md's "Explicit
+# caveats the tool must state every time it runs".
+_CAVEATS: tuple[str, ...] = (
+    "Point-in-time, not historical: this is a snapshot on the trailing window "
+    "above, as of the run date. It is not a claim about how the position would "
+    "have performed since 2006, and a re-run next month will read differently "
+    "as the window moves.",
+    "A marginal test, not a sizing recommendation: the compensation test says "
+    "whether the DIRECTION of adding the candidate helps, not what weight to "
+    "add it at. Read it alongside the perturbation scan above, which is for "
+    "that question.",
+    "Still a single stock: passing the compensation test does not manufacture "
+    "a structural risk premium the way holding an asset class does. It answers "
+    "whether this improves THIS portfolio's risk-adjusted return given the "
+    "correlation structure right now -- a narrower and more honest question "
+    "than \"should I own this stock.\"",
+)
+
+
+def format_position_report(report: IncrementalReport) -> str:
+    """Human-readable account of one :func:`analyze_position` run.
+
+    In the style of ``backtest.format_run_summary``: a solver that did not
+    converge gets a leading ``!`` rather than being one number among many, a
+    table for each of the three pieces of math, and the caveats PLAN.md
+    requires printed every time -- a docstring nobody reading the CLI's
+    output will ever see is not "stating them."
+    """
+    lines = [
+        f"{report.candidate} added to the {'/'.join(report.universe)} book "
+        "-- incremental position analysis"
+    ]
+    window_note = (
+        ""
+        if report.n_observations == report.lookback_days
+        else f", SHORTER than the {report.lookback_days}-day target -- thin candidate history"
+    )
+    lines.append(
+        f"  window: {report.window_start.date()} -> {report.window_end.date()} "
+        f"({report.n_observations} obs{window_note})"
+    )
+
+    lines.append("\nBaseline -- existing 4-asset ERC book on this window")
+    baseline_ok = report.baseline_solution.converged
+    lines.append(
+        f"{'!' if not baseline_ok else ' '} converged: {baseline_ok} "
+        f"(max risk-contribution deviation {report.baseline_solution.max_rc_deviation:.2e})"
+    )
+    lines.append(textwrap.indent(report.baseline_weights.round(4).to_frame("weight").to_string(), "  "))
+
+    lines.append(f"\n5-asset re-solve -- {report.candidate} free to compete for equal risk")
+    five_ok = report.five_asset_solution.converged
+    lines.append(
+        f"{'!' if not five_ok else ' '} converged: {five_ok} "
+        f"(max risk-contribution deviation {report.five_asset_solution.max_rc_deviation:.2e})"
+    )
+    five_table = pd.DataFrame(
+        {
+            "weight": report.five_asset_weights,
+            "vs baseline": report.weight_diff.reindex(report.five_asset_weights.index),
+        }
+    )
+    lines.append(textwrap.indent(five_table.round(4).to_string(na_rep="--"), "  "))
+
+    lines.append("\nPerturbation scan -- fixed candidate weights, not a re-solve")
+    scan_columns = [
+        "portfolio_vol",
+        f"weight_{report.candidate}",
+        f"rc_fraction_{report.candidate}",
+    ]
+    lines.append(textwrap.indent(report.perturbation[scan_columns].round(4).to_string(), "  "))
+
+    comp = report.compensation
+    lines.append("\nCompensation test -- SR_i > SR_p * rho(i, p)")
+    lines.append(
+        f"  SR_i={comp.candidate_sharpe:+.3f}  SR_p={comp.portfolio_sharpe:+.3f}  "
+        f"rho(i,p)={comp.correlation_to_portfolio:+.3f}  "
+        f"threshold={comp.correlation_threshold:+.3f}"
+    )
+    verdict = (
+        "PASSES -- adding a small amount would improve risk-adjusted return"
+        if comp.passes
+        else "FAILS -- adding a small amount would not improve risk-adjusted return"
+    )
+    lines.append(f"  {verdict}")
+    lines.append("  correlation to each sleeve:")
+    lines.append(textwrap.indent(comp.correlation_to_sleeves.round(4).to_string(), "    "))
+
+    lines.append("\nWhat this is, and is not:")
+    for i, caveat in enumerate(_CAVEATS, start=1):
+        lines.extend(
+            textwrap.wrap(
+                f"{i}. {caveat}",
+                width=SUMMARY_LINE_WIDTH,
+                subsequent_indent="   ",
+            )
+        )
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":  # pragma: no cover
