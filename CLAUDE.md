@@ -581,9 +581,14 @@ behaviour as a bug:
 
 - **The overlay de-levers *after* the damage, and that is a finding, not a defect.** A trailing
   estimator cannot see volatility until it has been realised, so leverage is still elevated well
-  into every drawdown. Measured on live data with equal weights, the fraction of each crisis window
-  the book spent still levered *above 1.0x*: **GFC 69%, COVID 54%, 2022 26%** — and COVID reached
-  its minimum leverage on 2020-03-23, the exact market bottom. Shortening `VOL_EWMA_HALFLIFE_DAYS`
+  into every drawdown. **The engine is worse than the first measurement said.** That measurement
+  used a daily, equal-weight overlay and found the book above 1.0x on GFC 69%, COVID 54%, 2022 26%
+  of each crisis window, with COVID's minimum leverage on 2020-03-23, the exact market bottom. The
+  real engine only re-levers at its monthly rebalances, and measured on its own leverage (data
+  through 2026-10) it was above 1.0x on **GFC 76%, COVID 100%, 2022 52%** of days: it held 2.33x,
+  then 2.18x, through the entire COVID crash and only cut to 0.64x at the 2020-03-31 rebalance,
+  after the trough. Quote the engine's figures, not the equal-weight ones; Phase 7's step 47
+  publishes them on the site. Shortening `VOL_EWMA_HALFLIFE_DAYS`
   moves the lag; nothing removes it, because no causal filter can. Vol targeting is a risk
   *control*, not a risk *forecast*. This is PLAN.md's third artifact — do not tune it away.
 - `trailing_portfolio_vol` estimates on a **counterfactual** series: the weights *about to be held*
