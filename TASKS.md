@@ -192,3 +192,48 @@ its own timeline first.
 | 42 | Both | — | Final review, tag `v1.1`. | Both can explain the compensation-test derivation and every new module, not just their own |
 
 ---
+
+## Phase 7 — Website feature parity (JOINT, starts only after PR #62 is merged)
+
+This is the "UI and backend get their own plan" the ground rules above defer to. The live site
+(`risk-parity-lab.vercel.app`) is built by PR #62's `web/` tree, and a gap audit against `main`
+found that it shows less than the project computes: no unlevered-ERC or financing-omitted rows, no
+overlay-lag numbers, the realized-risk and head-to-head metrics hidden or shown as raw JSON, and
+none of the CLI's settings (`--start`, `--target-vol`, `--max-leverage`, `--lookback-days`,
+`--weights`). Steps 43 and 44 are recorded in `CLAUDE.md`'s ledger rather than here, so this phase
+numbers from 45.
+
+**Nothing under `src/` changes in this phase.** All new numbers are produced by
+`web/export_data.py`, which already calls the real engine (`load_data`, `run_backtest`,
+`build_benchmarks`, `compare_to_ticker`), so the site has exactly one source for every figure.
+`web/` is B's area; step 50's equivalence tests go to A, the way step 28 did, because they guard the
+engine's own alignment rule.
+
+Four measurements shape the design, and are the reasons it is not built the obvious way:
+
+- **An engine run takes 0.5 s** (benchmarks 2.1 s, data load 1.3 s, measured on the full sample) —
+  not the "minutes of compute" `export_data.py`'s comment claims. Precomputing many runs is cheap.
+- **Leverage is `clip(target_vol / trailing_vol, cap)`, and `trailing_vol` depends only on the
+  weights.** Neither the target nor the cap feeds back into the ERC weights, so those two settings
+  can be re-applied in the browser with no engine run at all.
+- **`results.json` is 2.7 MB and served `no-cache`.** About 2 MB is daily equity plus drawdown
+  series, and drawdowns are derivable from equity. Fix the payload before adding to it.
+- **Every missing realized-risk and comparison metric is already exported** (Calmar, skew, excess
+  kurtosis, worst day, longest drawdown and its open flag, beta, tracking error, capture, the tail
+  block, `calendar_warning`). Those steps are UI only.
+
+| # | Who | Branch | What | Done when |
+|---|---|---|---|---|
+| 45 | B | `feat/b45-web-payload` | `web/export_data.py` + the data loader: split `results.json` into `core.json` (metrics, financing, crisis, mechanisms, run summary, config — everything above the fold) and lazily loaded `series.json` (via the existing `DeferredChart`); drop the drawdown series and derive it client-side from equity; store series columnar (one shared date array, values rounded to 7 significant figures); move the raw `diagnostics` / `benchmark_diagnostics` dumps into their own lazy file; content-hash every data file and serve it `public, max-age=31536000, immutable`, leaving only `manifest.json` as `no-cache`. Also correct the "minutes of compute" comment. | First-load data under 100 KB gzipped; a test proves every chart value is identical before and after the change; the client-side drawdown matches `metrics.drawdown_series` to 1e-12; Lighthouse in `web/screenshots/` shows no LCP/TBT regression |
+| 46 | B | `feat/b46-web-metrics` | Show what is already exported. Realized-risk tab: the full metric set (Calmar, skew, excess kurtosis, worst day, downside deviation, longest drawdown with an open badge, drawdown peak/trough dates) and a change-vs-baseline table **exported from Python** (same rows the CLI prints), not recomputed in JS. Comparison tab: replace the raw-JSON `<details>` with relative-metrics, tail-block ("beat the ticker on X% of its worst 5% of days") and crisis tables; uncovered windows render `n/a`, never 0. A visible banner whenever `calendar_warning` is set, naming the match and the US-ADR route. Undefined metrics render `--`. | A Node test renders both tabs from `candidates.json` and asserts every exported field appears; a foreign-listing fixture (e.g. `7203.T`, 96.6% match) shows the banner; no `Infinity`/`NaN` reaches the DOM |
+| 47 | B | `feat/b47-web-headline` | The README's headline findings. Benchmark table gains **Unlevered ERC** and **Financing omitted** rows (already in `financing`) and a **Total return** column (already in `summarize`), the three financing rows visibly grouped. `export_data.py` computes, per crisis window, the share of days held above 1.0x leverage and the minimum leverage with its date, shown on the crisis cards. **Compute these from the engine's own leverage — do not copy CLAUDE.md's 69% / 54% / 26%, which were measured with equal weights, not ERC weights.** | A test recomputes the levered-share figures with pandas directly from `engine.leverage` and matches; the new rows match `README.md`'s Results table at its printed precision, or README is refreshed to the same data date in the same PR |
+| 48 | B | `feat/b48-web-evidence` | The verification on the site, from a real run. CI already runs the suites: have the export record each suite's `N checks passed` line and the solver-oracle agreement figure into the manifest, and render them in the guardrails section, each linked to its test file. | The figures shown are read from that CI run's output, never typed in; a failing suite blocks the export rather than publishing a stale pass |
+| 49 | B | `feat/b49-web-explorer` | Strategy settings explorer. **Target vol and leverage cap in the browser:** export daily unlevered returns, the daily risk-free rate and each rebalance's `trailing_vol` (< 60 KB gzipped, lazy); JS computes `L = clip(t/σ̂, [lo, hi])` per rebalance, applies it **strictly before** each return date (the one-day rule), then `L·r_a − (L−1)·r_f` and the metrics, on every slider input. **Start date precomputed:** a different start changes the covariance warm-up and so the weights, so the export runs one engine pass per calendar year (~15 runs, ~8 s) into small per-start files fetched on selection. The explorer's result is always shown *beside* the published one, never in place of it. Also have the export write a fixture of Python `run_backtest(target_vol=…, leverage_cap=…)` at 2–3 non-default settings, for step 50. | Every slider update completes in under 16 ms; the start-date files load lazily and cache immutably; the published numbers never change when the explorer moves |
+| 50 | A | `feat/a50-web-explorer-tests` | Equivalence tests for step 49's browser overlay, owned by A the way step 28 was, because they guard the engine's own alignment rule. | JS at the default settings reproduces `engine.returns` to 1e-12; JS matches step 49's Python fixture at every non-default setting; **switching the JS to "at or before" makes the test fail** (the `test_lookahead.py` mutation technique), with a positive control proving the poisoned run differs |
+| 51 | B | `feat/b51-web-analyzer` | Analyzer settings and any-ticker speed. `/api/analyze` accepts `lookback` (252–1,260) and `weights` (≤ 5 candidate sizes in (0, 0.5], no duplicates), validated by the same rules as `analyze_position.py`, passed straight to `analyze_position(lookback_days=…, candidate_weights=…)`. Successful responses send `Cache-Control: public, s-maxage=86400, stale-while-revalidate=604800` keyed on the normalised ticker + parameters; unavailable ones send `no-store`, so a yfinance outage is never cached for a day. Precompute ~25 common tickers (mega-caps, SPY/QQQ/GLD, a recent IPO, a US-traded ADR) in the export. Measure the Python function's cold start and, if over 3 s, show a progress state saying what is being computed. | Invalid parameters return 400 with the CLI's message; a repeat query is served from the edge cache; a short-history IPO renders its shrunk-window note; cold-start latency is recorded in `web/QA.md` |
+| 52 | Both | — | Final review of steps 45–51, tag `v1.5`. | Every number on the site traces to a function in `src/` through `export_data.py`, and both can explain how the browser explorer is proven equal to the engine |
+
+Steps 46–48 depend only on 45 and can run in parallel; 49 needs 45's split files and 50 needs 49;
+51 is independent of 46–50.
+
+---
