@@ -21,10 +21,14 @@ fixtures and on live data. The engine run and the data fetching live in
 *then* cut to the overlap window, so its weights and leverage at any date never
 depend on when the ticker happened to start trading.
 
-The metrics come from :mod:`src.riskmetrics` (``risk_summary`` and its table
-formatter), so the two reports print the same rows the same way. What is new here
-is the *relative* block -- correlation, beta, tracking error, up/down capture and
-what the strategy did on the ticker's worst days -- and the crisis-window table.
+Almost nothing here is specific to a ticker, and what is not has moved out. The
+metric rows come from :mod:`src.riskmetrics` (``risk_summary`` and its table
+formatter), and the relative block -- correlation, beta, tracking error, up/down
+capture, what the strategy did on the benchmark's worst days, the crisis-window
+table and both printed forms -- from :mod:`src.headtohead`, which compares any
+two return series on a shared index. What remains this module's own is the part
+that *is* about a ticker: aligning a live price series onto the strategy's
+calendar, the two-tier trading-calendar guard, and the report prose.
 
 Run a self-check from the repo root (offline, fixtures only, writes nothing)::
 
@@ -46,7 +50,6 @@ from .config import (
     COMPARE_CALENDAR_WARN_BELOW,
     COMPARE_MIN_CALENDAR_MATCH,
     COMPARE_MIN_OVERLAP_DAYS,
-    CRISIS_WINDOWS,
     LEVERAGE_CAP,
     SUMMARY_LINE_WIDTH,
     TARGET_VOL,
@@ -55,8 +58,14 @@ from .config import (
     VAR_CONFIDENCE,
 )
 from .data import DataUnavailableError
-from .riskmetrics import format_metric_table, historical_var, realized_risk_table
-from .metrics import _ZERO_VARIANCE_EPS, resolve_window, summarize
+from .headtohead import (
+    crisis_table,
+    format_crisis_table,
+    format_relative_table,
+    relative_metrics,
+    tail_block,
+)
+from .riskmetrics import format_metric_table, realized_risk_table
 
 log = logging.getLogger(__name__)
 
@@ -93,131 +102,6 @@ def _calendar_match(strategy_index: pd.DatetimeIndex, candidate_index: pd.Dateti
     if len(in_range) == 0:
         return 0.0
     return len(in_range.intersection(strategy_index)) / len(in_range)
-
-
-# ---------------------------------------------------------------------------
-# Relative metrics
-# ---------------------------------------------------------------------------
-def relative_metrics(
-    strategy: pd.Series,
-    ticker: pd.Series,
-    periods_per_year: int = TRADING_DAYS_PER_YEAR,
-) -> dict[str, float]:
-    """How ``strategy`` moves against ``ticker``, on identically-indexed daily returns.
-
-    * ``correlation`` -- Pearson, daily.
-    * ``beta`` -- ``cov(strategy, ticker) / var(ticker)``: the strategy's move per
-      unit of ticker move. NaN if the ticker has no variance.
-    * ``tracking_error`` -- annualised std of the daily difference.
-    * ``up_capture`` / ``down_capture`` -- the strategy's mean return on the days
-      the ticker rose (fell), as a multiple of the ticker's own mean on those
-      days. Arithmetic daily means. A down capture below 1 means the strategy lost
-      less than the ticker on the ticker's down days; a negative one means it
-      gained.
-    """
-    if not strategy.index.equals(ticker.index):
-        raise ValueError("relative_metrics needs both series on the same index")
-    s = strategy.astype("float64")
-    t = ticker.astype("float64")
-
-    if len(t) < 2 or t.std(ddof=1) < _ZERO_VARIANCE_EPS:
-        beta = float("nan")
-        correlation = float("nan")
-    else:
-        beta = float(s.cov(t) / t.var(ddof=1))
-        correlation = float(s.corr(t))
-    tracking_error = (
-        float((s - t).std(ddof=1) * np.sqrt(periods_per_year)) if len(t) >= 2 else float("nan")
-    )
-
-    up, down = t > 0, t < 0
-    up_capture = float(s[up].mean() / t[up].mean()) if up.any() else float("nan")
-    down_capture = float(s[down].mean() / t[down].mean()) if down.any() else float("nan")
-    return {
-        "correlation": correlation,
-        "beta": beta,
-        "tracking_error": tracking_error,
-        "up_capture": up_capture,
-        "down_capture": down_capture,
-    }
-
-
-def tail_block(
-    strategy: pd.Series,
-    ticker: pd.Series,
-    confidence: float = VAR_CONFIDENCE,
-) -> dict[str, float]:
-    """What the strategy did on the ticker's worst days.
-
-    The days are those at or below the ticker's own historical VaR at
-    ``confidence`` (the worst 5% by default). ``strategy_beat_share`` is the
-    share of those days on which the strategy returned more than the ticker --
-    the direct test of "does the diversifier hold up when the ticker falls",
-    which correlation and beta average over the whole sample and can hide.
-    """
-    if not strategy.index.equals(ticker.index):
-        raise ValueError("tail_block needs both series on the same index")
-    var = historical_var(ticker, confidence)
-    if np.isnan(var):
-        return {
-            "n_days": 0,
-            "ticker_mean": float("nan"),
-            "strategy_mean": float("nan"),
-            "strategy_beat_share": float("nan"),
-        }
-    mask = ticker <= var
-    return {
-        "n_days": int(mask.sum()),
-        "ticker_mean": float(ticker[mask].mean()),
-        "strategy_mean": float(strategy[mask].mean()),
-        "strategy_beat_share": float((strategy[mask] > ticker[mask]).mean()),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Crisis windows
-# ---------------------------------------------------------------------------
-def crisis_table(
-    strategy: pd.Series,
-    ticker: pd.Series,
-    windows: dict[str, tuple[str, str]] | None = None,
-    periods_per_year: int = TRADING_DAYS_PER_YEAR,
-) -> pd.DataFrame:
-    """Total return and max drawdown through each crisis window, strategy vs ticker.
-
-    Each window is measured **from the peak close**: the returns kept are those
-    stamped strictly *after* the window's start date, because the start date is
-    the peak itself and its own return happened on the way up. This is the same
-    rule ``metrics.slice_to_window`` applies to a ``BacktestResult`` (see its
-    docstring for why); it is repeated here because these are bare series.
-
-    A window is ``covered`` only if the series reach both ends of it. The two
-    series share one index here, so it is the *later* starter that decides -- a
-    ticker that listed after a window's peak gets ``NaN``, not a partial window
-    that reads like a full one.
-    """
-    windows = CRISIS_WINDOWS if windows is None else windows
-    if not strategy.index.equals(ticker.index):
-        raise ValueError("crisis_table needs both series on the same index")
-
-    rows = []
-    for name in windows:
-        start, end = resolve_window((windows[name][0], windows[name][1]))
-        covered = bool(strategy.index[0] <= start and (end is None or strategy.index[-1] >= end))
-        row: dict[str, object] = {"window": name, "covered": covered}
-        for label, series in (("strategy", strategy), ("ticker", ticker)):
-            if covered:
-                keep = series.index > start
-                if end is not None:
-                    keep &= series.index <= end
-                stats = summarize(series[keep], periods_per_year, name=label)
-                row[f"{label}_return"] = stats["total_return"]
-                row[f"{label}_max_drawdown"] = stats["max_drawdown"]
-            else:
-                row[f"{label}_return"] = float("nan")
-                row[f"{label}_max_drawdown"] = float("nan")
-        rows.append(row)
-    return pd.DataFrame(rows).set_index("window")
 
 
 # ---------------------------------------------------------------------------
@@ -392,46 +276,6 @@ _CAVEATS: tuple[str, ...] = (
 )
 
 
-def _relative_table(comp: TickerComparison) -> str:
-    rows = {
-        "correlation": ("correlation", "ratio"),
-        f"beta to {comp.candidate}": ("beta", "ratio"),
-        "tracking error (annual)": ("tracking_error", "pct"),
-        "up capture": ("up_capture", "share"),
-        "down capture": ("down_capture", "share"),
-    }
-    cells: dict[str, dict[str, str]] = {}
-    for label, (key, kind) in rows.items():
-        cells[label] = {}
-        for column in comp.relative.columns:
-            value = comp.relative.at[key, column]
-            if pd.isna(value):
-                text = "--"
-            elif kind == "pct":
-                text = f"{value:.2%}"
-            elif kind == "share":
-                text = f"{value:.0%}"
-            else:
-                text = f"{value:.3f}"
-            cells[label][column] = text
-    return pd.DataFrame(cells).T.to_string()
-
-
-def _crisis_text(comp: TickerComparison) -> str:
-    def pct(value: float) -> str:
-        return "n/a" if pd.isna(value) else f"{value:.2%}"
-
-    table = pd.DataFrame(
-        {
-            "strategy return": comp.crisis["strategy_return"].map(pct),
-            "strategy max DD": comp.crisis["strategy_max_drawdown"].map(pct),
-            f"{comp.candidate} return": comp.crisis["ticker_return"].map(pct),
-            f"{comp.candidate} max DD": comp.crisis["ticker_max_drawdown"].map(pct),
-        }
-    )
-    return table.rename_axis(None).to_string()
-
-
 def format_comparison_report(comp: TickerComparison) -> str:
     """Human-readable account of one :func:`compare_to_ticker` run."""
     lines = [
@@ -462,11 +306,11 @@ def format_comparison_report(comp: TickerComparison) -> str:
     )
 
     lines.append(f"\nRelative to {comp.candidate} (daily returns)")
-    lines.append(textwrap.indent(_relative_table(comp), "  "))
+    lines.append(textwrap.indent(format_relative_table(comp.relative, comp.candidate), "  "))
     lines.append("  Down capture below 100% = lost less than the ticker on its down days.")
 
     tail_days = int(comp.tail["n_days"].iloc[0])
-    tail_mean = comp.tail["ticker_mean"].iloc[0]
+    tail_mean = comp.tail["benchmark_mean"].iloc[0]
     lines.append(
         f"\nOn {comp.candidate}'s worst {1 - VAR_CONFIDENCE:.0%} of days "
         f"({tail_days} days, {comp.candidate} averaged "
@@ -482,7 +326,7 @@ def format_comparison_report(comp: TickerComparison) -> str:
         )
 
     lines.append("\nCrisis windows (measured from the peak close)")
-    lines.append(textwrap.indent(_crisis_text(comp), "  "))
+    lines.append(textwrap.indent(format_crisis_table(comp.crisis, comp.candidate), "  "))
     if not comp.crisis["covered"].all():
         lines.append(
             f"  n/a = the window is not fully inside the overlap ({comp.candidate} "

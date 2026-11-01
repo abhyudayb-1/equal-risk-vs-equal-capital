@@ -433,10 +433,19 @@ details and are not:
   from `_format_realized_section` for this. The dependency used to run `compare` → `incremental`,
   which inverted nothing but did make one report's formatter live inside the other's module; both
   now depend on `riskmetrics` instead and neither depends on the other.
-- **The relative metrics have exact definitions worth keeping:** beta is `cov(s, t) / var(t)`;
-  up/down capture are the strategy's mean return on the days the ticker rose/fell as a multiple of
-  the ticker's own mean on them (arithmetic daily means); the tail block is the ticker's worst
-  `1 − VAR_CONFIDENCE` of days, with the share of them on which the strategy beat the ticker —
+- **The relative metrics, the crisis table and both printed forms live in `src/headtohead.py`,
+  not in `compare.py`.** They are pure functions of two return series on one shared index, named
+  for their roles (`strategy` against `benchmark`), so any pairwise comparison can use them —
+  equal-risk against equal-capital, a levered book against its unlevered self, or the engine
+  against a single holding. `compare.py` keeps only what is genuinely about a ticker: aligning a
+  live price series onto the strategy's calendar, the two-tier calendar guard, and the report
+  prose. The pair is deliberately **not** symmetric — capture is measured on the benchmark's up
+  and down days and the tail block on the benchmark's worst days — so passing them the other way
+  round answers a different question. Covered by `tests/test_headtohead.py` (38 checks).
+- **Their definitions are exact and worth keeping:** beta is `cov(s, b) / var(b)`;
+  up/down capture are the strategy's mean return on the days the benchmark rose/fell as a multiple
+  of the benchmark's own mean on them (arithmetic daily means); the tail block is the benchmark's
+  worst `1 − VAR_CONFIDENCE` of days, with the share of them on which the strategy beat it —
   which correlation and beta average over the whole sample and can hide.
 - **What it found, and how to read it.** Against AAPL (2007-03-01 → 2026-09-18) the strategy was
   about a third as volatile, drew down −29% against −61%, lost less in every crisis window and beat
@@ -475,7 +484,8 @@ python3 -m venv .venv
 .venv/bin/python tests/test_incremental.py    # Phase 6: perturbation scan, compensation test, 5-asset limit,
                                               # the mixed-book replay (step 43)
 .venv/bin/python tests/test_riskmetrics.py    # VaR/CVaR, Sortino, Calmar, drawdown duration, the shared table
-.venv/bin/python tests/test_compare.py        # step 44: relative metrics, tail block, crisis windows, guards
+.venv/bin/python tests/test_headtohead.py     # correlation/beta/capture, the tail block, the crisis table
+.venv/bin/python tests/test_compare.py        # step 44: ticker alignment, both calendar tiers, the report
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py              # full run -> reports/
 .venv/bin/python analyze_position.py --ticker AAPL   # Phase 6: incremental analysis against a live ticker
@@ -500,7 +510,7 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.compare       # step 44: a full report from fixtures; offline, writes nothing
 ```
 
-Run every suite after any change to `src/`. **All ten test suites run offline, and so do eight
+Run every suite after any change to `src/`. **All eleven test suites run offline, and so do eight
 of the nine module self-checks** — verified by blocking `socket.connect` / `getaddrinfo` and
 re-running each one, not by assumption. `src/data.py` imports `requests`, so the import graph
 touches the network stack, but nothing under `tests/` opens a connection. `src.incremental` is
