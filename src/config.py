@@ -10,6 +10,7 @@ already here, and name the block you touched in your PR body.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -20,7 +21,16 @@ DATA_DIR = PROJECT_ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 
-for _directory in (DATA_DIR, CACHE_DIR, REPORTS_DIR):
+# Appended for the web export. A Vercel function's filesystem is read-only
+# outside /tmp, so the deployment sets RPL_CACHE_DIR and only that directory is
+# created -- DATA_DIR and REPORTS_DIR are never used there. Unset, nothing above
+# changes. A cache directory that cannot be created is an error in both modes:
+# swallowing it would only move the failure to the first cache write.
+_READ_ONLY_DEPLOY = bool(os.environ.get("RPL_CACHE_DIR"))
+if _READ_ONLY_DEPLOY:
+    CACHE_DIR = Path(os.environ["RPL_CACHE_DIR"])
+
+for _directory in ((CACHE_DIR,) if _READ_ONLY_DEPLOY else (DATA_DIR, CACHE_DIR, REPORTS_DIR)):
     _directory.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------

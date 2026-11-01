@@ -20,3 +20,4 @@ data/cache/
 # without cloning and running. Tracked files stay tracked and re-render in place.
 # If you regenerate them from fixtures, do not commit the result.
 reports/
+

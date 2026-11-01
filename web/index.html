@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f9f8" />
+    <script>
+      // Runs before the stylesheet below is parsed, so a returning visitor's
+      // theme is on <html> before the first paint - no flash. Nothing React
+      // renders depends on the theme (the toggle picks its label in CSS), so
+      // the prerendered "light" document hydrates cleanly under either one.
+      // The key is duplicated in src/App.jsx; keep the two in step.
+      try {
+        var stored = localStorage.getItem("risk-theme");
+        if (stored === "dark" || stored === "light") {
+          document.documentElement.dataset.theme = stored;
+          document.querySelector('meta[name="theme-color"]').content =
+            stored === "dark" ? "#111815" : "#f7f9f8";
+        }
+      } catch (e) {}
+    </script>
+    <link rel="icon" href="data:," />
+    <meta name="description" content="Risk Parity Lab: the evidence, the drawdowns, and the cost of balancing portfolio risk." />
+    <title>Risk Parity Lab | Research notebook</title>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
+</html>

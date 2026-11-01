@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "mode": "mocked GitHub transport; real exported initial payload",
+  "checks": [
+    "version change loads all files from one immutable commit",
+    "metrics update without reloading",
+    "ticker and crisis choices survive refresh",
+    "API failure retains the last successful version"
+  ]
+}
