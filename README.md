@@ -96,17 +96,15 @@ Standalone scripts — no pytest, no test runner. Run a file to run its suite; e
 .venv/bin/python tests/test_lookahead.py       # the <= t guard, including removing it to prove the check has teeth
 .venv/bin/python tests/test_riskmetrics.py     # VaR/CVaR, Sortino, Calmar, drawdown duration, the shared metric table
 .venv/bin/python tests/test_headtohead.py      # one series against another: correlation/beta/capture, tail block, crisis table
-.venv/bin/python tests/test_compare.py         # head-to-head vs a ticker: alignment, both calendar tiers, the report
 ```
 
-No suite touches the network: all ten pass offline, checked by blocking `socket.connect` and
+No suite touches the network: all nine pass offline, checked by blocking `socket.connect` and
 re-running each one, and yfinance is monkeypatched wherever a fetch is
 exercised. Most engine modules also carry a `__main__` self-check — `.venv/bin/python -m src.riskparity`
 verifies the analytic gradient against central differences and solves 500 random covariances,
 `.venv/bin/python -m src.covariance` checks that an infinite halflife reproduces the sample
-covariance and that PSD repair fires on an indefinite input, and
-`.venv/bin/python -m src.compare` prints a full head-to-head report from fixtures. **Every
-self-check runs offline and writes nothing to disk.**
+covariance and that PSD repair fires on an indefinite input. **Every self-check runs offline and
+writes nothing to disk.**
 
 ---
 
@@ -132,7 +130,7 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
 | `src/backtest.py` | The monthly rebalance loop that ties the above together into a `BacktestResult`. Owns no maths; its job is to walk the calendar in the right order and never look forward. Solver non-convergence is counted into `meta`; a genuinely broken price series raises and kills the run. |
 | `src/metrics.py` | CAGR, annualised volatility, Sharpe, drawdown, hit rate, and the crisis-window slicing every table is built on. Ported from a predecessor repo with `periods_per_year` made a required argument, since this project accrues daily rather than monthly. |
 | `src/riskmetrics.py` | The realized-risk measures the metrics port does not carry: historical VaR and CVaR at `VAR_CONFIDENCE`, downside deviation, Sortino, Calmar, longest drawdown and whether it is still open — plus the one table formatter every report prints them with, so two reports cannot label the same metric differently. New code that *follows* `metrics.py`'s conventions rather than being added to a file that is a verbatim port. |
-| `src/headtohead.py` | One daily return series against another on a shared index: correlation, beta `cov(s, b) / var(b)`, tracking error, up/down capture, what the strategy did on the benchmark's worst `1 − VAR_CONFIDENCE` of days, and the per-crisis-window table. Named for roles (`strategy` vs `benchmark`), so the same functions serve any pairwise comparison. |
+| `src/headtohead.py` | One daily return series against another on a shared index: correlation, beta `cov(s, b) / var(b)`, tracking error, up/down capture, what the strategy did on the benchmark's worst `1 − VAR_CONFIDENCE` of days, and the per-crisis-window table. Named for roles (`strategy` vs `benchmark`), so the same functions serve any pairwise comparison. **Not yet wired into `run_backtest.py`** — it and `riskmetrics.py` are held for the equal-risk-against-equal-capital comparison, and are covered by their own suites in the meantime. |
 | `src/benchmarks.py` | The four unlevered comparators: equal weight, 60/40, naive inverse-volatility ("risk parity" as usually shipped, which ignores correlations) and a rolling long-only max-Sharpe tangency portfolio. All return the same `BacktestResult` the engine does. |
 | `src/stress.py` | The crisis decomposition — every strategy across every crisis window, with the capital-weight-in-bonds and mean-leverage columns that make the ranking interpretable — plus the regime diagnostics: rolling SPY/TLT correlation and the diversification ratio `Σwᵢσᵢ / σₚ`. |
 | `src/viz.py` | The four report charts: risk contributions through time, capital weight beside risk weight, the leverage multiplier, and correlation against the diversification ratio. Crisis windows are shaded on each. |
@@ -390,134 +388,13 @@ every rebalance to seven decimal places. That was never the part at risk.
 
 ---
 
-## Comparing Against a Ticker
-
-`run_backtest.py` compares the strategy against four fixed, unlevered benchmarks. A simpler
-question comes up first: **how did the risk-parity strategy do against just buying and holding
-this ticker, and what was the difference in risk?** `compare_ticker.py` answers it, for any
-ticker yfinance covers —
-including the four sleeves themselves, so `--ticker SPY` is the classic "risk parity versus the
-S&P 500."
-
-```bash
-.venv/bin/python compare_ticker.py --ticker AAPL
-```
-
-It runs the project's real engine over its full history — exactly as `run_backtest.py` does — buys
-and holds the ticker (total return, dividends reinvested), cuts both to the dates the ticker exists,
-and prints three columns side by side:
-
-| Column | What it is |
-|---|---|
-| `Risk parity + vol target` | The engine's daily returns: levered to the 10% vol target and **net of financing** at `DTB3`. The headline strategy. |
-| `Risk parity (unlevered)` | The same equal-risk book with no leverage. The ticker is unlevered, so this is the like-for-like risk comparison. |
-| the ticker | Buy-and-hold total return. |
-
-The strategy is run over its whole history *first* and cut to the overlap window afterwards, so its
-weights and leverage on any date never depend on when the ticker started trading. The report has
-five parts: the risk metrics for all three columns (volatility, max drawdown with its dates and the
-longest time underwater, VaR and CVaR at 95%, worst day, downside deviation, Sortino, Calmar, skew,
-excess kurtosis, plus CAGR and Sharpe); the strategy's **relative** behaviour (correlation, beta,
-annualised tracking error, up and down capture); a **tail block** — what the strategy did on the
-ticker's worst 5% of days, and on how many of them it beat the ticker; the three crisis windows,
-measured from the peak close and marked `n/a` where the ticker had not yet listed; and the caveats.
-
-Flags: `--ticker` (required), `--refresh-prices` (bypass the caches), `--verbose`, `--help`. It uses
-the project's configured vol target and leverage cap, and says so in the report. With prices
-cached, a run takes a few seconds — it re-runs the whole engine each time; nothing caches the
-strategy between invocations.
-
-### Why the ticker has its own fetch
-
-`data.fetch_prices` cannot serve this. Its late-start guard rejects any ticker that listed more than
-ten days after 2006 — correct for the four sleeves, wrong for a stock that IPO'd in 2019 — and it
-writes the shared price cache as a single frame, so passing a candidate alongside the universe would
-rewrite the cached SPY/TLT/DBC/TIP history too. `data.fetch_ticker_prices` fetches the ticker alone
-into **its own** cache file (`data/cache/ticker_<TICKER>.csv`) and validates it against its own first
-date, so an empty pull, a non-positive price or a long interior gap still raises. The shared
-`prices_close.csv` is never read or written, so no comparison can shorten the history the engine
-itself depends on.
-
-### Worked example
-
-`.venv/bin/python compare_ticker.py --ticker AAPL`, run against live data, overlap window
-2007-03-01 → 2026-09-18 (4,920 observations):
-
-```
-                        Risk parity + vol target   Risk parity (unlevered)     AAPL
-annual volatility                        11.25%                     6.91%   31.17%
-max drawdown                            -29.10%                   -17.15%  -60.87%
-VaR 95% (daily)                          -1.04%                    -0.65%   -2.92%
-CVaR 95% (daily)                         -1.65%                    -1.02%   -4.51%
-worst day                                -6.62%                    -3.04%  -17.92%
-Sortino                                   0.925                     1.079    1.405
-Calmar                                    0.244                     0.297    0.468
-CAGR                                      7.10%                     5.10%   28.46%
-Sharpe                                    0.666                     0.754    0.960
-
-Relative to AAPL:  correlation 0.309   beta 0.111   tracking error 29.70%   up capture 13%   down capture 11%
-
-On AAPL's worst 5% of days (246 days, AAPL averaged -4.51%): the strategy averaged -0.50%
-and beat AAPL on 100% of them.
-
-Crisis windows        strategy return   AAPL return
-GFC (2008)                     -7.15%       -50.49%
-COVID (2020)                  -19.41%       -30.67%
-Rate shock (2022)             -15.00%       -23.68%
-```
-
-Read honestly, this is a risk story and not a return story. Risk parity was about a third as volatile,
-drew down half as far (−29% against −61%), lost less in every crisis window, and beat AAPL on every
-one of AAPL's worst days — and earned 7.1% a year against AAPL's 28.5%, with a *lower* Sharpe
-(0.67 against 0.96). That last comparison is the hindsight caveat below at work: AAPL is a stock
-someone asks about *because* it did well. Against `--ticker SPY` the picture is closer and less
-flattering to the ticker: the strategy earned 7.1% against 11.1%, but with a max drawdown of −29%
-against −55%, a Sharpe of 0.67 against 0.63 and a Calmar of 0.24 against 0.20.
-
-### What this is, and is not
-
-Printed at the end of every report:
-
-1. **Overlap window only.** Both sides are measured on the dates the ticker exists, not over the
-   strategy's full 2006-to-today history, so the numbers will not match `run_backtest.py`'s headline
-   results.
-2. **Not like-for-like on leverage.** The strategy is levered and charged financing; the ticker is
-   not levered at all. The unlevered column and the scale-free ratios (Sharpe, Sortino, Calmar) are
-   the fair read.
-3. **Chosen with hindsight.** A ticker someone asks about today is, more often than not, one that
-   did well or is well known, so it flatters the ticker against a strategy that never got to pick it.
-4. **No costs.** No transaction costs, bid-ask spread or borrow spread over the bill rate, on either
-   side; levered results in particular are still optimistic.
-5. **Short windows are noisy.** A 5% tail is 5% of the observation count, and a max drawdown is a
-   single episode. Below `COMPARE_MIN_OVERLAP_DAYS` (252) the comparison refuses to print at all.
-
-**Which tickers work.** Any ticker yfinance has daily prices for, with at least 252 overlapping
-trading days. US-listed stocks, ETFs, indices (`^GSPC`) and US-traded ADRs of foreign companies
-(`TM` for Toyota) all match the strategy's calendar exactly. Two tiers guard the calendar, both
-measured on live tickers rather than assumed:
-
-| Calendar match | What happens | Measured examples |
-|---|---|---|
-| 99% or better | Runs cleanly | US listings and ADRs: 100% |
-| 95% to 99% | **Runs, with a printed warning** | Toronto 98.1–98.2%, London 97.8%, Zurich 97.5%, Hong Kong 97.5%, Frankfurt 97.4%, Sydney 97.4%, Tokyo 96.6% |
-| under 95% | Refused (`DataUnavailableError`) | Bitcoin (trades weekends): 69% |
-
-The warning exists because a foreign weekday exchange is usable but not clean. On the ~2–3% of days
-one market was shut and the other open, a multi-day return is paired with a one-day one; and a
-market that closes at a different time of day reacts to US news on a different date, which pulls
-correlation, beta, capture and the tail block toward zero (the non-synchronous-trading effect).
-Those numbers are printed with a `! calendar warning` and should be read as indicative, not exact.
-The volatility, drawdown and return figures are unaffected by the pairing.
-
----
-
 ## Repository layout
 
 ```
 run_backtest.py       the core-engine CLI — the only place that pipeline is wired together
-compare_ticker.py     the head-to-head CLI: strategy vs buy-and-hold of any ticker
-src/                  one module per pipeline stage (table above), plus the shared
-                      riskmetrics.py / headtohead.py and compare.py
+src/                  one module per pipeline stage (table above), plus riskmetrics.py
+                      and headtohead.py, held for the equal-risk-vs-equal-capital
+                      comparison and not yet called by run_backtest.py
 tests/                standalone test scripts + the synthetic fixture
 reports/              generated CSV and charts (the committed set is from a live run)
 data/cache/           cached network pulls (gitignored; delete a file to force a re-pull)

@@ -27,8 +27,11 @@ calling the function under test a second way:
   which would read as "came through it flat" instead of "was not trading yet".
 
 What is *not* here is the ticker wiring that used to surround these functions --
-the live fetch, the trading-calendar guards and the report prose. That is
-``src/compare.py``'s and ``tests/test_compare.py``'s.
+the live fetch, the trading-calendar guards and the report prose. That went with
+``src/compare.py`` (reachable at tag ``v1.4``). Until the
+equal-risk-against-equal-capital comparison lands, this suite is the only
+exercise ``src.headtohead`` gets, which is why it covers the printed forms as
+well as the arithmetic.
 """
 
 from __future__ import annotations

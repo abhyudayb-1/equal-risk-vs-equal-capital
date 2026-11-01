@@ -22,7 +22,6 @@ Three of these exist because the corresponding bug was actually shipped:
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -30,18 +29,15 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import cache, config  # noqa: E402
-from src import data as data_module  # noqa: E402
+from src import config  # noqa: E402
 from src.data import (  # noqa: E402
     DataUnavailableError,
     _is_true_month_end,
     _restrict,
-    _ticker_cache_name,
     _validate,
     align_risk_free,
     asof_slice,
     daily_returns,
-    fetch_ticker_prices,
     month_end_rebalance_dates,
 )
 
@@ -225,125 +221,10 @@ def test_risk_free_alignment() -> None:
           float(filled.loc["2010-06-01"]) == 0.05 / 252)
 
 
-def _raw_download(ticker: str, start: str, end: str, multiindex: bool) -> pd.DataFrame:
-    """What ``yf.download`` returns for one ticker, in either shape yfinance uses."""
-    index = pd.bdate_range(start, end)
-    rng = np.random.default_rng(1)
-    close = 50.0 * (1.0 + rng.normal(0.0004, 0.012, len(index))).cumprod()
-    frame = pd.DataFrame({"Open": close, "Close": close, "Volume": 1_000.0}, index=index)
-    if multiindex:
-        frame.columns = pd.MultiIndex.from_product([frame.columns, [ticker]])
-    return frame
-
-
-def test_fetch_ticker_prices() -> None:
-    """The head-to-head's own fetch (step 44), against a monkeypatched yfinance.
-
-    Two properties are why this function exists at all, and both are attacked
-    here rather than assumed: it must accept a ticker that listed long after
-    ``DATA_START_DATE`` (which ``fetch_prices``' late-start guard rejects), and
-    it must never touch the shared ``prices_close.csv`` cache (which
-    ``cache.write_frame`` would otherwise replace wholesale).
-    """
-    print("single-ticker fetch (step 44):")
-    real_download = data_module.yf.download
-    real_cache_dir = cache.CACHE_DIR
-    calls: list[str] = []
-
-    def make_download(raw: pd.DataFrame | None):
-        def fake(tickers, **kwargs):
-            calls.append(str(tickers))
-            return raw
-
-        return fake
-
-    try:
-        with tempfile.TemporaryDirectory() as directory:
-            cache.CACHE_DIR = Path(directory)
-            shared = cache.CACHE_DIR / data_module.PRICE_CACHE_FILE
-            shared.write_bytes(b"date,SPY" + bytes([10]) + b"2020-01-01,1.0" + bytes([10]))  # a stand-in for the engine's cache
-            shared_before = shared.read_bytes()
-
-            # A ticker that listed in 2019: ~13 years after DATA_START_DATE.
-            late_flat = _raw_download("NEWCO", "2019-06-03", "2024-06-28", multiindex=False)
-            data_module.yf.download = make_download(late_flat)
-            series = fetch_ticker_prices("newco")
-            check("a ticker listed 13 years after DATA_START_DATE is accepted",
-                  len(series) == len(late_flat) and series.index[0] == late_flat.index[0])
-            check("...and comes back as a named, positive Series",
-                  series.name == "NEWCO" and bool((series > 0).all()))
-
-            as_frame = late_flat[["Close"]].rename(columns={"Close": "NEWCO"})
-            as_frame.index.name = "date"
-            try:
-                _validate(as_frame, config.DATA_START_DATE)
-                raise AssertionError("FAILED: fetch_prices' guard accepted a late-listed ticker")
-            except DataUnavailableError:
-                check("positive control: the same series is rejected by fetch_prices' "
-                      "late-start guard", True)
-
-            check("the shared prices_close.csv is untouched",
-                  shared.read_bytes() == shared_before)
-            check("the ticker is cached in its own file",
-                  (cache.CACHE_DIR / _ticker_cache_name("NEWCO")).exists())
-
-            # Second call is served from that file: yfinance must not be reached.
-            calls.clear()
-            data_module.yf.download = make_download(None)
-            again = fetch_ticker_prices("NEWCO")
-            check("a fresh cache hit does not download again", calls == [])
-            check("...and returns the same values",
-                  bool(np.allclose(again.to_numpy(), series.to_numpy())))
-            data_module.yf.download = make_download(late_flat)
-            fetch_ticker_prices("NEWCO", refresh=True)
-            check("refresh=True bypasses the cache and downloads", len(calls) == 1)
-
-            # yfinance's other output shape.
-            data_module.yf.download = make_download(
-                _raw_download("MULTI", "2015-01-05", "2024-06-28", multiindex=True)
-            )
-            multi = fetch_ticker_prices("MULTI")
-            check("a MultiIndex (Close, ticker) download is flattened the same way",
-                  multi.name == "MULTI" and len(multi) > 2000)
-
-            check("the shared cache is still untouched after every call above",
-                  shared.read_bytes() == shared_before)
-
-            data_module.yf.download = make_download(pd.DataFrame())
-            try:
-                fetch_ticker_prices("GHOST", refresh=True)
-                raise AssertionError("FAILED: an empty download did not raise")
-            except DataUnavailableError:
-                check("an empty download raises DataUnavailableError", True)
-
-            gapped = _raw_download("HOLE", "2015-01-05", "2024-06-28", multiindex=False)
-            gapped.iloc[500:520, gapped.columns.get_loc("Close")] = np.nan
-            data_module.yf.download = make_download(gapped)
-            try:
-                fetch_ticker_prices("HOLE", refresh=True)
-                raise AssertionError("FAILED: a 20-day hole did not raise")
-            except DataUnavailableError:
-                check("an interior gap beyond the tolerance still raises", True)
-
-            try:
-                fetch_ticker_prices("   ")
-                raise AssertionError("FAILED: a blank ticker did not raise")
-            except ValueError:
-                check("a blank ticker raises ValueError", True)
-
-            check("cache filenames are filesystem-safe for indices and share classes",
-                  _ticker_cache_name("^GSPC") == "ticker__GSPC.csv"
-                  and _ticker_cache_name("BRK-B") == "ticker_BRK-B.csv")
-    finally:
-        data_module.yf.download = real_download
-        cache.CACHE_DIR = real_cache_dir
-
-
 if __name__ == "__main__":
     test_windowing()
     test_rebalance_calendar()
     test_returns_and_guard()
     test_validation_raises()
     test_risk_free_alignment()
-    test_fetch_ticker_prices()
     print(f"\n{_checks} checks passed")

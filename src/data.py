@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import io
 import logging
-import re
 
 import pandas as pd
 import requests
@@ -218,75 +217,6 @@ def fetch_prices(
     log.info("Downloaded %d rows, %s to %s.", len(close), close.index[0].date(),
              close.index[-1].date())
     return _restrict(close, start, end)
-
-
-def _ticker_cache_name(ticker: str) -> str:
-    """A per-ticker cache filename, safe on every filesystem (``^GSPC``, ``BRK-B``)."""
-    return f"ticker_{re.sub(r'[^A-Za-z0-9._-]', '_', ticker)}.csv"
-
-
-def fetch_ticker_prices(ticker: str, refresh: bool = False) -> pd.Series:
-    """Total-return daily closes for ONE ticker, over whatever history it has.
-
-    Exists because :func:`fetch_prices` cannot serve a head-to-head comparison
-    against an arbitrary ticker, for two independent reasons. Its late-start
-    guard (``_validate``) rejects any ticker that listed more than
-    ``MAX_LATE_START_DAYS`` after ``DATA_START_DATE`` -- correct for the four
-    sleeves, where a late start is a configuration error, and wrong for a stock
-    that IPO'd in 2019. And it writes the shared price cache as a single frame
-    (``cache.write_frame`` replaces the whole file), so passing a candidate
-    alongside the universe rewrites the cached SPY/TLT/DBC/TIP history too.
-
-    So this fetches the ticker alone, from ``DATA_START_DATE``, into **its own**
-    cache file; the shared ``prices_close.csv`` is never read or written here.
-    Validation is against the ticker's *own* first date, so what is still
-    caught is what is genuinely wrong with a series: an empty pull, a
-    non-positive price, an interior gap longer than ``MAX_INTERIOR_GAP_DAYS``.
-    "It has a short history" is deliberately not one of them -- how much
-    overlap is enough is the caller's question (see ``src/compare.py``).
-
-    Raises
-    ------
-    DataUnavailableError
-        If yfinance returns nothing for the ticker, or the series is unusable.
-    ValueError
-        If ``ticker`` is blank.
-    """
-    ticker = ticker.strip().upper()
-    if not ticker:
-        raise ValueError("ticker cannot be empty")
-    cache_name = _ticker_cache_name(ticker)
-
-    if not refresh and cache.is_fresh(cache_name, PRICE_CACHE_MAX_AGE_HOURS):
-        cached = cache.read_frame(cache_name)
-        if cached is not None and not cached.empty and ticker in cached.columns:
-            log.info("Using cached prices for %s (%d rows).", ticker, len(cached))
-            return cached[ticker].dropna()
-
-    log.info("Downloading %s from yfinance...", ticker)
-    raw = yf.download(
-        ticker,
-        start=DATA_START_DATE,
-        end=None,
-        auto_adjust=True,  # total return: dividends reinvested, splits applied
-        progress=False,
-        group_by="column",
-    )
-    if raw is None or raw.empty:
-        raise DataUnavailableError(
-            f"yfinance returned nothing for {ticker!r} from {DATA_START_DATE}. "
-            "Check the ticker symbol and network access."
-        )
-
-    close = _normalise_index(_flatten_close(raw, [ticker]))
-    first = close[ticker].first_valid_index()
-    if first is None:
-        raise DataUnavailableError(f"{ticker} returned no usable prices at all")
-    close = _validate(close, str(first.date()))
-    cache.write_frame(cache_name, close)
-    log.info("Downloaded %d rows for %s, %s to %s.", len(close), ticker,
-             close.index[0].date(), close.index[-1].date())
-    return close[ticker]
 
 
 # ---------------------------------------------------------------------------
