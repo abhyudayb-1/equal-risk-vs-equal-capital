@@ -1,21 +1,44 @@
-# Project 16 — Risk Parity & Volatility-Targeting Engine (2-person plan)
+# Equal risk vs equal capital — design plan
+
+*A multi-asset portfolio-construction study, built by two people in parallel. Originally
+"Project 16 — Risk Parity & Volatility-Targeting Engine"; see Context for what changed and why.*
 
 ## Context
 
-Project 16 builds a systematic risk-parity portfolio engine: equal *risk* contribution
-(not equal capital) across four asset classes, a volatility-targeting overlay that scales
-leverage to a fixed annualized vol target, and stress tests through 2008, 2020 and 2022.
-The intellectual payload is the 2022 regime — when stock-bond correlation flipped positive,
-the diversification assumption underpinning risk parity broke and the strategy failed. The
-write-up must show *why* it broke, not hide it.
+**The question:** across a multi-asset book, what does allocating equal *risk* buy you over
+allocating equal *capital*, and what does it cost in volatility and return?
+
+The two construction rules under comparison are **equal risk contribution (ERC)** and **equal
+capital (1/N)**, over four asset classes, daily from 2006, with naive 1/σ, max-Sharpe and 60/40 as
+reference points. A volatility-targeting overlay is part of the machinery but **not** part of the
+thesis: two books at different volatilities cannot be compared on return, so the overlay exists to
+put ERC at 1/N's own volatility, and the financing it charges is one of the costs being measured.
+Stress tests through 2008, 2020 and 2022 are the evidence that the covariance-estimated
+diversification ERC depends on is not stable, and that the overlay's lag is expensive.
+
+The write-up must show the unflattering half as plainly as the flattering one — see the Phase 8
+section below for the measured answers, which include equal risk *losing* to equal capital once the
+leverage that makes the comparison fair is paid for.
+
+**This was not the original framing.** Through `v1.4` the project was "a risk-parity +
+volatility-targeting engine whose analytical payload is why risk parity failed in 2022", and two
+further products were layered on it (incremental position analysis, head-to-head against a ticker).
+Both were removed and the framing narrowed to the question above; `AGENTS.md`/`CLAUDE.md`'s ledger
+records what went and which tags still hold it. One claim from that era was **refuted by this
+repo's own measurement and must not be reintroduced**: the 2022 failure was *not* a stock-bond
+correlation flipping positive. Over `2022-01-03 → 2022-10-12` the rolling 63-day SPY/TLT
+correlation averaged **−0.09** and was positive on only 31% of days. What happened is that TLT fell
+29.3% against SPY's 24.5% — the hedge lost more than the thing it hedged. See the 2022 section
+below and the "Data reality check" in `TASKS.md`.
 
 Two people build it in parallel on separate machines. The hard part of a 2-person split on a
 quant pipeline is that the analysis half normally can't start until the engine half produces
 output. This plan removes that dependency with a **frozen result contract + synthetic fixture**
 on day one, so both people are unblocked from hour 2 onward.
 
-**Home:** the existing empty private repo `abhyudayb-1/portfolio-allocation-capstone-project`,
-already wired to `C:\Users\abhyu\Desktop\Project 15` (local `main` tracks `origin/main`).
+**Home:** `shivakasula/portfolio-allocation-capstone-project` (private; the repo was created under
+`abhyudayb-1` and later transferred, so older notes name the old owner). Working copy on Person A's
+machine is `D:\Project 15`; local `main` tracks `origin/main`.
 
 **Conventions are inherited from `abhyudayb-1/sp500-factor-backtester`,** which is mature and
 sets the house style: `src/` module-per-stage pipeline, `config.py` as the single source of
@@ -48,6 +71,8 @@ src/riskparity.py   risk_contributions(), solve_erc(), naive_inv_vol()
 src/overlay.py      trailing vol estimate -> leverage -> caps -> financing cost
 src/backtest.py     monthly rebalance loop, daily accrual, weight/leverage/RC history
 src/metrics.py      PORTED from sp500-factor-backtester + crisis-window helpers
+src/riskmetrics.py  VaR/CVaR, Sortino, Calmar, drawdown duration, the shared metric table
+src/headtohead.py   one return series against another: correlation, beta, capture, tail block
 src/benchmarks.py   equal-weight, 60/40, max-Sharpe (cvxpy), naive 1/vol risk parity
 src/stress.py       crisis decomposition, drawdown table, correlation-regime diagnostics
 src/viz.py          the report charts: four PNGs (the crisis table is the fifth deliverable, a CSV from stress.py)
@@ -56,6 +81,10 @@ tests/fixtures.py   synthetic BacktestResult generator — B's unblocking mechan
 tests/test_riskparity.py   ERC math + B's independent convex oracle
 tests/test_lookahead.py    proves no rebalance reads future data
 ```
+
+`riskmetrics.py` and `headtohead.py` were salvaged out of two removed products and **have no
+caller yet**; Phase 8 is what wires them in. See their module docstrings before deleting either as
+unreferenced.
 
 ### Reuse, don't rewrite
 
@@ -229,12 +258,98 @@ question lives — whether 2022 was an episode or a regime change.
 .\.venv\Scripts\python.exe tests\test_riskparity.py   # ERC identity + convex oracle agreement
 .\.venv\Scripts\python.exe tests\test_lookahead.py    # no rebalance reads future data
 .\.venv\Scripts\python.exe run_backtest.py            # full run -> reports/
-.\.venv\Scripts\python.exe run_backtest.py --start 2021-01-01 --no-cache-refresh   # fast smoke
+.\.venv\Scripts\python.exe run_backtest.py --start 2021-01-01 --no-charts        # fast smoke
 ```
 
 Done means: `Σ RC_i = σ_p` holds to 1e-10; SLSQP and convex solutions agree to 1e-6; every
-rebalance provably uses only past data; the crisis table reproduces the known signs (risk
-parity wins 2008/2020, loses 2022); and the report artifacts land in `reports/` — four PNGs (RC
+rebalance provably uses only past data; the crisis table reproduces the **measured** rankings —
+and note that an earlier draft of this line predicted the wrong ones. Risk parity beats 60/40 in
+2008 (−25.4% vs −29.9%) and 2022 (−17.7% vs −25.8%), but it is the **worst of all five strategies
+in COVID at −29.10%**, because the overlay walked in at 2.33x. "Risk parity wins the crises" is not
+what the data says. Finally, the report artifacts land in `reports/` — four PNGs (RC
 stacked area, capital-vs-risk weight comparison, leverage time series, and the rolling correlation
 drawn with the diversification ratio) plus the crisis drawdown table as a CSV. (Planned as five
 charts; the correlation and diversification ratio share one figure, and the table is a CSV.)
+
+---
+
+## Phase 8 — The matched-risk ERC vs 1/N comparison (the current work)
+
+Everything above describes the engine. This phase is the comparison the project now exists to
+make, and it is the first phase whose numbers are already measured but **not yet reproducible from
+anything in `src/`** — which is the gap step 53 closes. `TASKS.md` Phase 8 has the numbered steps;
+this section is the design and the measurements that constrain it.
+
+### What has to be compared, and why three columns rather than two
+
+| Column | What it is | Why it is there |
+| --- | --- | --- |
+| **1/N** | equal capital, 25% a sleeve, rebalanced monthly | the naive rule being argued against |
+| **ERC unlevered** | equal risk contribution, no leverage | the allocation claim on its own, at its own volatility |
+| **ERC at 1/N's volatility** | the same ERC weights, levered by the overlay to 1/N's realized vol, **financing charged** | the only column whose *return* is comparable to 1/N's |
+
+Two reference rows stay alongside: **naive 1/σ** (risk parity without correlations — it is the
+control that says how much of ERC's edge comes from the solver at all) and **60/40**.
+
+A fourth, diagnostic row is required and must be labelled as counterfactual: **ERC at 1/N's
+volatility with the financing leg omitted.** It is not a strategy anyone can run. It exists because
+the difference between it and the row above is the cost of leverage, and that difference is one of
+the three findings.
+
+### Measured already, by a scan, and the implementation must reproduce these
+
+Run on live data through **2026-10-30**, 237 rebalances, 4,950 return days, using `run_backtest`,
+`benchmarks.equal_weight`, `overlay.unlevered_returns` / `financed_returns` and
+`metrics.summarize` — no new estimator, no hand-rolled alignment:
+
+| | CAGR | vol | return/vol | max drawdown | mean leverage |
+| --- | --- | --- | --- | --- | --- |
+| ERC unlevered | 5.12% | 6.90% | **0.759** | −17.15% | 1.00x |
+| Naive 1/σ | 4.86% | 6.64% | 0.747 | −16.69% | 1.00x |
+| 1/N (equal weight) | 5.79% | 8.35% | **0.716** | −28.09% | 1.00x |
+| Max Sharpe | 6.73% | 10.48% | 0.674 | −26.59% | 1.00x |
+| 60/40 | 8.59% | 11.44% | 0.778 | −29.92% | 1.00x |
+| ERC @ 10% target, financed | 7.14% | 11.25% | 0.669 | −29.10% | 1.76x |
+| ERC @ 10% target, financing omitted | 8.32% | 11.25% | 0.767 | −29.05% | 1.76x |
+| **ERC @ 1/N's vol, financed** | 6.28% | 9.40% | **0.696** | −24.85% | 1.47x |
+| ERC @ 1/N's vol, financing omitted | 7.00% | 9.40% | 0.767 | −24.81% | 1.47x |
+
+**Three findings, and the second is the one the project leads with:**
+
+1. **Equal risk is a better risk allocation.** ERC hits 25% risk a sleeve to 1.6e-07 while its
+   capital runs SPY 20.0% / TLT 21.8% / DBC 16.3% / TIP 41.9%. 1/N holds capital flat and lets risk
+   go where it likes: SPY's risk share spans **8.9% to 60.3%** (mean 32.9%), DBC's averages
+   **41.8%**, TIP's **9.0%**, and TLT's turns **negative** (−6.3%) in some months. Worst
+   single-sleeve risk concentration 1/N reaches: **66.5%**. In effective bets (`1 / Σ RCᵢ²`),
+   **ERC 4.00 against 1/N 2.83** out of a possible 4.00.
+2. **Equalizing risk wins on risk-adjusted return until the leverage is paid for.** Unlevered,
+   0.759 against 0.716 and a drawdown of −17.2% against −28.1%, for 67 bp/yr less return. Levered
+   to 1/N's own volatility with the real T-bill charged: **0.696, below 1/N**. With the financing
+   leg omitted: 0.767, above it. State both.
+3. **Most of ERC's edge is the volatility scaling, not the correlation structure.** Naive 1/σ
+   reaches 0.747 of ERC's 0.759 with no optimizer, no gradient and no restart ladder. The ERC
+   solver is worth about one point of return-to-vol over inverse-volatility weighting on this
+   universe. That is a real result about this project's own mathematical core and it is not
+   flattering to it.
+
+### Two measurement traps, both already hit once
+
+- **The overlay overshoots its target by a consistent ~12.5%.** A 10% target realized 11.25%; an
+  8.355% target realized 9.40%. So "ERC at 1/N's volatility" via the overlay lands at 9.40%, not
+  8.35%, and the comparison is approximately rather than exactly matched. The implementation must
+  either say so plainly next to the table or solve for the target that realizes 1/N's vol. Do not
+  describe it as exactly matched.
+- **Re-running the engine at a different `target_vol` does not change the weights.** Verified:
+  `m.weights.equals(eng.weights)` is `True`. The target and the cap feed the leverage path only,
+  never the ERC solve, which is what makes a matched-risk column cheap — one extra engine run, not
+  a redesign. It is also why `TASKS.md` step 49's browser explorer is sound.
+
+### What this phase must not do
+
+- **Do not hand-roll the overlay or the one-day alignment** to build the matched column. Call
+  `run_backtest(returns, risk_free=rf, target_vol=...)` and let `backtest.py` own it — see
+  `AGENTS.md`/`CLAUDE.md` under `backtest.py`.
+- **Do not run a rule only on a sub-window** and compare. Run full history, slice afterwards; a
+  shorter start changes the covariance warm-up and therefore the weights.
+- **Do not reuse `README.md`'s 2026-07-31 figures in the same table as these.** One data date per
+  table, named.

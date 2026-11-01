@@ -5,4 +5,3 @@ cvxpy>=1.4
 yfinance>=0.2.40
 requests>=2.31
 matplotlib>=3.7
-seaborn>=0.13
