@@ -13,12 +13,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > | | Status |
 > |---|---|
 > | The four-sleeve ERC engine, overlay, benchmarks, stress, charts (steps 1–35, `v1.0`/`v1.2`) | **kept — this is the project** |
-> | `src/riskmetrics.py`, `src/headtohead.py` | **kept, no caller yet** — salvaged for Phase 8 |
+> | `src/riskmetrics.py`, `src/headtohead.py` | **kept** — salvaged for Phase 8, and `src/comparison.py` consumes both now |
+> | `src/comparison.py` (step 53) | **the study itself** — reproduces every row of `PLAN.md`'s Phase 8 table |
 > | Incremental position analysis, "add one stock to the book" (steps 36–43, `v1.1`/`v1.3`) | **REMOVED** — see its section below |
 > | Head-to-head against a ticker (step 44, `v1.4`) | **REMOVED** — see its section below |
 > | `web/` — the research site | **on `main` now**, with four non-research features removed; see "The website" below |
 > | `TASKS.md` Phase 7 (website, steps 45–52) | **re-scoped** — steps 46 and 51 struck; that file carries the note |
-> | `TASKS.md` Phase 8 (steps 53–60) | **the new work** — the matched-risk ERC-vs-1/N comparison and its sensitivities |
+> | `TASKS.md` Phase 8 (steps 53–60) | **in progress** — step 53 done; 54–60 are the remaining work |
 >
 > Rows below are left as they landed, because `git log` records the same thing and the code stays
 > reachable at its tags. Where a row describes removed work, a note says so.
@@ -175,10 +176,11 @@ rate shock. Two construction rules are the protagonists — **equal risk contrib
 make risk parity look bad are stated plainly, not hidden; that is the whole reason the repo exists
 in this shape.
 
-The study has three parts, and each has a measured answer. **These numbers come from a scan run on
-data through 2026-10-30 and are not yet reproducible from a CLI** — closing that gap is the next
-piece of work (see `TASKS.md` Phase 8). `README.md`'s Results section is a separate, older snapshot
-(through 2026-07-31); do not mix the two in one table.
+The study has three parts, and each has a measured answer. **`src/comparison.py`'s
+`compare_rules()` reproduces every one of these numbers** (step 53; data through 2026-10-30, 237
+rebalances, 4,950 return days) — what it does not yet have is a CLI, which is step 56.
+`README.md`'s Results section is a separate, older snapshot (through 2026-07-31); do not mix the
+two in one table.
 
 1. **Risk allocation — what risk does each rule actually take?** ERC hits equal risk to 1.6e-07
    at every rebalance while its *capital* swings from 16% to 42% a sleeve. 1/N holds capital flat
@@ -300,10 +302,11 @@ To resume in a new session: steps 1–44 were built, then the repo was **cut bac
 (see "What this is"). Phase 6's incremental position analysis and the head-to-head against a
 ticker are both removed; `PLAN.md` is now purely the Phases 0–5 design plus the Phase 8 spec,
 `TASKS.md` Phases 0–5 are untouched, its Phase 7 is re-scoped, and **`TASKS.md` Phase 8
-(steps 53–60) is the work to pick up.** Step 53 is the one that matters most: the comparison
-numbers quoted in "What this is" were measured by a scan and **nothing in `src/` reproduces them
-yet**, which is exactly the kind of unreproducible figure this project does not tolerate
-elsewhere. Start there.
+(steps 53–60) is the work to pick up, and step 53 is done** — `src/comparison.py` now reproduces
+every row of `PLAN.md`'s Phase 8 table, so the figures in "What this is" are no longer
+unreproducible. **Step 54 (the risk-allocation block and effective bets) is next**, then 55's
+suite and 56's CLI. Step 58's sensitivities are the ones most likely to be uncomfortable; run them
+before the write-up, not after.
 The fastest way back into the engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command.
@@ -488,9 +491,10 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
 .venv/bin/python -m src.viz           # the four charts from fixtures, into a temp dir (never reports/)
+.venv/bin/python -m src.comparison    # step 53: the whole comparison from fixtures, 11 checks; offline
 ```
 
-Run every suite after any change to `src/`. **All nine test suites and all seven module
+Run every suite after any change to `src/`. **All nine test suites and all eight module
 self-checks run offline, with no exceptions** — verified by patching `socket.connect` /
 `create_connection` / `getaddrinfo` to raise and re-running each one, not by assumption.
 `src/data.py` imports `requests`, so the import graph touches the network stack, but nothing under

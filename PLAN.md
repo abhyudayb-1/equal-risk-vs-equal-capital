@@ -300,7 +300,9 @@ the three findings.
 
 Run on live data through **2026-10-30**, 237 rebalances, 4,950 return days, using `run_backtest`,
 `benchmarks.equal_weight`, `overlay.unlevered_returns` / `financed_returns` and
-`metrics.summarize` — no new estimator, no hand-rolled alignment:
+`metrics.summarize` — no new estimator, no hand-rolled alignment. **Step 53 has since landed and
+`comparison.compare_rules()` reproduces every row below**, which is how the one error in this
+table was found: 60/40's ratio is 0.777, not the 0.778 an earlier draft carried.
 
 | | CAGR | vol | return/vol | max drawdown | mean leverage |
 | --- | --- | --- | --- | --- | --- |
@@ -308,7 +310,7 @@ Run on live data through **2026-10-30**, 237 rebalances, 4,950 return days, usin
 | Naive 1/σ | 4.86% | 6.64% | 0.747 | −16.69% | 1.00x |
 | 1/N (equal weight) | 5.79% | 8.35% | **0.716** | −28.09% | 1.00x |
 | Max Sharpe | 6.73% | 10.48% | 0.674 | −26.59% | 1.00x |
-| 60/40 | 8.59% | 11.44% | 0.778 | −29.92% | 1.00x |
+| 60/40 | 8.59% | 11.44% | 0.777 | −29.92% | 1.00x |
 | ERC @ 10% target, financed | 7.14% | 11.25% | 0.669 | −29.10% | 1.76x |
 | ERC @ 10% target, financing omitted | 8.32% | 11.25% | 0.767 | −29.05% | 1.76x |
 | **ERC @ 1/N's vol, financed** | 6.28% | 9.40% | **0.696** | −24.85% | 1.47x |
@@ -331,6 +333,31 @@ Run on live data through **2026-10-30**, 237 rebalances, 4,950 return days, usin
    solver is worth about one point of return-to-vol over inverse-volatility weighting on this
    universe. That is a real result about this project's own mathematical core and it is not
    flattering to it.
+
+### What step 53 found that the old framing had hidden
+
+Measuring ERC against **1/N** rather than against 60/40 reverses one of the project's
+crisis conclusions. Unlevered ERC against equal capital, per window, measured from the peak close:
+
+| Window | ERC return | ERC max DD | 1/N return | 1/N max DD |
+| --- | --- | --- | --- | --- |
+| GFC (2008) | −5.15% | −16.91% | −16.16% | −28.09% |
+| COVID (2020) | −8.91% | −14.18% | −12.63% | −16.53% |
+| **Rate shock (2022)** | **−14.28%** | **−16.82%** | **−12.25%** | **−16.33%** |
+
+ERC wins the GFC and COVID comfortably and **loses 2022 on both return and drawdown.** The old
+write-up reported 2022 as a win, because it compared against 60/40 (−17.72% vs −25.83%) — and
+against 60/40 it *is* a win. Against the rule this project actually argues with, it is not.
+
+The mechanism is the same one `TASKS.md`'s data reality check records, read from the other side:
+DBC returned **+21.4%** over that window and was the only sleeve that worked. Equal capital holds
+DBC at 25%; ERC holds it at **16.3%** of capital on average, because commodities are the most
+volatile sleeve and equal *risk* therefore means less *money* there. In 2022 the naive rule
+accidentally held more of the one thing that paid. That is a real limitation of equalising risk,
+not a quirk: the sleeve with the highest volatility is the sleeve ERC underweights by
+construction, and sometimes high volatility is where the return is.
+
+Report it. It belongs beside the three findings, not behind them.
 
 ### Two measurement traps, both already hit once
 

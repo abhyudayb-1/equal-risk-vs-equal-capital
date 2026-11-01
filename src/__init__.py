@@ -18,17 +18,19 @@ Pipeline, in order, one module per stage:
 ``run_backtest.py`` wires it end to end. See TASKS.md for build order and
 ownership, PLAN.md for the design rationale.
 
-Two further modules sit beside that pipeline rather than in it, and **nothing
-calls either of them yet**:
+Three further modules sit beside that pipeline rather than in it:
 
     riskmetrics.py  VaR/CVaR, Sortino, Calmar, drawdown duration, and the
                     shared metric table -- new code beside the metrics.py port
     headtohead.py   one return series against another: correlation, beta,
                     capture, the tail block, the crisis table
+    comparison.py   the study itself: equal risk against equal capital, with
+                    ERC also levered to 1/N's own volatility so the returns are
+                    comparable and the financing is counted
 
-They are held, with their own suites green, for the matched-risk
-equal-risk-against-equal-capital comparison this project is being cut back to.
-See CLAUDE.md / AGENTS.md before deleting either as unreferenced.
+``comparison.py`` is what the other two were salvaged for; it consumes both and
+runs the engine a second time at 1/N's volatility to build its matched column.
+``compare_rules.py`` (step 56) will be its CLI.
 
 The invariant that must never be violated: at rebalance date ``t``, only data
 timestamped ``<= t`` may be used -- covariance, volatility estimate and
