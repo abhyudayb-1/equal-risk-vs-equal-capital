@@ -21,7 +21,7 @@ fixtures and on live data. The engine run and the data fetching live in
 *then* cut to the overlap window, so its weights and leverage at any date never
 depend on when the ticker happened to start trading.
 
-The metrics come from :mod:`src.incremental` (``risk_summary`` and its table
+The metrics come from :mod:`src.riskmetrics` (``risk_summary`` and its table
 formatter), so the two reports print the same rows the same way. What is new here
 is the *relative* block -- correlation, beta, tracking error, up/down capture and
 what the strategy did on the ticker's worst days -- and the crisis-window table.
@@ -55,7 +55,7 @@ from .config import (
     VAR_CONFIDENCE,
 )
 from .data import DataUnavailableError
-from .incremental import format_metric_table, historical_var, realized_risk_table
+from .riskmetrics import format_metric_table, historical_var, realized_risk_table
 from .metrics import _ZERO_VARIANCE_EPS, resolve_window, summarize
 
 log = logging.getLogger(__name__)
@@ -229,7 +229,7 @@ class TickerComparison:
 
     ``series`` is the aligned daily returns the other tables were computed from,
     kept so a caller (or a test) can recompute anything here independently.
-    ``summary`` is :func:`src.incremental.realized_risk_table`'s frame, one row
+    ``summary`` is :func:`src.riskmetrics.realized_risk_table`'s frame, one row
     per column of ``series``. ``relative`` and ``tail`` are indexed by the
     risk-parity columns only; the ticker is the thing they are measured against.
     """

@@ -434,9 +434,9 @@ project's existing "a year of daily data is the least we trust" floor), not the 
 
 ### What is computed
 
-- **Risk and return** for all three columns via `incremental.risk_summary` (volatility, max drawdown and
+- **Risk and return** for all three columns via `riskmetrics.risk_summary` (volatility, max drawdown and
   dates, longest drawdown, VaR/CVaR at `VAR_CONFIDENCE`, worst day, downside deviation, Sortino, Calmar,
-  skew, kurtosis, CAGR, Sharpe), formatted by `incremental.format_metric_table` so this report and
+  skew, kurtosis, CAGR, Sharpe), formatted by `riskmetrics.format_metric_table` so this report and
   Phase 6's print identical rows.
 - **Relative metrics** for each risk-parity column against the ticker: correlation; beta
   `cov(s, t) / var(t)`; tracking error (annualised std of the daily difference); and up/down capture

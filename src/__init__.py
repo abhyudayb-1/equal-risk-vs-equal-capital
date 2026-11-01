@@ -11,6 +11,8 @@ Pipeline, in order, one module per stage:
     overlay.py      volatility targeting, leverage caps, financing cost
     backtest.py     monthly rebalance loop -> BacktestResult
     metrics.py      Sharpe, CAGR, drawdown, crisis-window slices
+    riskmetrics.py  VaR/CVaR, Sortino, Calmar, drawdown duration, the shared
+                    metric table -- new code beside the metrics.py port
     benchmarks.py   equal-weight, 60/40, max-Sharpe, naive 1/vol
     stress.py       crisis decomposition, correlation-regime diagnostics
     viz.py          the report charts
