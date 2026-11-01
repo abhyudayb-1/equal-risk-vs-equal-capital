@@ -11,7 +11,7 @@ tracking error, up/down capture, what the strategy did on the ticker's worst
 days, and the crisis windows. See ``src/compare.py`` for what each number means
 and PLAN.md's "Phase 7" section for why it is built this way. This file owns none
 of that: it parses arguments, fetches, runs, and prints, the same "wiring only"
-role ``run_backtest.py`` and ``analyze_position.py`` play.
+role ``run_backtest.py`` plays.
 
 Run it::
 

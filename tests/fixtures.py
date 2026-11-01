@@ -245,12 +245,6 @@ def make_fake_returns(
     return pd.DataFrame(out, index=index, columns=tickers)
 
 
-def make_fake_prices(**kwargs) -> pd.DataFrame:
-    """Price levels implied by :func:`make_fake_returns`, all starting at 100."""
-    returns = make_fake_returns(**kwargs)
-    return 100.0 * (1.0 + returns).cumprod()
-
-
 def make_fake_risk_free(
     start: str = config.DATA_START_DATE,
     end: str = DEFAULT_END_DATE,

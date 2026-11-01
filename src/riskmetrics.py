@@ -1,11 +1,13 @@
 """Realized risk and return metrics for a periodic return series.
 
-Carved out of ``src/incremental.py``, which is where these functions were
-first written and where their only consumer then lived. Nothing in them is
-specific to that analysis: every one is a pure function of a return series,
-and any comparison of two books -- an equal-risk allocation against an
-equal-capital one, a levered book against its unlevered self -- needs the
-same rows.
+Every function here is a pure function of a return series, so any comparison
+of two books -- an equal-risk allocation against an equal-capital one, a
+levered book against its unlevered self -- can use the same rows. They were
+written for the incremental position analysis that used to live in
+``src/incremental.py`` (reachable at tag ``v1.3``) and were pulled out into
+this module when a second report needed them; that analysis has since been
+removed and these outlived it, which is the reason they are their own module
+rather than part of any one report.
 
 **Why these live here and not in ``src/metrics.py``.** ``metrics.py`` is a
 deliberate verbatim port from ``abhyudayb-1/sp500-factor-backtester`` and must
