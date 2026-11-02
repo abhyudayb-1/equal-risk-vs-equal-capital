@@ -197,9 +197,8 @@ a CI run to read its evidence from, and there is no `.github/` on `main`. And th
 on "starts only after PR #62 is merged", which will not happen: #62 predates the cleanup and
 restores four features and two products that no longer exist.
 
-**Reachable, not destroyed.** The `web/` tree and the full Phase 7 text are in the history of
-`shivakasula/portfolio-allocation-capstone-project` and in this repository's own log before the
-removal commit.
+**Reachable, not destroyed.** The `web/` tree and the full Phase 7 text are in this repository's
+own history, in the commit before the one that removed them.
 
 **The two ideas worth carrying forward are in Phase 9 below**, rewritten rather than copied: the
 export has to emit *the study* rather than the old engine-against-benchmarks run, and the browser

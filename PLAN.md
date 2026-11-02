@@ -42,8 +42,11 @@ work was divided, not as a rule still in force.
 **Home:** `abhyudayb-1/equal-risk-vs-equal-capital` (private). Working copy is
 `D:\Project 15`; local `main` tracks `origin/main`.
 
-The project lived at `shivakasula/portfolio-allocation-capstone-project` through
-`v2.0` and was copied here as a clean repository -- not a fork -- with full history and every tag.
+The project lived at `shivakasula/portfolio-allocation-capstone-project` through `v2.0` and was
+copied here as a clean repository -- not a fork -- with full history and all seven tags. **Nothing
+depends on that repository any more**: every tagged commit is an ancestor of `main` here, so the
+removed products and the deleted `web/` tree are reachable from this clone alone. It is provenance,
+not a place to look things up.
 **Two consequences worth knowing before reading a reference in these documents.** Pull-request
 numbers (`PR #52`, `#71`, and the `Merge pull request #NN` subjects throughout `git log`) are the
 *original* repository's numbering and do not correspond to anything here; they remain the accurate

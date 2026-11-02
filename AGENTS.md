@@ -25,10 +25,14 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 > reachable at its tags. Where a row describes removed work, a note says so.
 
 **Where this lives now.** `abhyudayb-1/equal-risk-vs-equal-capital` (private), a clean copy --
-not a fork -- of `shivakasula/portfolio-allocation-capstone-project`, which is where the project
-was built through `v2.0`. Full history and every tag came across. **It is continued by one person**;
-the two-person conventions that built Phases 0-5 are retired and "Working style" at the bottom says
-exactly what replaced them and what was deliberately kept.
+not a fork -- of `shivakasula/portfolio-allocation-capstone-project`, where the project was built
+through `v2.0`. **This repository is self-contained:** full history and all seven tags came across,
+every tagged commit is an ancestor of `main`, and every piece of removed work -- Phase 6, the
+ticker comparison, the `web/` tree -- is reachable from this clone alone. The old repository is
+where this came from, not somewhere you need to go.
+
+**It is continued by one person**; the two-person conventions that built Phases 0-5 are retired,
+and "Working style" at the bottom says exactly what replaced them and what was deliberately kept.
 
 **Pull-request numbers in this file -- `PR #52`, `#71`, and the `Merge pull request #NN` subjects
 in `git log` -- are the ORIGINAL repository's numbering** (`shivakasula/portfolio-allocation-capstone-project`,
@@ -399,8 +403,10 @@ tested; it is simply not this project's question. Single-name idiosyncratic risk
 multi-asset portfolio construction, and the project's bottom line is equal *risk* against equal
 *capital* across a multi-asset book.
 
-**Reachable, not destroyed:** tag `v1.1` has Phase 6 as shipped, `v1.3` adds step 43's realized
-risk, and both PRs' diffs stay on GitHub. `git show v1.3:src/incremental.py` brings it back.
+**Reachable, not destroyed, and reachable from here:** tag `v1.1` has Phase 6 as shipped and
+`v1.3` adds step 43's realized risk. Both tags came across with the repository, so
+`git show v1.3:src/incremental.py` brings it back out of *this* clone -- no other repository
+required.
 
 **What was kept, because it outlived the feature:** `src/riskmetrics.py` (historical VaR/CVaR,
 downside deviation, Sortino, Calmar, drawdown duration, `risk_summary`, `realized_risk_table`,
@@ -431,9 +437,9 @@ same book unlevered, the ticker), with relative metrics, a tail block and crisis
 Phase 6 it worked; like Phase 6 it answers a different question than "equal risk against equal
 capital across a multi-asset book."
 
-**Reachable, not destroyed:** tag `v1.4`. `git show v1.4:src/compare.py` and
-`git show v1.4:compare_ticker.py` bring it back, and `git show v1.4:src/data.py` has the ticker
-fetch.
+**Reachable, not destroyed, and reachable from here:** tag `v1.4`.
+`git show v1.4:src/compare.py` and `git show v1.4:compare_ticker.py` bring it back out of this
+clone, and `git show v1.4:src/data.py` has the ticker fetch.
 
 **What was kept:** `src/headtohead.py` (relative metrics, tail block, crisis table, both printed
 forms) and `src/riskmetrics.py`. **Both have a production caller again as of step 53**:
@@ -492,8 +498,8 @@ scratch rather than retrofit it.
 - **Nothing depended on it.** No module under `src/`, no test and neither CLI referenced `web/`;
   only the four documents mentioned it. Deleting it broke nothing, verified rather than assumed.
 
-**Reachable, not destroyed:** it is in this repository's history before the removal commit, and in
-`shivakasula/portfolio-allocation-capstone-project`.
+**Reachable, not destroyed:** `git show <removal-commit>~1:web/export_data.py` and the rest of
+the tree are in this repository's own history, before the commit that deleted it.
 
 **What replaces it is `TASKS.md` Phase 9 (steps 61–65)**, which starts from the export rather than
 from a framework. Two things carried forward rather than copied: the export must emit *the study*
