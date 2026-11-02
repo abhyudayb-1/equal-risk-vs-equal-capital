@@ -17,7 +17,7 @@ volatility and return. Every step is one branch and ends in one pushed PR.
 
 **The project is continued by one person** (`abhyudayb-1`) in a repository they own. Steps 1–35
 carry an **Owner** column recording who built each one, back when Person A (`abhyudayb-1`, engine)
-and Person B (`shivakasula`, analysis) worked in parallel on separate machines. **That split
+and Person B (the analysis layer) worked in parallel on separate machines. **That split
 stopped binding at step 32**; Phases 6–8 name a branch per step and no owner, and nothing revives
 it. The column stays as the record of who did what — see `PLAN.md` for why one of those
 attributions is load-bearing rather than decorative.
@@ -194,8 +194,8 @@ one gap: **the site showed less than the project computed.** Phase 8 closed it f
 — `compare_rules.py` now prints every row the site was missing, and `README.md` carries the
 overlay-lag figures — so steps 45 and 47 were answering a question that had moved. Step 48 needed
 a CI run to read its evidence from, and there is no `.github/` on `main`. And the phase was gated
-on "starts only after PR #62 is merged", which will not happen: #62 predates the cleanup and
-restores four features and two products that no longer exist.
+on a pull request that was never merged and never will be — an unmerged draft of the site that
+predated the cleanup and would have restored four features and two products that no longer exist.
 
 **Reachable, not destroyed.** The `web/` tree and the full Phase 7 text are in this repository's
 own history, in the commit before the one that removed them.

@@ -42,17 +42,14 @@ work was divided, not as a rule still in force.
 **Home:** `abhyudayb-1/equal-risk-vs-equal-capital` (private). Working copy is
 `D:\Project 15`; local `main` tracks `origin/main`.
 
-The project lived at `shivakasula/portfolio-allocation-capstone-project` through `v2.0` and was
-copied here as a clean repository -- not a fork -- with full history and all seven tags. **Nothing
-depends on that repository any more**: every tagged commit is an ancestor of `main` here, so the
-removed products and the deleted `web/` tree are reachable from this clone alone. It is provenance,
-not a place to look things up.
-**Two consequences worth knowing before reading a reference in these documents.** Pull-request
-numbers (`PR #52`, `#71`, and the `Merge pull request #NN` subjects throughout `git log`) are the
-*original* repository's numbering and do not correspond to anything here; they remain the accurate
-record of what landed and in what order, which is what they were ever for. And the `web/` tree,
-which held its own dated evidence and CI-run links pointing at the old repository, has since been
-deleted — `TASKS.md` Phase 9 rebuilds the site from the export up.
+**This repository is self-contained.** Full history and all seven tags are here and every tagged
+commit is an ancestor of `main`, so the removed products and the deleted `web/` tree come back out
+of this clone with `git show`. Nothing needs fetching from anywhere else.
+
+One artifact of how it started: twelve merge commits carry `Merge pull request #NN` subjects whose
+numbers belonged to a different repository and resolve to nothing here. They cannot be rewritten
+without breaking every tag. **The commit SHAs in `AGENTS.md`/`CLAUDE.md`s ledger are the reference
+that works.**
 
 **Conventions are inherited from `abhyudayb-1/sp500-factor-backtester`,** which is mature and
 sets the house style: `src/` module-per-stage pipeline, `config.py` as the single source of
@@ -63,7 +60,7 @@ README, keyless data sources only, `reports/` for generated PNG/CSV.
 
 ## How the work was divided — history, not a current rule
 
-| | **Person A — Engine** (`abhyudayb-1`) | **Person B — Analysis** (`shivakasula`) |
+| | **Person A — Engine** | **Person B — Analysis** |
 |---|---|---|
 | Owned | `data.py`, `covariance.py`, `riskparity.py`, `overlay.py`, `backtest.py`, `cache.py` | `metrics.py`, `benchmarks.py`, `stress.py`, `viz.py`, `tests/`, `run_backtest.py`, `README.md` |
 | Theme | producing weights and returns | judging and explaining them |

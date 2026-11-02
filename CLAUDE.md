@@ -24,21 +24,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > Rows below are left as they landed, because `git log` records the same thing and the code stays
 > reachable at its tags. Where a row describes removed work, a note says so.
 
-**Where this lives now.** `abhyudayb-1/equal-risk-vs-equal-capital` (private), a clean copy --
-not a fork -- of `shivakasula/portfolio-allocation-capstone-project`, where the project was built
-through `v2.0`. **This repository is self-contained:** full history and all seven tags came across,
-every tagged commit is an ancestor of `main`, and every piece of removed work -- Phase 6, the
-ticker comparison, the `web/` tree -- is reachable from this clone alone. The old repository is
-where this came from, not somewhere you need to go.
+**Home:** `abhyudayb-1/equal-risk-vs-equal-capital` (private), and **it is self-contained.** Full
+history and all seven tags are here, every tagged commit is an ancestor of `main`, and every piece
+of removed work -- Phase 6, the ticker comparison, the `web/` tree -- is reachable from this clone
+alone with `git show`. Nothing to fetch from anywhere else.
 
 **It is continued by one person**; the two-person conventions that built Phases 0-5 are retired,
 and "Working style" at the bottom says exactly what replaced them and what was deliberately kept.
 
-**Pull-request numbers in this file -- `PR #52`, `#71`, and the `Merge pull request #NN` subjects
-in `git log` -- are the ORIGINAL repository's numbering** (`shivakasula/portfolio-allocation-capstone-project`,
-where this project lived through `v2.0`). They do not correspond to anything in this repository,
-which was started as a clean copy with full history. They are still the accurate record of what
-landed and in what order.
+**One artifact of how this repository started that cannot be cleaned, so read it correctly:**
+twelve merge commits in `git log` carry subjects of the form `Merge pull request #NN from
+<branch>`. Those numbers belonged to a different repository's pull requests and resolve to nothing
+here. Rewriting them would mean rewriting every commit they sit in, which would break all seven
+tags -- so they stay, and **the SHAs beside each ledger row below are the reference that works.**
 
 **`git log --oneline` is the truth; this table is a convenience that goes stale.** Commit subjects
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
@@ -152,7 +150,7 @@ for each book. Like Phase 6 it is not on `TASKS.md`, so this row is its only led
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
-| 43 | A | `de61034` (PR #52, merged `4a03e34`) | Realized before/after risk in `src/incremental.py`: a constant-weight replay of the baseline book, the book with the stock at each candidate weight, and the stock alone, with max drawdown and its dates, longest drawdown (flagged open), historical VaR/CVaR at 95%, worst day, downside deviation, Sortino, Calmar, skew, excess kurtosis, and a change-vs-baseline table. `config.py` gains `VAR_CONFIDENCE` only. `tests/test_incremental.py` goes from 40 to **76** checks. |
+| 43 | A | `de61034`, merged `4a03e34` | Realized before/after risk in `src/incremental.py`: a constant-weight replay of the baseline book, the book with the stock at each candidate weight, and the stock alone, with max drawdown and its dates, longest drawdown (flagged open), historical VaR/CVaR at 95%, worst day, downside deviation, Sortino, Calmar, skew, excess kurtosis, and a change-vs-baseline table. `config.py` gains `VAR_CONFIDENCE` only. `tests/test_incremental.py` goes from 40 to **76** checks. |
 
 Removed along with the rest of Phase 6 — see the note above and the section below. The realized
 risk metrics it introduced are the part that survived, now in `src/riskmetrics.py`.
@@ -162,8 +160,8 @@ its own PR, with no change to any number, formula or design decision:
 
 | What it produced | Landed as |
 | --- | --- |
-| `src/data.py` / `src/config.py`: removed an unused `import numpy as np` and the unreferenced `BENCHMARK_TICKER` constant, found by scanning every module for imports and config constants with no reference in code or docs. Deliberately kept: the unreferenced helpers in `src/cache.py` and `metrics.cumulative_curve`, because both files are documented verbatim ports that must not be rewritten. | `b226867` (PR #54) |
-| `src/viz.py` / `src/stress.py`: the `python -m` self-checks wrote fixture output into `reports/`, silently replacing the tracked real charts and `crisis_drawdowns.csv`; they now render into a temporary directory. `CLAUDE.md`'s claim that `reports/` is gitignored was corrected (see "Architecture"). | `1f93dfc` (PR #55) |
+| `src/data.py` / `src/config.py`: removed an unused `import numpy as np` and the unreferenced `BENCHMARK_TICKER` constant, found by scanning every module for imports and config constants with no reference in code or docs. Deliberately kept: the unreferenced helpers in `src/cache.py` and `metrics.cumulative_curve`, because both files are documented verbatim ports that must not be rewritten. | `b226867` |
+| `src/viz.py` / `src/stress.py`: the `python -m` self-checks wrote fixture output into `reports/`, silently replacing the tracked real charts and `crisis_drawdowns.csv`; they now render into a temporary directory. `CLAUDE.md`'s claim that `reports/` is gitignored was corrected (see "Architecture"). | `1f93dfc` |
 
 **`v1.4` is tagged (step 44).** New scope at the time: `run_backtest.py` compares the strategy
 only against four fixed, unlevered benchmarks, so there was no way to ask how the strategy did
@@ -173,7 +171,7 @@ Like Phase 6 and step 43 it is not on `TASKS.md`, so this row is its only ledger
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
-| 44 | A | `bc1209d` and `e4fcdc6` (PR #58, merged `f1cf95d`) | `src/compare.py` + `compare_ticker.py`: the levered strategy, the same book unlevered, and the ticker on their overlap window, with the full risk-metric set, relative metrics (correlation, beta, tracking error, up/down capture), a tail block (the strategy on the ticker's worst 5% of days) and crisis windows. New `data.fetch_ticker_prices`. `config.py` gains `COMPARE_MIN_OVERLAP_DAYS`, `COMPARE_MIN_CALENDAR_MATCH`, `COMPARE_CALENDAR_WARN_BELOW`. New `tests/test_compare.py` (**61** checks); `tests/test_data.py` 35 → **49**. |
+| 44 | A | `bc1209d` and `e4fcdc6`, merged `f1cf95d` | `src/compare.py` + `compare_ticker.py`: the levered strategy, the same book unlevered, and the ticker on their overlap window, with the full risk-metric set, relative metrics (correlation, beta, tracking error, up/down capture), a tail block (the strategy on the ticker's worst 5% of days) and crisis windows. New `data.fetch_ticker_prices`. `config.py` gains `COMPARE_MIN_OVERLAP_DAYS`, `COMPARE_MIN_CALENDAR_MATCH`, `COMPARE_CALENDAR_WARN_BELOW`. New `tests/test_compare.py` (**61** checks); `tests/test_data.py` 35 → **49**. |
 
 Removed — see its section below for what was kept out of it and the three rules from it that
 still apply to surviving code.
@@ -901,7 +899,7 @@ Keyless sources only, so anyone can clone and run: yfinance for prices, the FRED
   "simplified" away). Match that density — this is a capstone that gets read and defended, not
   just run.
 - **One person now, and the two-person conventions are retired.** Steps 1–35 were split between
-  Person A (`abhyudayb-1`, engine) and Person B (`shivakasula`, analysis) on separate machines;
+  Person A (the engine) and Person B (the analysis layer) on separate machines;
   that stopped binding at step 32 and Phases 6–8 name a branch per step, not an owner. The Owner
   column in `TASKS.md` and the attributions in `src/riskparity.py`, `src/config.py`'s
   `ERC_AGREEMENT_TOLERANCE` comment and `tests/test_riskparity.py` **stay**: they record that the
