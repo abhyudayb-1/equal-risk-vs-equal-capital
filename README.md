@@ -1,9 +1,14 @@
-# Risk Parity + Volatility Targeting
+# Equal Risk vs Equal Capital
 
 A systematic portfolio engine over four ETF sleeves — **SPY** (US equities), **TLT** (long
 Treasuries), **DBC** (commodities) and **TIP** (inflation-linked bonds) — backtested daily from
 February 2006 to the present, through the 2008 financial crisis, the March 2020 COVID crash and
 the 2022 rate shock.
+
+The question the project asks is narrow: **what does allocating equal *risk* buy you over
+allocating equal *capital*, and what does it cost in volatility and return?** The two construction
+rules being compared are **equal risk contribution (ERC)** and **equal capital (1/N)**, with naive
+1/σ, max-Sharpe and 60/40 as reference points.
 
 The engine does two things a conventional allocator does not:
 
@@ -19,10 +24,20 @@ The engine does two things a conventional allocator does not:
    borrowed portion is charged at the 3-month T-bill rate, which is the single most common way this
    strategy gets oversold.
 
-The deliverable is not only the engine. The analytical payload is **why risk parity failed in
-2022** — and results that make the strategy look bad are stated plainly rather than buried. Both
-`weights` and `risk_contributions` are carried through the whole pipeline side by side, because
-their divergence *is* the thesis.
+Point 2 is machinery, not thesis. Two books at different volatilities cannot be compared on
+return, so the overlay's job is to put ERC at 1/N's own volatility — and the financing it charges
+is one of the costs being measured, not a detail.
+
+Results that make risk parity look bad are stated plainly rather than buried, and there are some:
+unlevered, equalizing risk earns a better risk-adjusted return than equal capital and nearly halves
+the drawdown; levered to a comparable volatility with real financing charged, it *loses*. Both
+halves are reported. Both `weights` and `risk_contributions` are carried through the whole pipeline
+side by side, because their divergence *is* the subject.
+
+**The Results section below is a live run through 2026-07-31 and predates that reframing** — it
+reports the engine against four unlevered benchmarks rather than the matched-risk comparison. The
+comparison itself is measured (see `PLAN.md`'s Phase 8) but not yet reproducible from a CLI;
+`TASKS.md` steps 53–59 build it and refresh this document onto one data date.
 
 ---
 

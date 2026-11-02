@@ -1,12 +1,20 @@
-# TASKS — Project 16 build order
+# TASKS — build order
 
-Step-by-step build order for the risk parity engine described in [`PLAN.md`](PLAN.md).
-Every step is owned by exactly one person, is one branch, and ends in one pushed PR.
+Step-by-step build order for the study described in [`PLAN.md`](PLAN.md): what allocating equal
+*risk* buys over allocating equal *capital* across a multi-asset book, and what it costs in
+volatility and return. Every step is one branch and ends in one pushed PR.
+
+> **Where to start today: Phase 8 (steps 53–60), at the bottom.** Phases 0–5 (steps 1–35) are
+> built and are the engine the study runs on. Phase 6 and steps 43–44 were **removed** when the
+> project was narrowed — see `AGENTS.md`/`CLAUDE.md`'s ledger for what went and which tags hold
+> it, and do not look for them here. Phase 7 (the website) is **re-scoped** and waits on Phase 8.
 
 **Person A — Engine** (`abhyudayb-1`) · **Person B — Analysis** (`shivakasula`)
 
 Work top to bottom *within your own column*. A and B steps at the same phase run
-concurrently — neither waits on the other except at the two joint phases (0 and 5).
+concurrently — neither waits on the other except at the two joint phases (0 and 5). **That split
+stopped binding at step 32** and Phase 8 does not revive it; its steps name a branch each, not an
+owner.
 
 ---
 
@@ -41,7 +49,7 @@ Do these in order, together. **Nothing in Phase 1 starts until step 7 is merged.
 
 | # | Who | Branch | What | Done when |
 |---|---|---|---|---|
-| 1 | A | `feat/a01-scaffold` | `.venv`, `requirements.txt` (pandas, numpy, scipy, cvxpy, yfinance, requests, matplotlib, seaborn), extend `.gitignore` with `.venv/`, `__pycache__/`, `data/cache/`. Create empty `src/__init__.py`, `tests/`, `reports/`. | `pip install -r requirements.txt` succeeds in a fresh venv |
+| 1 | A | `feat/a01-scaffold` | `.venv`, `requirements.txt` (pandas, numpy, scipy, cvxpy, yfinance, requests, matplotlib, and seaborn — which nothing ever imported and which was dropped in the cleanup), extend `.gitignore` with `.venv/`, `__pycache__/`, `data/cache/`. Create empty `src/__init__.py`, `tests/`, `reports/`. | `pip install -r requirements.txt` succeeds in a fresh venv |
 | 2 | A | `feat/a02-config` | `src/config.py`: ETF universe, `START_DATE = 2006-02-03`, `TARGET_VOL = 0.10`, `LEVERAGE_CAP = (0.5, 3.0)`, `EWMA_HALFLIFE_DAYS`, `TRADING_DAYS_PER_YEAR = 252`, the three crisis windows, `PROJECT_ROOT`/`DATA_DIR`/`CACHE_DIR`/`REPORTS_DIR`. | `python -c "import src.config"` clean; every magic number in the plan appears here |
 | 3 | A | `feat/a03-contract` | **`src/types.py` — the contract.** `BacktestResult` frozen dataclass (`weights`, `risk_contributions`, `leverage`, `returns`, `meta`) and the `solve_erc(cov, **kw) -> np.ndarray` signature as a `NotImplementedError` stub. Docstring each field with its index, columns, and invariant. | Both people have read it and agree. This is the most important merge in the project. |
 | 4 | B | `feat/b04-cache` | Port `src/cache.py` **verbatim** from `abhyudayb-1/sp500-factor-backtester`. Do not rewrite it. | Round-trips a DataFrame to `data/cache/` and back |
@@ -164,24 +172,29 @@ or start reviewing. Two people editing one file is what this whole structure exi
 
 **Later:** UI and backend get their own plan after step 35. Don't build toward them now — the
 contract in `src/types.py` is the seam a dashboard would attach to, and it's already in place.
+*(That plan is Phase 7 below, and it now waits on Phase 8 — the site should not publish a
+comparison the repo cannot yet reproduce.)*
 
 ---
 
 ## Phase 7 — Website feature parity (JOINT, starts only after PR #62 is merged)
 
-> **Written before the cleanup — partly superseded. Do not build from it as-is.** This phase was
-> specified against the pre-cleanup scope, when the site had a position-analysis tab backed by
-> `analyze_position.py` and a comparison tab backed by `compare_ticker.py`. **Both products have
-> been removed from `main`**, so **steps 46 and 51 are struck below** — 46 covered the
-> realized-risk and comparison tabs and 51 the analyzer's settings, and none of those have a
-> subject any more. Everything the paragraphs below say about realized-risk metrics, head-to-head
-> metrics, `compare_to_ticker`, `calendar_warning` and the `--lookback-days` / `--weights`
-> settings went with them; read those paragraphs as a record of what the site showed in
-> September 2026, not as a spec.
+> **Re-scoped after the cleanup. Five of its eight steps survive.** This phase was specified when
+> the site had a position-analysis tab backed by `analyze_position.py` and a comparison tab backed
+> by `compare_ticker.py`. Both products were removed from `main`, so **steps 46 and 51 are struck**
+> — 46 covered the realized-risk and comparison tabs, 51 the analyzer's settings, and neither has
+> a subject any more. Everything the paragraphs below say about realized-risk metrics, head-to-head
+> metrics, `compare_to_ticker`, `calendar_warning` and the `--lookback-days` / `--weights` settings
+> went with them: **read those paragraphs as a record of what the site showed in September 2026,
+> not as a spec.**
 >
-> **Steps 45, 47, 48, 49 and 50 are unaffected and still worth building** — they are about the
-> payload split, the README's headline rows, the CI evidence and the browser strategy explorer,
-> all of which belong to the core engine. The phase is re-scoped in the cleanup's docs PR.
+> **Steps 45, 47, 48, 49 and 50 stand, and two of them matter more now than when they were
+> written.** Step 47 publishes the engine's own crisis leverage figures, which are the overlay's
+> cost — part 3 of the project's question. Step 49's browser explorer lets a reader slide the
+> volatility target and watch ERC and 1/N change places, which *is* the new thesis made
+> interactive; `PLAN.md`'s Phase 8 confirms the property it relies on (the target never feeds back
+> into the ERC weights). **Phase 8 comes first** — the site should not publish a comparison the
+> repo cannot yet reproduce.
 
 This is the "UI and backend get their own plan" the ground rules above defer to. The live site
 (`risk-parity-lab.vercel.app`) is built by PR #62's `web/` tree, and a gap audit against `main`
@@ -230,3 +243,49 @@ from the equal-weight figures `CLAUDE.md` used to quote (step 47). The numbers a
 Steps 47 and 48 depend only on 45 and can run in parallel; 49 needs 45's split files and 50 needs 49.
 
 ---
+
+---
+
+## Phase 8 — The matched-risk ERC vs 1/N comparison (the current work)
+
+**This is what the cleanup cleared the way for, and it starts from a problem rather than a blank
+page.** The project's three headline findings are already *measured* — they are in `PLAN.md`'s
+Phase 8 section and quoted in `AGENTS.md`/`CLAUDE.md`'s "What this is" — but **nothing in `src/`
+reproduces them.** A figure no function can regenerate is exactly what this repo does not tolerate
+anywhere else, so step 53 lands first and the rest hang off it.
+
+Read `PLAN.md`'s Phase 8 section before starting any step here. It has the three-column design, the
+measured table the implementation must reproduce, the two measurement traps (the overlay overshoots
+its target by ~12.5%; a different `target_vol` does not change the ERC weights) and the three
+things this phase must not do.
+
+Two standing rules from Phases 0–5 still apply and are the easiest to break here: **run a rule over
+its full history and slice afterwards**, never fit it to the comparison window; and **never
+hand-roll the overlay or the one-day alignment** — call `run_backtest(..., target_vol=...)` and let
+`backtest.py` own it.
+
+The old A/B ownership split stopped binding at step 32 and is not revived. Each step still names
+one branch and one "done when"; the "done when" text is the spec.
+
+| # | Branch | What | Done when |
+|---|---|---|---|
+| 53 | `feat/53-comparison-core` | `src/comparison.py`: the three-column comparison as pure functions of a `BacktestResult` mapping plus the sleeve returns — 1/N, ERC unlevered, and ERC levered to 1/N's realized volatility with financing charged — plus naive 1/σ and 60/40 as reference rows and the financing-omitted row flagged as counterfactual. Reuses `riskmetrics.risk_summary` / `format_metric_table` and `headtohead.relative_metrics` / `tail_block` / `crisis_table`, which exist unused for exactly this. The matched column comes from a second `run_backtest` call at 1/N's volatility, never a hand-rolled overlay. | Reproduces every row of `PLAN.md`'s Phase 8 table to the printed precision on the same data date; the matched column's *realized* volatility is reported next to the target rather than instead of it |
+| 54 | `feat/54-risk-allocation` | `src/comparison.py`: the risk-allocation block — per-sleeve capital weight beside risk share for both rules, each rule's risk-share range and worst single-sleeve concentration, and **effective bets `1 / Σ RCᵢ²`** per rebalance. `benchmarks.fixed_weight` already computes 1/N's time-varying risk contributions, so this needs no new estimator. | Reproduces ERC 4.00 / 1/N 2.83 effective bets, SPY's 8.9%–60.3% range and the 66.5% worst concentration; a test pins effective bets to exactly N when risk shares are equal and to 1 when one sleeve carries all the risk |
+| 55 | `feat/55-comparison-tests` | `tests/test_comparison.py`: standalone, offline, house style. The identities (risk shares sum to 1, effective bets inside `[1, N]`), the matched-column construction against a hand-built two-asset case whose answer is known in advance, and **the mutation**: swap the second engine run for a naive `leverage = target / vol` rescale and assert the matched column moves. A column that cannot tell those apart is not testing the overlay. | `python tests/test_comparison.py` prints `N checks passed`, exits 0, and still passes with `socket.connect` patched to raise |
+| 56 | `feat/56-comparison-cli` | `compare_rules.py`: the CLI. Prints the three-column table, the risk-allocation block, the crisis table and the caveats, naming the data date and the realized-vs-target volatility gap on every run. Flags: `--start`, `--target-vol` (override the matched target), `--refresh-prices`, `--reports-dir`, `--no-charts`, `--verbose`, `--help`. Imports `load_data` from `run_backtest.py` so the data path is identical to the headline run. | `compare_rules.py --help` documents every flag; a live run prints a complete report; an infeasible ERC solve reports cleanly instead of as a traceback (`ERCSolverError` caught before `ValueError`) |
+| 57 | `feat/57-comparison-charts` | `src/viz.py`: two charts — risk share through time for **both** rules side by side (the existing ERC chart is half of this one), and the return/volatility plane with every row plotted, so the matched-risk comparison reads as a position rather than a number. Renders into `--reports-dir`; the self-check renders into a temp dir. | Both PNGs render from fixtures and from a live run, and `git status` shows `reports/` unmodified after `python -m src.viz` |
+| 58 | `feat/58-sensitivities` | The estimation-error question, which is the standard objection to this whole comparison: how much of ERC's edge survives the covariance being *estimated*? Sweep `COV_EWMA_HALFLIFE_DAYS`, `COV_SHRINKAGE`, the warm-up length and the rebalance frequency, reporting ERC's return-to-vol and effective bets at each against 1/N's, which needs no estimate at all. Also report **turnover** per rebalance for both rules plus a cost sensitivity: ERC re-optimises monthly and 1/N barely trades, so "costs not modelled" is currently honest but is also the obvious attack. | A table over at least three settings per knob; any setting at which ERC stops beating 1/N is stated plainly in the output rather than buried |
+| 59 | `feat/59-readme` | `README.md`: refresh Results onto **one** data date and rewrite the headline around the three findings. The 2022 and COVID sections become the evidence chapters they now are rather than the thesis. Drop the remaining "risk parity + volatility targeting" framing language. | Every number in `README.md` comes from one live run on one date, and `compare_rules.py` regenerates every table in the comparison section |
+| 60 | — | Final review of 53–59, tag `v2.0`. | Every number in `README.md` and in `AGENTS.md`/`CLAUDE.md` traces to a function in `src/`, and the scan figures in `PLAN.md`'s Phase 8 table have been replaced by the CLI's own output |
+
+Steps 54–57 depend on 53. Step 58 depends on 53 and is the one most likely to produce an
+uncomfortable result, so run it **before** writing step 59, not after. Step 59 depends on
+everything.
+
+**One scoping decision to make deliberately before step 53, not as a side effect of step 58.** The
+comparison is four sleeves. 1/N and ERC diverge further as the universe grows and as volatility
+dispersion widens, so a wider universe would strengthen the result. But `DATA_START_DATE` is pinned
+to DBC's 2006 inception, `data._validate`'s late-start guard rejects anything listed after it, and
+`cache.write_frame` replaces the whole shared price cache — the guard that used to work around that
+last point, `data.fetch_ticker_prices`, was removed along with the ticker comparison. Widening
+`UNIVERSE` is therefore real data-layer work, not a config edit.

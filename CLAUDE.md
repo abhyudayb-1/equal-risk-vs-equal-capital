@@ -4,18 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build ledger — what is done, at a glance
 
-> **Read this first: the repo is being cut back, so parts of this ledger are now history rather
-> than current state.** The project's bottom line is one question — what allocating equal *risk*
-> buys over allocating equal *capital* across a multi-asset book, and what that costs in
-> volatility and return. Work that answered a different question is being removed from `main`,
-> each piece in its own PR, with anything reusable pulled out first.
+> **Read this first: the repo was cut back after `v1.4`, so parts of this ledger are history
+> rather than current state.** The project's bottom line is one question — what allocating equal
+> *risk* buys over allocating equal *capital* across a multi-asset book, and what that costs in
+> volatility and return (see "What this is"). Work that answered a different question was removed
+> from `main`, each piece in its own PR, with the reusable parts pulled out first.
 >
 > | | Status |
 > |---|---|
 > | The four-sleeve ERC engine, overlay, benchmarks, stress, charts (steps 1–35, `v1.0`/`v1.2`) | **kept — this is the project** |
+> | `src/riskmetrics.py`, `src/headtohead.py` | **kept, no caller yet** — salvaged for Phase 8 |
 > | Incremental position analysis, "add one stock to the book" (steps 36–43, `v1.1`/`v1.3`) | **REMOVED** — see its section below |
-> | Head-to-head against a ticker (step 44, `v1.4`) | **REMOVED** — see its section below; `riskmetrics.py` and `headtohead.py` were salvaged out of it first |
-> | `TASKS.md` Phase 7 (website, steps 45–52) | partly superseded — that file carries the note |
+> | Head-to-head against a ticker (step 44, `v1.4`) | **REMOVED** — see its section below |
+> | `TASKS.md` Phase 7 (website, steps 45–52) | **re-scoped** — steps 46 and 51 struck; that file carries the note |
+> | `TASKS.md` Phase 8 (steps 53–60) | **the new work** — the matched-risk ERC-vs-1/N comparison and its sensitivities |
 >
 > Rows below are left as they landed, because `git log` records the same thing and the code stays
 > reachable at its tags. Where a row describes removed work, a note says so.
@@ -88,7 +90,8 @@ position analysis" below and `PLAN.md`/`TASKS.md`) that changes or deletes nothi
 **Steps 36–42 and 43 below are history, not current state: that work has been REMOVED from
 `main`.** The rows stay because `git log` does, and the code stays reachable at tags `v1.1` and
 `v1.3`. See the "Incremental position analysis — REMOVED" section below for why it went and what
-was kept out of it. `PLAN.md`'s Phase 6 section and `TASKS.md`'s are deleted with it.
+was kept out of it. `PLAN.md`'s and `TASKS.md`'s Phase 6 sections were deleted with it, so there
+is nothing left to look up there.
 
 Four loose ends flagged during Phase 4 as "Phase 5 work" were resolved as part of step 35's final
 review, rather than left for whoever noticed next: both stand-ins in `src/benchmarks.py` are
@@ -162,14 +165,52 @@ write-up are there, and they are the part a summary cannot carry.
 
 ## What this is
 
-Project 16 — a risk-parity + volatility-targeting portfolio engine over four ETF sleeves
-(SPY / TLT / DBC / TIP), backtested 2006→present through the GFC, COVID and the 2022 rate shock.
-The deliverable is not just the engine: the analytical payload is **why risk parity failed in 2022**.
-Results that make the strategy look bad are stated plainly, not hidden.
+**A multi-asset portfolio-construction study with one question: what does allocating equal *risk*
+buy you over allocating equal *capital*, and what does it cost in volatility and return?**
 
-Note the mechanism carefully, because the obvious version is wrong and this repo already corrected
-it once against live data: the stock/bond correlation did **not** flip positive during the 2022
-drawdown. Over `2022-01-03 → 2022-10-12` the rolling 63-day SPY/TLT correlation averaged **−0.09**
+Four ETF sleeves (SPY / TLT / DBC / TIP), daily, 2006→present, through the GFC, COVID and the 2022
+rate shock. Two construction rules are the protagonists — **equal risk contribution (ERC)** and
+**equal capital (1/N)** — with naive 1/σ, max-Sharpe and 60/40 as reference points. Results that
+make risk parity look bad are stated plainly, not hidden; that is the whole reason the repo exists
+in this shape.
+
+The study has three parts, and each has a measured answer. **These numbers come from a scan run on
+data through 2026-10-30 and are not yet reproducible from a CLI** — closing that gap is the next
+piece of work (see `TASKS.md` Phase 8). `README.md`'s Results section is a separate, older snapshot
+(through 2026-07-31); do not mix the two in one table.
+
+1. **Risk allocation — what risk does each rule actually take?** ERC hits equal risk to 1.6e-07
+   at every rebalance while its *capital* swings from 16% to 42% a sleeve. 1/N holds capital flat
+   at 25% and lets risk go where it likes: SPY's risk share runs **8.9% to 60.3%** (mean 32.9%),
+   DBC's averages **41.8%**, TIP's **9.0%**, and TLT's goes **negative** (−6.3%) in some months.
+   The worst single-sleeve risk concentration 1/N reaches in any month is **66.5%**. In effective
+   bets (1/HHI of risk shares) that is **2.83 of a possible 4.00, against ERC's 4.00** — the
+   compactest statement of the thesis in the repo.
+2. **The unlevered comparison.** ERC 5.12% CAGR / 6.90% vol / **0.759** return-to-vol / −17.2% max
+   drawdown, against 1/N's 5.79% / 8.35% / **0.716** / −28.1%. So equalizing risk buys a real
+   risk-adjusted improvement and nearly halves the drawdown — and gives up **67 bp/yr of return**
+   to do it. Naive 1/σ gets **0.747** with no optimizer at all, so the correlation structure the
+   ERC solver exists for is worth about a point of that improvement, not all of it. Say so.
+3. **The volatility/return trade-off, which is what the overlay is for now.** Two books at
+   different volatilities are not comparable on return, so the vol-targeting overlay exists to put
+   ERC at 1/N's own volatility. Levered there with **real T-bill financing charged**, ERC scores
+   **0.696 — below 1/N's 0.716**. With the financing leg omitted it scores **0.767**, above it. The
+   financing cost eats the entire risk-allocation gain and a little more. That single pair of
+   numbers is the project's sharpest result: **equal risk wins on risk-adjusted return until you
+   pay for the leverage that makes the comparison fair.**
+
+**The overlay is a comparison instrument, not the strategy.** It used to be framed as the second
+half of the product ("risk parity + volatility targeting"); it is now the thing that makes a
+like-for-like comparison possible, and its own costs — financing, and the lag documented under
+`overlay.py` in "Architecture" — are findings in their own right rather than defects.
+
+The crisis chapters stay, as **evidence for part 2 and 3 rather than as the thesis**: they are where
+the covariance-estimated diversification ERC depends on visibly stops holding, and where the
+overlay's lag is most expensive. Note the 2022 mechanism carefully, because the obvious version is
+wrong and this repo already corrected it once against live data.
+
+The stock/bond correlation did **not** flip positive during the 2022 drawdown.
+Over `2022-01-03 → 2022-10-12` the rolling 63-day SPY/TLT correlation averaged **−0.09**
 and was positive on only 31% of days; the persistent flip is 2023 onward. What happened is that
 **TLT fell 29.3% against SPY's 24.5%** — the hedge lost more than the thing it hedged — while
 correlation merely rose toward zero, which was enough to remove the offset. See PLAN.md's 2022
@@ -183,40 +224,54 @@ SPY's −24.1%, inflating the gap from 4.8pp to 7.1pp. Earlier drafts of this fi
 figures. `metrics.slice_to_window` uses the exclusive bound and
 `tests/test_crisis_slices.py::test_window_excludes_the_peak_days_return` pins it.
 
-`PLAN.md` holds the design rationale and the pinned math. `TASKS.md` holds the numbered build
-order — every step names one owner, one branch, and a "done when". Read the relevant step before
-starting work; the step text is the spec.
+`PLAN.md` holds the design rationale and the pinned math, including the **Phase 8** section that
+specifies the comparison above and records the scan that measured it. `TASKS.md` holds the numbered
+build order — **Phase 8 (steps 53–60) is the work to pick up**, and step 53 is the one that makes
+those numbers reproducible. Read the relevant step before starting work; the step text is the spec.
 
 ## Where the build is
 
 Which steps are done is in the ledger above; this section is what the finished steps *found*.
 **Check `git log --oneline` before trusting either — they go stale, the log does not.**
 
-**The engine runs end to end on live data, and the numbers are now final, in `README.md`'s
-Results section.** 234 monthly rebalances, 2007-02-28 → 2026-07-31, 4897 return days: **CAGR
-7.12%, vol 11.26%, return/vol 0.667, max drawdown −29.10%**, mean leverage 1.76x, **0 solver
-failures, 0 covariances repaired, worst risk-contribution deviation 1.6e-07**. (Ratios are
-return-to-volatility at a zero risk-free rate, not a true Sharpe — applied identically across
-strategies so the ranking is fair.)
+**Two data dates are in play and must not be mixed.** `README.md`'s Results section is a live run
+through **2026-07-31** (234 rebalances, 4897 return days) and is the published write-up. The
+comparison numbers in "What this is" come from a **scan through 2026-10-30** (237 rebalances, 4950
+days) run while re-scoping the project, and **no CLI reproduces them yet** — Phase 8 step 53 is
+what closes that. Either set is fine to quote; quoting both in one table is not. Refreshing
+`README.md` onto one date is Phase 8 step 59.
 
-**The headline result the write-up leads with: risk parity loses.** Plain 60/40 beats it over
-the full sample on both return (8.72% vs 7.12% CAGR) and risk-adjusted return (0.786 vs 0.667),
-running the same volatility with no leverage, no solver and no financing. Charging real
-financing costs 1.06%/yr of risk-adjusted return versus free leverage (0.667 vs 0.761), and the
-unlevered ERC book alone — 5.10% CAGR, 0.754 return/vol, −17.15% max drawdown — is the best
-risk-adjusted result of any row in the table. The overlay bought volatility, not return. See
-`README.md`'s Results section for the full breakdown.
+**The engine itself is sound on both dates:** 0 solver failures, 0 covariances repaired, worst
+risk-contribution deviation 1.6e-07, `run_health clean`. Ratios throughout are
+return-to-volatility at a zero risk-free rate, not a true Sharpe — applied identically to every
+row, so the ranking is fair even though the level is not.
 
-**A live-run finding the write-up has to address, because the project is framed around 2022 and
-this does not fit that frame.** The worst drawdown in the sample is not 2022 — it is **COVID, at
+**The headline the write-up now leads with, and it is not flattering to risk parity.** Equalizing
+risk does buy something real: unlevered ERC takes **4.00 effective bets against 1/N's 2.83**, earns
+**0.759 return-to-vol against 0.716**, and nearly halves the drawdown (−17.2% against −28.1%). Then
+two things take it away. **Lever ERC to 1/N's own volatility so the returns are comparable, charge
+the real T-bill, and it scores 0.696 — below 1/N.** With the financing leg omitted it scores 0.767,
+above it; that gap *is* the cost of leverage, and a backtest that omits the term reports the second
+number and calls it the first. And **naive 1/σ reaches 0.747 with no optimizer at all**, so the
+correlation structure the ERC solver exists for is worth roughly a point of the improvement rather
+than all of it. Plain 60/40 still beats everything here on risk-adjusted return (0.778).
+
+So the honest summary is: **equal risk is a better *risk* allocation than equal capital and a worse
+*return* proposition once the leverage that makes it comparable is paid for.** Both halves get
+stated.
+
+**What the overlay costs in a crisis, and it is the most expensive single finding in the repo.**
+The worst drawdown in the sample is not 2022 — it is **COVID, at
 −29.10%** (peak 2020-02-20, trough 2020-03-18), against −25.43% for the GFC and **−17.72% for
 2022**. And the strategy walked into it at **2.33x, its highest pre-crisis leverage of the whole
 run** (GFC 1.83x, 2022 1.74x), because 2019 was calm and the trailing estimator had nothing else
 to say. That is the lagging-overlay mechanism from step 21 at its most expensive: the vol target
 levers hardest into quiet regimes, and the fastest crash in the sample followed the quietest year.
 2022 is still the more interesting *mechanism* — it is where diversification itself failed rather
-than where the overlay mistimed — but "risk parity's worst month was caused by its own vol target"
-is a finding, and this repo does not hide the ones that look bad.
+than where the overlay mistimed — but "the deepest drawdown in the sample was caused by the
+comparison instrument, not the allocation rule" is a finding, and this repo does not hide the ones
+that look bad. It is also the reason part 3 of "What this is" reports the unlevered comparison
+alongside the matched-risk one rather than only the latter.
 
 **Phase 2 is closed.** The cross-check it existed for passed: Person B's independent convex
 log-barrier oracle agrees with Person A's SLSQP solver to **7.3e-08** on 50 random covariances
@@ -240,15 +295,15 @@ Two things the solver work established that stay true downstream:
   is a ~2.5% flaky test. Numbers and the diminishing-returns curve are in the `ERC_MAX_RESTARTS`
   comment in `config.py`.
 
-To resume in a new session: every numbered step through 44 was built, and **the repo is now being
-cut back to one question** — what allocating equal *risk* buys over allocating equal *capital*
-across a multi-asset book, and what it costs in volatility and return. Phase 6's incremental
-position analysis and the head-to-head against a ticker are **both removed** (see their sections
-below). `PLAN.md` is now purely the Phases 0–5 design, nothing in `TASKS.md` Phases 0–5 is
-affected, and its Phase 7 carries a note naming the steps the cleanup supersedes.
-What is left to do is the part the cleanup is clearing the way for: the matched-risk
-ERC-against-equal-weight comparison, built on the held `src/riskmetrics.py` and
-`src/headtohead.py`. The fastest way back into the engine is
+To resume in a new session: steps 1–44 were built, then the repo was **cut back to one question**
+(see "What this is"). Phase 6's incremental position analysis and the head-to-head against a
+ticker are both removed; `PLAN.md` is now purely the Phases 0–5 design plus the Phase 8 spec,
+`TASKS.md` Phases 0–5 are untouched, its Phase 7 is re-scoped, and **`TASKS.md` Phase 8
+(steps 53–60) is the work to pick up.** Step 53 is the one that matters most: the comparison
+numbers quoted in "What this is" were measured by a scan and **nothing in `src/` reproduces them
+yet**, which is exactly the kind of unreproducible figure this project does not tolerate
+elsewhere. Start there.
+The fastest way back into the engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
 live data in one command.
 
