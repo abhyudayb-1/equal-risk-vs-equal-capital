@@ -321,3 +321,22 @@ SATURATION_REPORT_FRACTION: float = 0.25
 # choice would not. Every table prints its own observation count beside it for
 # the same reason.
 VAR_CONFIDENCE: float = 0.95
+
+# ---------------------------------------------------------------------------
+# The equal-risk vs equal-capital comparison -- src/comparison.py
+# ---------------------------------------------------------------------------
+# Floor on the volatility an ERC book may be levered *to*. The matched column's
+# target is another rule's realized volatility, so a degenerate benchmark would
+# otherwise hand the overlay a nonsense target and get a straight-faced answer
+# back: a numerically-flat return series (a constant that is not exactly
+# representable in binary) measures 1.7e-18 rather than 0.0, which is positive,
+# finite, and passes a bare `vol <= 0` guard. Levering an ERC book to 1.7e-18
+# volatility just pins the overlay at its leverage FLOOR and reports a column.
+#
+# Set four orders of magnitude below anything real and ten above the noise:
+# every rule in this project realizes 6%-12% annualized, the thinnest window
+# worth measuring is still ~1e-3, and the degenerate cases measure ~1e-18. There
+# is no scale to make this relative to -- the target is itself a volatility --
+# so it is absolute, which is only safe because a volatility's units are fixed.
+MIN_MATCHABLE_VOL: float = 1e-8
+

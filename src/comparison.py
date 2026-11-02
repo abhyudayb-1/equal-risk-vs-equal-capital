@@ -60,6 +60,7 @@ from .config import (
     ANNUAL_RISK_FREE_RATE,
     COV_WARMUP_TRADING_DAYS,
     LEVERAGE_CAP,
+    MIN_MATCHABLE_VOL,
     SUMMARY_LINE_WIDTH,
     TARGET_VOL,
     TRADING_DAYS_PER_YEAR,
@@ -158,9 +159,15 @@ def matched_target_vol(
     if not isinstance(benchmark_returns, pd.Series):
         raise ComparisonError("benchmark_returns must be a pandas Series of daily returns")
     vol = float(summarize(benchmark_returns, periods_per_year)["annual_volatility"])
-    if not np.isfinite(vol) or vol <= 0.0:
+    # Against MIN_MATCHABLE_VOL rather than against 0.0. A constant return
+    # series is degenerate but its measured volatility is float noise -- 1.7e-18,
+    # not 0.0, because the constant is not exactly representable -- so a bare
+    # `vol <= 0` test passes it and the overlay is handed a target it can only
+    # answer by sitting on its leverage floor. See config.MIN_MATCHABLE_VOL.
+    if not np.isfinite(vol) or vol <= MIN_MATCHABLE_VOL:
         raise ComparisonError(
-            f"benchmark volatility is {vol!r}; there is no target to lever an ERC book to"
+            f"benchmark volatility is {vol!r}, at or below the {MIN_MATCHABLE_VOL:g} floor; "
+            "there is no meaningful target to lever an ERC book to"
         )
     return vol
 
