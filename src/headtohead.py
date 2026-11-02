@@ -9,10 +9,10 @@ live in ``src/compare.py`` (reachable at tag ``v1.4``) and were pulled out into
 this module because nothing in them is specific to a ticker; that comparison has
 since been removed and these outlived it.
 
-**Nothing in the shipped code calls these yet.** They are here, with their own
-suite, for the equal-risk-against-equal-capital comparison the project is being
-cut back to — see AGENTS.md / CLAUDE.md. Do not delete them as unreferenced
-without reading that first; equally, do not assume a caller exists.
+Consumed by :mod:`src.comparison`, which measures every construction rule
+against 1/N: :func:`relative_metrics` and :func:`tail_block` per rule,
+:func:`crisis_table` for the per-window comparison, and both formatters for the
+printed report. Changing a signature here changes that report.
 
 The parameters are named for their *roles*, not their contents: ``strategy`` is
 the thing being judged and ``benchmark`` is the thing it is judged against. The
