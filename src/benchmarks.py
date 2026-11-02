@@ -67,7 +67,7 @@ def risk_contribution_fractions(weights: np.ndarray, cov: np.ndarray) -> np.ndar
     fewer square root, and it sums to exactly 1.0 in floating point rather than
     to within a rounding error of it.
 
-    Person A owns the volatility-unit version in ``src/riskparity.py`` (step 16);
+    ``src/riskparity.py`` owns the volatility-unit version (step 16);
     this is the normalised form the contract stores, not a competing
     implementation of the solver's objective.
     """

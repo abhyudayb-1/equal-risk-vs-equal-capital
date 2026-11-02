@@ -1,7 +1,8 @@
-"""Synthetic data with the right *shape* -- Person B's unblocking mechanism.
+"""Synthetic data with the right *shape* -- what lets everything run without an engine.
 
-Person B builds benchmarks, metrics, stress tests and charts against these
-fixtures during Phases 1-4, while Person A is still building the engine that
+Built as Person B's unblocking mechanism: benchmarks, metrics, stress tests and
+charts were written against these fixtures through Phases 1-4, while Person A
+was still building the engine that
 will eventually produce the real thing. In Phase 5 the fixture call is swapped
 for a real ``BacktestResult`` and, if the contract in ``src/types.py`` held,
 nothing else changes.
@@ -283,7 +284,7 @@ def make_fake_result(
 
     # Respect the covariance warmup. Without this the fixture's first rebalance
     # sits ~18 trading days after DATA_START_DATE while the real engine's sits
-    # ~252 days after it, so every chart Person B builds would have an x-axis a
+    # ~252 days after it, so every chart built on them would have an x-axis a
     # year longer than the one the engine eventually produces.
     if len(daily) <= config.COV_WARMUP_TRADING_DAYS:
         raise ValueError(

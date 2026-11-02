@@ -3,7 +3,7 @@
 Read this first when the pipeline's behaviour looks wrong -- every magic number
 in the project lives here rather than inline at its call site.
 
-This file is SHARED between Person A and Person B and is **append-only**: add
+This file is **append-only**: add
 constants at the bottom of the relevant block, never reorder or reformat what is
 already here, and name the block you touched in your PR body.
 """

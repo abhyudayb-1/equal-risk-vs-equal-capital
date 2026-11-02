@@ -9,8 +9,8 @@ could have asked a module for.
 
 Run it::
 
-    .venv/bin/python run_backtest.py              # macOS/Linux (Person B)
-    .\\.venv\\Scripts\\python.exe run_backtest.py   # Windows (Person A)
+    .venv/bin/python run_backtest.py              # macOS/Linux
+    .\\.venv\\Scripts\\python.exe run_backtest.py   # Windows
     .venv/bin/python run_backtest.py --help       # every flag, documented
 
 **Live data.** Unlike the test suites, this reaches the network: yfinance for

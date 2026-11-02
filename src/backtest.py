@@ -734,7 +734,7 @@ if __name__ == "__main__":  # pragma: no cover
 
     # --- step 23's "done when": the contract holds --------------------------
     # validate() already ran inside run_backtest; calling it again documents that
-    # the result is re-checkable, which is what Person B's suites rely on.
+    # the result is re-checkable, which is what the test suites rely on.
     result.validate()
     print("\ncontract: validate() passes")
     print(f"  weights rows sum to 1 : "

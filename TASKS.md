@@ -11,12 +11,16 @@ volatility and return. Every step is one branch and ends in one pushed PR.
 > website) is where to start today**: it was re-scoped and waiting on Phase 8, and Phase 8 has
 > landed, so the site can now publish a comparison the repo reproduces.
 
-**Person A — Engine** (`abhyudayb-1`) · **Person B — Analysis** (`shivakasula`)
+**The project is continued by one person** (`abhyudayb-1`) in a repository they own. Steps 1–35
+carry an **Owner** column recording who built each one, back when Person A (`abhyudayb-1`, engine)
+and Person B (`shivakasula`, analysis) worked in parallel on separate machines. **That split
+stopped binding at step 32**; Phases 6–8 name a branch per step and no owner, and nothing revives
+it. The column stays as the record of who did what — see `PLAN.md` for why one of those
+attributions is load-bearing rather than decorative.
 
-Work top to bottom *within your own column*. A and B steps at the same phase run
-concurrently — neither waits on the other except at the two joint phases (0 and 5). **That split
-stopped binding at step 32** and Phase 8 does not revive it; its steps name a branch each, not an
-owner.
+Work top to bottom. One step per branch, merged before the next starts. Branches are
+`feat/<NN>-slug`; the old `feat/a<NN>-` / `feat/b<NN>-` prefixes are retired, and the branch names
+in Phases 0–7 below are left as they were used.
 
 ---
 
@@ -143,7 +147,7 @@ fixture) said the 2022 failure was a stock-bond correlation flipping positive. I
 - The **diversification ratio** `Σwᵢσᵢ / σₚ` degrades right through the episode: 2.11 (2008),
   1.78 (2020), 1.68 (2021), 1.59 (2022), 1.52 (2023). That is why step 25 keys off it.
 
-**Two consequences for Person B:**
+**Two consequences for anything that reports on 2022:**
 
 1. Do not write a "correlation crossed zero" alarm. It fires a year late. See step 25.
 2. **The fixtures are shape-accurate, not magnitude-accurate.** `tests/fixtures.py` now

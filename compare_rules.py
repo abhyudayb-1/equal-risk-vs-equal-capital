@@ -8,8 +8,8 @@ all, and every caveat that column carries printed underneath it.
 
 Run it::
 
-    .venv/bin/python compare_rules.py                 # macOS/Linux (Person B)
-    .\\.venv\\Scripts\\python.exe compare_rules.py      # Windows (Person A)
+    .venv/bin/python compare_rules.py                 # macOS/Linux
+    .\\.venv\\Scripts\\python.exe compare_rules.py      # Windows
     .venv/bin/python compare_rules.py --help          # every flag, documented
 
 **It owns no maths and no data path.** ``load_data`` is imported from

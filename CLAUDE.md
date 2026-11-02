@@ -24,6 +24,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > Rows below are left as they landed, because `git log` records the same thing and the code stays
 > reachable at its tags. Where a row describes removed work, a note says so.
 
+**Where this lives now.** `abhyudayb-1/equal-risk-vs-equal-capital` (private), a clean copy --
+not a fork -- of `shivakasula/portfolio-allocation-capstone-project`, which is where the project
+was built through `v2.0`. Full history and every tag came across. **It is continued by one person**;
+the two-person conventions that built Phases 0-5 are retired and "Working style" at the bottom says
+exactly what replaced them and what was deliberately kept.
+
 **Pull-request numbers in this file -- `PR #52`, `#71`, and the `Merge pull request #NN` subjects
 in `git log` -- are the ORIGINAL repository's numbering** (`shivakasula/portfolio-allocation-capstone-project`,
 where this project lived through `v2.0`). They do not correspond to anything in this repository,
@@ -322,6 +328,8 @@ cut to 0.64x at the 2020-03-31 rebalance, after the trough.
 
 **Phase 2 is closed.** The cross-check it existed for passed: Person B's independent convex
 log-barrier oracle agrees with Person A's SLSQP solver to **7.3e-08** on 50 random covariances
+(the names are kept deliberately -- a *different person* derived the oracle, which is what makes
+"independent" a claim rather than a label)
 (bar: `ERC_AGREEMENT_TOLERANCE`, 1e-6), and both were checked against the equicorrelation closed
 form so a shared sign error would still have been caught. Its highest-value use was the ρ = −0.93
 case: the restart ladder can say it left a local minimum, but only an independent derivation can
@@ -481,7 +489,7 @@ Python serverless function to ship `src/` into any more.
 
 **Read this before touching anything under `web/`:**
 
-- **Node and npm are not installed on Person A's machine**, so the PR that removed those features
+- **Node and npm are not installed on the working machine**, so the PR that removed those features
   **could not build or test the JS**. What was done instead: a static check that every relative
   import still resolves and no identifier is left imported-but-unused, plus a full live run of
   `web/export_data.py`. **Run `npm ci && npm test && npm run build` before trusting the bundle**,
@@ -537,8 +545,9 @@ underneath it:
 .venv/bin/python run_backtest.py                             # the engine -> reports/
 ```
 
-Engine modules also carry a `__main__` self-check, which is where Person A's steps assert their
-"done when" until Person B's matching suite exists. Run them the same way:
+Engine modules also carry a `__main__` self-check. They began as the way an engine step asserted
+its "done when" before the matching suite existed; they are kept because they exercise a module on
+fixtures in one command, with no suite to read first. Run them the same way:
 
 ```bash
 .venv/bin/python -m src.covariance    # halflife -> inf == sample cov; PSD repair on indefinite input
@@ -574,9 +583,9 @@ by calling its function in the `__main__` block. New test files must match this 
 the `sys.path.insert(0, ...)` preamble that makes `from src import ...` work when run from the
 repo root.
 
-This file is checked in and read on both machines, so "this machine" would be ambiguous here: the
-interpreter path depends on the OS, not on whose repo it is. **Windows** (Person A, and what PLAN.md
-and TASKS.md quote): `.\.venv\Scripts\python.exe`. **macOS/Linux** (Person B): `.venv/bin/python`.
+The interpreter path depends on the OS, so "this machine" would be ambiguous in a checked-in file.
+**Windows** (the working machine, and what PLAN.md and TASKS.md quote):
+`.\.venv\Scripts\python.exe`. **macOS/Linux**: `.venv/bin/python`.
 The commands above are written in the POSIX form; substitute as needed.
 
 ## Architecture
@@ -765,10 +774,14 @@ And three on the study layer, because each encodes a decision that looks like a 
 ### The contract is the load-bearing design decision
 
 `src/types.py` defines `BacktestResult` (frozen dataclass: `weights`, `risk_contributions`,
-`leverage`, `returns`, `meta`). It exists so two people on separate machines can build the engine
-and the analysis layer *at the same time*: Person B builds charts, benchmarks and stress tests
-against `tests/fixtures.make_fake_result()` long before a real engine runs, and Phase 5 swaps the
-fixture for the real thing without touching anything downstream.
+`leverage`, `returns`, `meta`). Every strategy returns one -- engine, all four benchmarks, the
+matched column -- so nothing downstream has to know which it is holding. It was frozen in Phase 0
+so two people on separate machines could build the engine and the analysis layer *at the same
+time*: charts, benchmarks and stress tests were built against `tests/fixtures.make_fake_result()`
+long before a real engine ran, and Phase 5 swapped the fixture for the real thing without touching
+a call site. **That decision outlived the staffing it was made for** -- it is now what makes eleven
+suites and nine self-checks run offline, and what let `src/comparison.py` consume six strategies
+without special-casing any of them.
 
 Consequences that constrain how you work:
 
@@ -878,13 +891,15 @@ Keyless sources only, so anyone can clone and run: yfinance for prices, the FRED
 - Comments here explain *why* a subtle choice is correct (the ones that would otherwise get
   "simplified" away). Match that density — this is a capstone that gets read and defended, not
   just run.
-- Ownership split: Person A (`abhyudayb-1`) owns the engine modules, Person B (`shivakasula`) owns
-  metrics/benchmarks/stress/viz/tests/CLI/README. Only touch the files listed for the step you are
-  on. Branches are `feat/a<NN>-slug` / `feat/b<NN>-slug`, one step per branch, merged before the
-  next starts. Two standing exceptions, both already exercised: a step may assign a file outside its
-  owner's usual area (step 28 gave `tests/test_lookahead.py` to A), and `CLAUDE.md` refreshes go on
-  their own `docs/`-prefixed branch rather than riding along with a feature.
-- **Phase 5 is joint, so the split above stops applying at step 32.** Its branches are named in
-  `TASKS.md` (`feat/a32-live-run`, `feat/b33-real-charts`, `feat/analysis-2022`) and steps 34–35
-  are both people. Wiring `format_run_summary` into `run_backtest.py` — A's function, B's file — is
-  the first thing that would have needed a negotiation under the old rule and does not now.
+- **One person now, and the two-person conventions are retired.** Steps 1–35 were split between
+  Person A (`abhyudayb-1`, engine) and Person B (`shivakasula`, analysis) on separate machines;
+  that stopped binding at step 32 and Phases 6–8 name a branch per step, not an owner. The Owner
+  column in `TASKS.md` and the attributions in `src/riskparity.py`, `src/config.py`'s
+  `ERC_AGREEMENT_TOLERANCE` comment and `tests/test_riskparity.py` **stay**: they record that the
+  convex oracle was derived by a different person from the solver it checks, which is the whole
+  reason "independent" is a meaningful word there. Do not launder that into "an independent
+  oracle" — it would quietly weaken a real claim.
+- **What still binds:** one step per branch, merged before the next starts, named `feat/<NN>-slug`
+  (the `a`/`b` prefixes are retired). Doc refreshes go on their own `docs/`-prefixed branch rather
+  than riding along with a feature. `src/config.py` stays append-only, and `src/types.py` is never
+  modified on a feature branch — neither of those rules was about coordination.

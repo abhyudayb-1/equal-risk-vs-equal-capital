@@ -1,15 +1,23 @@
-"""THE CONTRACT between the engine (Person A) and the analysis layer (Person B).
+"""THE CONTRACT between the engine and everything that measures it.
 
-Everything Person A produces and everything Person B consumes passes through
-``BacktestResult``. Freezing it in Phase 0 is what lets both halves of the
-project be written at the same time: Person B builds charts, metrics and stress
-tests against ``tests.fixtures.make_fake_result()`` long before a real engine
-exists, and in Phase 5 the fixture is swapped for the real thing.
+Every strategy in this project -- the ERC engine, all four benchmarks, the
+comparison's matched column -- returns a ``BacktestResult``, so every metric,
+chart, stress test and comparison treats them identically. Nothing downstream
+has to know which one it is holding.
+
+Freezing it in Phase 0 is what let the engine and the analysis layer be written
+at the same time, on separate machines, by two people: charts, metrics and
+stress tests were built against ``tests.fixtures.make_fake_result()`` long
+before a real engine existed, and in Phase 5 the fixture was swapped for the
+real thing without touching a call site. **That decision outlived the staffing
+it was made for.** It is now what makes eleven test suites and nine module
+self-checks run offline, and what let ``src/comparison.py`` consume four
+benchmarks and two engine runs without special-casing any of them.
 
 **Do not change this file on a feature branch.** When it needs to change -- and
-it will, once or twice -- say so first, then open ONE pull request that changes
-the contract and both call sites together. If it changes more than about twice,
-it was cut wrong; re-cut it together rather than patching.
+it will, once or twice -- say so first, then make ONE commit that changes the
+contract and every call site together. If it changes more than about twice, it
+was cut wrong; re-cut it rather than patching.
 """
 
 from __future__ import annotations

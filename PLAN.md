@@ -31,10 +31,13 @@ correlation averaged **−0.09** and was positive on only 31% of days. What happ
 29.3% against SPY's 24.5% — the hedge lost more than the thing it hedged. See the 2022 section
 below and the "Data reality check" in `TASKS.md`.
 
-Two people build it in parallel on separate machines. The hard part of a 2-person split on a
-quant pipeline is that the analysis half normally can't start until the engine half produces
-output. This plan removes that dependency with a **frozen result contract + synthetic fixture**
-on day one, so both people are unblocked from hour 2 onward.
+**It was built by two people in parallel on separate machines, and is now continued by one.** The
+hard part of a 2-person split on a quant pipeline is that the analysis half cannot start until the
+engine half produces output; this plan removed that dependency with a **frozen result contract plus
+synthetic fixture** on day one. That decision outlived the staffing it was made for -- the contract
+is still what lets every chart, metric and test run without a live engine, and the fixtures are
+still what makes eleven suites run offline. Read the ownership split below as the record of how the
+work was divided, not as a rule still in force.
 
 **Home:** `abhyudayb-1/equal-risk-vs-equal-capital` (private). Working copy is
 `D:\Project 15`; local `main` tracks `origin/main`.
@@ -55,21 +58,34 @@ README, keyless data sources only, `reports/` for generated PNG/CSV.
 
 ---
 
-## Ownership split
+## How the work was divided — history, not a current rule
 
-| | **Person A — Engine** | **Person B — Analysis** |
+| | **Person A — Engine** (`abhyudayb-1`) | **Person B — Analysis** (`shivakasula`) |
 |---|---|---|
-| Owns | `data.py`, `covariance.py`, `riskparity.py`, `overlay.py`, `backtest.py`, `cache.py` | `metrics.py`, `benchmarks.py`, `stress.py`, `viz.py`, `tests/`, `run_backtest.py`, `README.md` |
+| Owned | `data.py`, `covariance.py`, `riskparity.py`, `overlay.py`, `backtest.py`, `cache.py` | `metrics.py`, `benchmarks.py`, `stress.py`, `viz.py`, `tests/`, `run_backtest.py`, `README.md` |
 | Theme | producing weights and returns | judging and explaining them |
 
-`src/config.py` is shared and **append-only** — add constants, never reformat or reorder
-existing ones, and say in the PR body which block you touched. This is the only file both
-people write, and append-only keeps it conflict-free in practice.
-
-**This split stopped binding at step 32** and Phase 8 does not revive it; its steps name a branch
-each, not an owner. The table above also predates three modules that belong to neither column:
+**The split stopped binding at step 32 and nothing has revived it.** Phases 6–8 name a branch per
+step, not an owner, and the project is now continued by one person in a repository they own. The
+table stays because it explains why some modules read the way they do — and because it is the
+reason one claim in this project is stronger than it would otherwise be: the convex log-barrier
+oracle in `tests/test_riskparity.py` was derived by a *different person* from the SLSQP solver it
+checks, which is what makes "independent" mean something. Those attributions are kept in the code
+on purpose. The table also predates three modules that belong to neither column:
 `src/riskmetrics.py` and `src/headtohead.py` (shared measurement, salvaged out of two removed
-products) and `src/comparison.py` (the study itself — see the Phase 8 section).
+products) and `src/comparison.py` and `src/sensitivity.py` (the study itself).
+
+**What still binds, and did not depend on there being two people:**
+
+- `src/config.py` is **append-only**. Add constants at the bottom of the relevant block, never
+  reorder or reformat what is there, and name the block you touched. It was append-only to stay
+  conflict-free between two machines; it stays append-only because every constant carries the
+  measurement that set it, and a reorder makes that history unreadable in a diff.
+- **One step per branch, merged before the next starts.** The `feat/a<NN>-` / `feat/b<NN>-` prefixes
+  are retired; `feat/<NN>-slug` is the form. Doc refreshes still go on their own `docs/`-prefixed
+  branch rather than riding along with a feature.
+- **`src/types.py` is never modified on a feature branch.** Changing the contract means one commit
+  that changes the contract and every call site together. That was never about coordination.
 
 ---
 
@@ -171,8 +187,9 @@ with timestamp ≤ `t` may be used — covariance, vol estimate, and risk-free r
 
 ## Phases
 
-**Phase 0 — joint, ~2h, do this together before splitting.** Invite Person B as a collaborator
-on the private repo. Create `.venv` (system Python has no numpy on this machine — the sp500
+**Phase 0 — joint, ~2h, done together before splitting.** (Historical: this is how the project
+started, when it was two people. The steps themselves still describe what Phase 0 produced.)
+Create `.venv` (system Python has no numpy on this machine — the sp500
 project's CLAUDE.md records this trap). Scaffold `src/`, port `cache.py` and `metrics.py`, and
 **freeze two contracts in one merged PR**: the `BacktestResult` dataclass (dated frames for
 `weights`, `risk_contributions`, `leverage`, `returns`, plus a `meta` dict) and the

@@ -8,7 +8,7 @@ Pipeline, in order, one module per stage:
 
     config.py       constants, universe, crisis windows, policy
     cache.py        on-disk cache for network pulls
-    types.py        the A/B contract: BacktestResult
+    types.py        the result contract: BacktestResult
     data.py         yfinance ETF closes + keyless FRED risk-free series
     covariance.py   EWMA covariance, shrinkage, PSD repair
     riskparity.py   risk contributions and the ERC solver

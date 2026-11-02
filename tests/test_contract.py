@@ -280,7 +280,7 @@ def test_fixture_alignment() -> None:
     """No look-ahead in the fixture, and the covariance warmup is respected.
 
     Both of these were wrong in the first cut of Phase 0. They matter because
-    every benchmark Person B writes (step 11 onward) copies the fixture's
+    every benchmark written from step 11 onward copies the fixture's
     alignment convention, and step 28's look-ahead test would then be asserting
     the opposite of what the fixture does.
     """
