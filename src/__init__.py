@@ -13,6 +13,8 @@ Pipeline, in order, one module per stage:
     metrics.py      Sharpe, CAGR, drawdown, crisis-window slices
     riskmetrics.py  VaR/CVaR, Sortino, Calmar, drawdown duration, the shared
                     metric table -- new code beside the metrics.py port
+    headtohead.py   one return series against another: correlation, beta,
+                    capture, the tail block, the crisis table
     benchmarks.py   equal-weight, 60/40, max-Sharpe, naive 1/vol
     stress.py       crisis decomposition, correlation-regime diagnostics
     viz.py          the report charts

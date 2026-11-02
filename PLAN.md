@@ -438,14 +438,15 @@ project's existing "a year of daily data is the least we trust" floor), not the 
   dates, longest drawdown, VaR/CVaR at `VAR_CONFIDENCE`, worst day, downside deviation, Sortino, Calmar,
   skew, kurtosis, CAGR, Sharpe), formatted by `riskmetrics.format_metric_table` so this report and
   Phase 6's print identical rows.
-- **Relative metrics** for each risk-parity column against the ticker: correlation; beta
+- **Relative metrics** (`headtohead.relative_metrics`) for each risk-parity column against the
+  ticker: correlation; beta
   `cov(s, t) / var(t)`; tracking error (annualised std of the daily difference); and up/down capture
   (the strategy's mean return on the days the ticker rose / fell, as a multiple of the ticker's own mean
   on those days).
-- **A tail block** — the ticker's worst `1 − VAR_CONFIDENCE` of days, the ticker's and the strategy's mean
+- **A tail block** (`headtohead.tail_block`) — the ticker's worst `1 − VAR_CONFIDENCE` of days, the ticker's and the strategy's mean
   on them, and the share of them on which the strategy beat the ticker. Correlation and beta average over
   the whole sample and can hide exactly this, which is the diversification claim being tested.
-- **Crisis windows**, per `config.CRISIS_WINDOWS`, measured from the peak close (returns stamped strictly
+- **Crisis windows** (`headtohead.crisis_table`), per `config.CRISIS_WINDOWS`, measured from the peak close (returns stamped strictly
   after the window's start, as `metrics.slice_to_window` does for a `BacktestResult`). A window counts
   as covered only if the overlap reaches both its ends; otherwise the row is `n/a`, never a partial window
   that reads like a full one.
@@ -473,21 +474,26 @@ to avoid is silence, not the comparison. A US-traded ADR of the same company is 
 ### File layout added by Phase 7
 
 ```
-src/compare.py         alignment and guards, relative metrics, the tail block, the crisis table,
-                        the comparison dataclass and the report (pure functions of return series)
+src/headtohead.py      relative metrics, the tail block, the crisis table and both printed forms —
+                        pure functions of two return series on one shared index, named for their
+                        roles (strategy vs benchmark), so any pairwise comparison can reuse them
+src/compare.py         what is genuinely ticker-specific: aligning a live price series onto the
+                        strategy's calendar, the two calendar tiers, the dataclass and the report
 compare_ticker.py      CLI entry point: compare_ticker.py --ticker <TICKER> [--refresh-prices]
                         — fetches, runs the engine, prints; owns no maths
-tests/test_compare.py  relative metrics on hand-derived pairs (s = 0.5 t, s = -t, a four-day example);
-                        the tail block on a hundred returns with a known worst five; crisis windows
-                        (day-count compounding, peak-day exclusion, n/a coverage); alignment and both
-                        guards; a check that the identities FAIL when the ticker is one day out of step
+tests/test_headtohead.py  relative metrics on hand-derived pairs (s = 0.5 t, s = -t, a four-day
+                        example); the tail block on a hundred returns with a known worst five;
+                        crisis windows (day-count compounding, peak-day exclusion, n/a coverage);
+                        and the printed forms, where an uncovered window must render n/a not 0.00%
+tests/test_compare.py  alignment and both guards; both calendar tiers; the report's blocks; and a
+                        check that the identities FAIL when the ticker is one day out of step
 tests/test_data.py     fetch_ticker_prices against a monkeypatched yfinance: a late-listed ticker is
                         accepted where fetch_prices' guard rejects it, the shared cache is untouched
 ```
 
 `src/config.py` gains one append-only block (`COMPARE_MIN_OVERLAP_DAYS`, `COMPARE_MIN_CALENDAR_MATCH`, `COMPARE_CALENDAR_WARN_BELOW`).
-`incremental.py` gains a public `format_metric_table` extracted from its own report code, so the two
-reports cannot drift apart; nothing else in `src/` changes.
+The shared metric rows come from `src/riskmetrics.py`, so this report and Phase 6's cannot drift
+apart; nothing else in `src/` changes.
 
 ### Explicit caveats the tool must state every time it runs
 

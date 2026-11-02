@@ -94,11 +94,13 @@ Standalone scripts — no pytest, no test runner. Run a file to run its suite; e
 .venv/bin/python tests/test_stress.py          # crisis table, diversification ratio, charts
 .venv/bin/python tests/test_riskparity.py      # risk-contribution identity, ERC oracle, edge cases
 .venv/bin/python tests/test_lookahead.py       # the <= t guard, including removing it to prove the check has teeth
-.venv/bin/python tests/test_incremental.py     # Phase 6: perturbation scan, compensation test, 5-asset limit, realized risk
-.venv/bin/python tests/test_compare.py         # head-to-head vs a ticker: relative metrics, tail block, crisis windows
+.venv/bin/python tests/test_incremental.py     # Phase 6: perturbation scan, compensation test, 5-asset limit, mixed-book replay
+.venv/bin/python tests/test_riskmetrics.py     # VaR/CVaR, Sortino, Calmar, drawdown duration, the shared metric table
+.venv/bin/python tests/test_headtohead.py      # one series against another: correlation/beta/capture, tail block, crisis table
+.venv/bin/python tests/test_compare.py         # head-to-head vs a ticker: alignment, both calendar tiers, the report
 ```
 
-No suite touches the network: all nine pass offline, checked by blocking `socket.connect` and
+No suite touches the network: all eleven pass offline, checked by blocking `socket.connect` and
 re-running each one, and yfinance is monkeypatched wherever a fetch is
 exercised. Most engine modules also carry a `__main__` self-check — `.venv/bin/python -m src.riskparity`
 verifies the analytic gradient against central differences and solves 500 random covariances,
@@ -132,6 +134,8 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
 | `src/overlay.py` | The volatility-targeting overlay: trailing EWMA portfolio volatility, `L_t = TARGET_VOL / σ̂_t` clipped to the leverage cap, and the financing leg `r_p = L_t·(r_assets − r_f) + r_f`. Enforces the one-day rule — a decision taken at the close of `t` earns returns from `t+1` onward. |
 | `src/backtest.py` | The monthly rebalance loop that ties the above together into a `BacktestResult`. Owns no maths; its job is to walk the calendar in the right order and never look forward. Solver non-convergence is counted into `meta`; a genuinely broken price series raises and kills the run. |
 | `src/metrics.py` | CAGR, annualised volatility, Sharpe, drawdown, hit rate, and the crisis-window slicing every table is built on. Ported from a predecessor repo with `periods_per_year` made a required argument, since this project accrues daily rather than monthly. |
+| `src/riskmetrics.py` | The realized-risk measures the metrics port does not carry: historical VaR and CVaR at `VAR_CONFIDENCE`, downside deviation, Sortino, Calmar, longest drawdown and whether it is still open — plus the one table formatter every report prints them with, so two reports cannot label the same metric differently. New code that *follows* `metrics.py`'s conventions rather than being added to a file that is a verbatim port. |
+| `src/headtohead.py` | One daily return series against another on a shared index: correlation, beta `cov(s, b) / var(b)`, tracking error, up/down capture, what the strategy did on the benchmark's worst `1 − VAR_CONFIDENCE` of days, and the per-crisis-window table. Named for roles (`strategy` vs `benchmark`), so the same functions serve any pairwise comparison. |
 | `src/benchmarks.py` | The four unlevered comparators: equal weight, 60/40, naive inverse-volatility ("risk parity" as usually shipped, which ignores correlations) and a rolling long-only max-Sharpe tangency portfolio. All return the same `BacktestResult` the engine does. |
 | `src/stress.py` | The crisis decomposition — every strategy across every crisis window, with the capital-weight-in-bonds and mean-leverage columns that make the ranking interpretable — plus the regime diagnostics: rolling SPY/TLT correlation and the diversification ratio `Σwᵢσᵢ / σₚ`. |
 | `src/viz.py` | The four report charts: risk contributions through time, capital weight beside risk weight, the leverage multiplier, and correlation against the diversification ratio. Crisis windows are shaded on each. |
@@ -676,7 +680,8 @@ The volatility, drawdown and return figures are unaffected by the pairing.
 run_backtest.py       the core-engine CLI — the only place that pipeline is wired together
 analyze_position.py   the incremental-analysis CLI (Phase 6) — see above
 compare_ticker.py     the head-to-head CLI (Phase 7): strategy vs buy-and-hold of any ticker
-src/                  one module per pipeline stage (table above), plus incremental.py (Phase 6)
+src/                  one module per pipeline stage (table above), plus the shared
+                      riskmetrics.py / headtohead.py, incremental.py (Phase 6)
                       and compare.py (Phase 7)
 tests/                standalone test scripts + the synthetic fixture
 reports/              generated CSV and charts (the committed set is from a live run)

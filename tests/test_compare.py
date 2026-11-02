@@ -9,27 +9,24 @@ series, so nothing needs the network. The live wiring (the engine run, the
 yfinance fetch) is ``compare_ticker.py``'s job and is exercised by running it;
 the fetch's own behaviour is in ``tests/test_data.py``.
 
-Every expected value below is derived from the definition, by hand, rather than
-by calling the function under test a second way:
+The metrics themselves -- relative metrics, the tail block, the crisis table and
+both printed forms -- moved to ``src/headtohead.py`` and are checked by
+``tests/test_headtohead.py``, including the hand-derived expectations that used
+to live here. What is tested below is the part that is specific to a *ticker*:
 
-* **Relative metrics** on pairs whose answer is known exactly: ``s = 0.5 * t``
-  must give correlation 1, beta 0.5 and both captures 0.5; ``s = -t`` must give
-  -1 throughout; and a four-day example worked out on paper.
-* **The tail block** on a hundred returns whose worst five days are known.
-* **Crisis windows**: a constant daily return compounds to a number computed
-  from the day count, a huge return on the peak day itself must NOT be counted,
-  and a ticker that listed after the window's start must give ``n/a`` rather
-  than a partial window.
 * **Alignment and the guards** -- overlap is the index intersection, too little
   overlap and a foreign trading calendar both raise.
+* **The two calendar tiers** -- a weekend-trading series is refused, a foreign
+  weekday exchange runs and sets ``calendar_warning``.
 * **The identity check can fail** -- the house technique: a candidate one day out
   of step must NOT reproduce ``beta = 0.5``, or the identity proves nothing about
   alignment.
+* **The report** -- every block renders, an uncovered window says why it is
+  ``n/a``, and undefined metrics never reach the reader as a number.
 """
 
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 
@@ -67,145 +64,6 @@ def expect_raises(label: str, exception: type[Exception], call) -> None:
 
 def _close(a: float, b: float, tol: float = TOLERANCE) -> bool:
     return abs(a - b) < tol
-
-
-def _daily(values, start: str = "2015-01-05") -> pd.Series:
-    return pd.Series(values, index=pd.bdate_range(start, periods=len(values)), dtype="float64")
-
-
-def _ticker_series(n: int = 600, seed: int = 3, start: str = "2015-01-05") -> pd.Series:
-    rng = np.random.default_rng(seed)
-    return _daily(rng.normal(0.0004, 0.012, n), start)
-
-
-# ---------------------------------------------------------------------------
-# Relative metrics
-# ---------------------------------------------------------------------------
-def test_relative_metrics_known_pairs() -> None:
-    t = _ticker_series()
-
-    half = compare.relative_metrics(0.5 * t, t)
-    check("s = 0.5 t: correlation is exactly 1", _close(half["correlation"], 1.0))
-    check("s = 0.5 t: beta is 0.5", _close(half["beta"], 0.5))
-    check("s = 0.5 t: up and down capture are both 0.5",
-          _close(half["up_capture"], 0.5) and _close(half["down_capture"], 0.5))
-    check(
-        "s = 0.5 t: tracking error is the annualised std of 0.5 t",
-        _close(half["tracking_error"], 0.5 * t.std(ddof=1) * math.sqrt(252)),
-    )
-
-    inverse = compare.relative_metrics(-t, t)
-    check("s = -t: correlation, beta and both captures are -1",
-          all(_close(inverse[k], -1.0) for k in ("correlation", "beta", "up_capture", "down_capture")))
-
-    same = compare.relative_metrics(t, t)
-    check("s = t: tracking error is zero", _close(same["tracking_error"], 0.0))
-
-
-def test_relative_metrics_four_day_example_by_hand() -> None:
-    """t = [+2%, -1%, +4%, -3%], s = [+1%, +0.5%, +1%, -1%].
-
-    Up days (t > 0) are days 1 and 3: mean t = 0.03, mean s = 0.01, so up
-    capture = 1/3. Down days are 2 and 4: mean t = -0.02, mean s = -0.0025, so
-    down capture = 0.125. Deviations from the means (t 0.005, s 0.00375) give a
-    covariance sum of 0.000775 and a variance sum of 0.0029, so beta =
-    0.000775 / 0.0029 (the ddof cancels).
-    """
-    t = _daily([0.02, -0.01, 0.04, -0.03])
-    s = _daily([0.01, 0.005, 0.01, -0.01])
-    result = compare.relative_metrics(s, t)
-    check("up capture is 1/3", _close(result["up_capture"], 1.0 / 3.0))
-    check("down capture is 0.125", _close(result["down_capture"], 0.125))
-    check("beta is 0.000775 / 0.0029", _close(result["beta"], 0.000775 / 0.0029))
-
-
-def test_relative_metrics_degenerate_inputs() -> None:
-    flat = _daily([0.001] * 50)
-    result = compare.relative_metrics(_ticker_series(50), flat)
-    check("a ticker with no variance has an UNDEFINED beta and correlation (NaN)",
-          math.isnan(result["beta"]) and math.isnan(result["correlation"]))
-    all_up = compare.relative_metrics(_ticker_series(50), _daily([0.001] * 50))
-    check("no down days means an undefined down capture, not a zero",
-          math.isnan(all_up["down_capture"]))
-    expect_raises(
-        "series on different indexes are rejected",
-        ValueError,
-        lambda: compare.relative_metrics(_ticker_series(50), _ticker_series(50, start="2016-01-04")),
-    )
-
-
-# ---------------------------------------------------------------------------
-# The tail block
-# ---------------------------------------------------------------------------
-def test_tail_block_hand_derived() -> None:
-    """t_k = (k - 51) / 1000 for k = 1..100, so the ticker's 5% VaR is -0.04505
-    and the days at or below it are k = 1..5 (-0.050 .. -0.046), mean -0.048.
-    The strategy returns +1% on the first three of them and -6% on the last
-    two: mean (3 * 0.01 - 2 * 0.06) / 5 = -0.018. It beats the ticker on the
-    first three (+1% > -5.0%, -4.9%, -4.8%) and loses on the last two
-    (-6% < -4.7%, -4.6%): 3 of 5 = 0.6.
-    """
-    t = _daily((np.arange(1, 101) - 51) / 1000.0)
-    s = _daily(np.zeros(100))
-    s.iloc[0:3] = 0.01
-    s.iloc[3:5] = -0.06
-    block = compare.tail_block(s, t, 0.95)
-    check("the tail is the five worst days", block["n_days"] == 5)
-    check("the ticker averages -0.048 on them", _close(block["ticker_mean"], -0.048))
-    check("the strategy averages -0.018 on them", _close(block["strategy_mean"], -0.018))
-    check("the strategy beat the ticker on 3 of the 5", _close(block["strategy_beat_share"], 0.6))
-    expect_raises(
-        "series on different indexes are rejected",
-        ValueError,
-        lambda: compare.tail_block(_daily([0.0] * 100, "2016-01-04"), t),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Crisis windows
-# ---------------------------------------------------------------------------
-def test_crisis_table_by_hand() -> None:
-    index = pd.bdate_range("2007-01-01", "2024-12-31")
-    constant = pd.Series(0.001, index=index)
-    table = compare.crisis_table(constant, constant)
-
-    start, end = pd.Timestamp("2020-02-19"), pd.Timestamp("2020-03-23")
-    n_days = len(pd.bdate_range(start + pd.Timedelta(days=1), end))
-    expected = 1.001**n_days - 1.0
-    covid = table.loc["COVID (2020)"]
-    check("every window is covered on a full-history series", bool(table["covered"].all()))
-    check(
-        "a constant 0.1% a day compounds over exactly the days AFTER the peak",
-        _close(covid["strategy_return"], expected, 1e-9) and _close(covid["ticker_return"], expected, 1e-9),
-    )
-
-    spiked = constant.copy()
-    spiked.loc[start] = 0.5  # the peak day's own return: it happened on the way UP
-    spiked_table = compare.crisis_table(spiked, constant)
-    check(
-        "a huge return on the peak day itself is excluded from the window",
-        _close(spiked_table.loc["COVID (2020)", "strategy_return"], expected, 1e-9),
-    )
-
-    falling = pd.Series(-0.001, index=index)
-    down = compare.crisis_table(falling, falling).loc["COVID (2020)"]
-    check("a steadily falling series draws down by exactly its total decline",
-          _close(down["strategy_max_drawdown"], down["strategy_return"], 1e-9))
-
-    late_index = pd.bdate_range("2023-01-02", "2024-12-31")  # after all three windows
-    late = pd.Series(0.001, index=late_index)
-    late_table = compare.crisis_table(late, late)
-    check("a series that starts after every window has none of them covered",
-          not late_table["covered"].any())
-    check("...and reports NaN for them, not a partial window",
-          bool(late_table[["strategy_return", "ticker_return"]].isna().all().all()))
-
-    partial = compare.crisis_table(
-        pd.Series(0.001, index=pd.bdate_range("2021-01-04", "2024-12-31")),
-        pd.Series(0.001, index=pd.bdate_range("2021-01-04", "2024-12-31")),
-    )
-    check("a window that ended before the data starts is not covered",
-          not bool(partial.loc["GFC (2008)", "covered"]))
 
 
 # ---------------------------------------------------------------------------
@@ -396,14 +254,6 @@ def test_report_formatting() -> None:
 
 
 if __name__ == "__main__":
-    test_relative_metrics_known_pairs()
-    test_relative_metrics_four_day_example_by_hand()
-    test_relative_metrics_degenerate_inputs()
-
-    test_tail_block_hand_derived()
-
-    test_crisis_table_by_hand()
-
     test_alignment_and_wiring()
     test_overlap_is_the_intersection_for_a_young_ticker()
     test_guards_raise()
