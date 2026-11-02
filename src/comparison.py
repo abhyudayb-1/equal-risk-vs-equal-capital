@@ -138,6 +138,9 @@ class RuleComparison:
     relative: pd.DataFrame
     tail: pd.DataFrame
     crisis: pd.DataFrame
+    allocation: pd.DataFrame
+    concentration: pd.DataFrame
+    effective_bets: pd.DataFrame
     weights_unchanged: bool
     meta: dict
 
@@ -206,6 +209,98 @@ def build_series(
         ERC_MATCHED_FREE: financed_returns(matched_unlevered, matched.leverage, zero),
     }
     return pd.DataFrame({name: columns[name] for name in COLUMN_ORDER}, index=index)
+
+
+# ---------------------------------------------------------------------------
+# Risk allocation -- where each rule actually puts its risk (step 54)
+# ---------------------------------------------------------------------------
+# The return table says what each rule earned. This says what each rule was
+# DOING, which is the part a capital-weight pie chart hides: ERC holds equal
+# risk by construction and lets capital move, 1/N holds capital still and lets
+# risk move wherever volatility takes it.
+#
+# Only the rules with distinct weights get a block. The levered ERC columns are
+# deliberately excluded: they hold the SAME weights as ERC unlevered -- that is
+# the whole premise of the matched column -- so listing them would repeat one
+# rule four times and imply four allocations where there is one.
+ALLOCATION_RULES: tuple[str, ...] = (ERC_UNLEVERED, EQUAL_CAPITAL, NAIVE_INV_VOL, SIXTY_FORTY, MAX_SHARPE)
+
+
+def effective_bets(risk_contributions: pd.DataFrame) -> pd.Series:
+    """Effective number of independent bets per rebalance: ``1 / sum(RC_i**2)``.
+
+    The reciprocal Herfindahl index of the risk shares. ``N`` when every sleeve
+    carries ``1/N`` of the risk, ``1`` when one sleeve carries all of it, so it
+    reads directly as "how many sleeves is this book really betting on".
+
+    **The usual ``[1, N]`` bound holds only while every share is non-negative,
+    and 1/N does not guarantee that.** A sleeve that hedges the rest can carry a
+    *negative* risk contribution; the shares still sum to 1, but ``sum(RC**2)``
+    can then exceed 1 and push this below 1. Measured on the live sample: 1/N
+    produced a negative share at **12 of 237** rebalances and the lowest
+    effective bets reached was **1.84**, so the bound was never actually
+    breached here -- but it is not guaranteed, and a check that asserts
+    ``>= 1`` is asserting something about this data rather than about the
+    formula. ERC cannot hit the case at all: equal positive shares by
+    construction.
+    """
+    if not isinstance(risk_contributions, pd.DataFrame) or risk_contributions.empty:
+        raise ComparisonError("risk_contributions must be a non-empty DataFrame of risk shares")
+    squared = (risk_contributions.astype("float64") ** 2).sum(axis=1)
+    if (squared <= 0).any():
+        raise ComparisonError("a rebalance has zero total squared risk share; shares cannot all be 0")
+    return (1.0 / squared).rename("effective_bets")
+
+
+def allocation_table(results: dict) -> pd.DataFrame:
+    """Mean capital weight beside mean risk share, per sleeve, per rule.
+
+    The single table this whole project is an argument about. Rows are sleeves,
+    columns are ``(rule, capital)`` and ``(rule, risk)`` pairs. Both come from
+    the ``BacktestResult`` each rule already produced -- ``benchmarks.fixed_weight``
+    recomputes 1/N's risk shares from the engine's own covariance at every
+    rebalance, so nothing is estimated here.
+    """
+    columns = {}
+    for name, result in results.items():
+        columns[(name, "capital")] = result.weights.mean()
+        columns[(name, "risk")] = result.risk_contributions.mean()
+    table = pd.DataFrame(columns)
+    table.columns = pd.MultiIndex.from_tuples(table.columns)
+    return table
+
+
+def concentration_table(results: dict) -> pd.DataFrame:
+    """One row per rule: how concentrated its risk is, and how much it moves.
+
+    ``effective_bets_mean`` is the mean of the per-rebalance values, **not**
+    ``1 / mean(sum(RC**2))``. The two are different numbers and the first is the
+    one that reads as "the average number of bets": because ``1/x`` is convex,
+    aggregating the other way round understates it (measured on 1/N: 2.92
+    against 2.83). An earlier draft of this project's write-up quoted the 2.83
+    and called it the average; it was the wrong aggregation, not a different
+    rounding.
+    """
+    rows = []
+    for name, result in results.items():
+        rc = result.risk_contributions
+        bets = effective_bets(rc)
+        widest = (rc.max() - rc.min()).idxmax()
+        rows.append(
+            {
+                "name": name,
+                "effective_bets_mean": float(bets.mean()),
+                "effective_bets_min": float(bets.min()),
+                "effective_bets_max": float(bets.max()),
+                "worst_sleeve_risk_share": float(rc.max(axis=1).max()),
+                "widest_sleeve": widest,
+                "widest_range_low": float(rc[widest].min()),
+                "widest_range_high": float(rc[widest].max()),
+                "negative_share_rebalances": int((rc < 0).any(axis=1).sum()),
+                "n_rebalances": int(len(rc)),
+            }
+        )
+    return pd.DataFrame(rows).set_index("name").rename_axis(None)
 
 
 def compare_rules(
@@ -318,6 +413,22 @@ def compare_rules(
         series[ERC_UNLEVERED], series[EQUAL_CAPITAL], periods_per_year=periods_per_year
     )
 
+    # Risk allocation (step 54). ERC's own block comes from the UNLEVERED engine
+    # result, because the levered columns hold identical weights -- the matched
+    # column is the same book at a different size, not a different allocation.
+    allocation_results = {
+        ERC_UNLEVERED: engine,
+        EQUAL_CAPITAL: benchmarks[EQUAL_CAPITAL],
+        NAIVE_INV_VOL: benchmarks[NAIVE_INV_VOL],
+        SIXTY_FORTY: benchmarks[SIXTY_FORTY],
+        MAX_SHARPE: benchmarks[MAX_SHARPE],
+    }
+    allocation = allocation_table(allocation_results)
+    concentration = concentration_table(allocation_results)
+    bets = pd.DataFrame(
+        {name: effective_bets(r.risk_contributions) for name, r in allocation_results.items()}
+    )
+
     return RuleComparison(
         data_through=str(index[-1].date()),
         start=str(index[0].date()),
@@ -332,6 +443,9 @@ def compare_rules(
         relative=relative,
         tail=tail,
         crisis=crisis,
+        allocation=allocation,
+        concentration=concentration,
+        effective_bets=bets,
         weights_unchanged=weights_unchanged,
         meta={
             "engine": engine.meta,
@@ -362,6 +476,29 @@ _CAVEATS: tuple[str, ...] = (
 )
 
 
+def format_allocation_table(allocation: pd.DataFrame) -> str:
+    """:func:`allocation_table`'s frame as capital-beside-risk percentages."""
+    return allocation.map(lambda v: f"{v:.1%}").to_string()
+
+
+def format_concentration_table(concentration: pd.DataFrame) -> str:
+    """:func:`concentration_table`'s frame, one labelled line per rule."""
+    rows = {}
+    for name in concentration.index:
+        c = concentration.loc[name]
+        rows[name] = {
+            "effective bets (mean)": f"{c['effective_bets_mean']:.2f}",
+            "   min - max": f"{c['effective_bets_min']:.2f} - {c['effective_bets_max']:.2f}",
+            "worst sleeve's risk share": f"{c['worst_sleeve_risk_share']:.1%}",
+            "widest-moving sleeve": str(c["widest_sleeve"]),
+            "   its risk share range": f"{c['widest_range_low']:.1%} to {c['widest_range_high']:.1%}",
+            "rebalances w/ a negative share": (
+                f"{int(c['negative_share_rebalances'])} of {int(c['n_rebalances'])}"
+            ),
+        }
+    return pd.DataFrame(rows).to_string()
+
+
 def format_comparison_report(comp: RuleComparison) -> str:
     """Human-readable account of one :func:`compare_rules` run."""
     lines = [
@@ -390,6 +527,33 @@ def format_comparison_report(comp: RuleComparison) -> str:
     if counterfactual:
         lines.append(f"  ! counterfactual, not runnable: {', '.join(counterfactual)}")
 
+    lines.append("\nWhere each rule puts its risk -- mean capital weight beside mean risk share")
+    lines.append(textwrap.indent(format_allocation_table(comp.allocation), "  "))
+    lines.append(
+        "  Equal capital is flat by definition and its RISK is not; equal risk is flat by"
+    )
+    lines.append(
+        "  construction and its CAPITAL is not. That divergence is the whole argument."
+    )
+
+    lines.append("\nHow concentrated that risk is (effective bets = 1 / sum of squared risk shares)")
+    lines.append(textwrap.indent(format_concentration_table(comp.concentration), "  "))
+    lines.append(
+        f"  {len(UNIVERSE)}.00 means every sleeve carries an equal share of the risk; "
+        "1.00 means one sleeve carries all of it."
+    )
+    _negatives = comp.concentration["negative_share_rebalances"]
+    if (_negatives > 0).any():
+        _named = ", ".join(str(n) for n in _negatives[_negatives > 0].index)
+        lines.append(
+            f"  ! {_named} produced a NEGATIVE risk share at some rebalances -- a sleeve"
+        )
+        lines.append(
+            "    hedging the rest. The shares still sum to 1, but effective bets is then no"
+        )
+        lines.append(
+            "    longer bounded below by 1.00, so read it as a measure rather than a count."
+        )
     lines.append(f"\nRelative to {EQUAL_CAPITAL} (daily returns)")
     lines.append(textwrap.indent(format_relative_table(comp.relative, "1/N"), "  "))
     lines.append("  Down capture below 100% = lost less than 1/N on 1/N's down days.")
@@ -452,6 +616,53 @@ if __name__ == "__main__":  # pragma: no cover
     check("a rule compared with itself would give beta 1 (sanity on the primitive)",
           abs(relative_metrics(comparison.series[EQUAL_CAPITAL],
                                comparison.series[EQUAL_CAPITAL])["beta"] - 1.0) < 1e-9)
+
+    # --- step 54: risk allocation ------------------------------------------
+    n = len(UNIVERSE)
+    check("the allocation block covers exactly the rules with distinct weights",
+          sorted({r for r, _ in comparison.allocation.columns}) == sorted(ALLOCATION_RULES))
+    check("each rule's mean capital weights sum to 1",
+          all(abs(comparison.allocation[(r, "capital")].sum() - 1.0) < 1e-9
+              for r in ALLOCATION_RULES))
+    check("each rule's mean risk shares sum to 1",
+          all(abs(comparison.allocation[(r, "risk")].sum() - 1.0) < 1e-9
+              for r in ALLOCATION_RULES))
+    check("equal CAPITAL really is flat for 1/N",
+          abs(comparison.allocation[(EQUAL_CAPITAL, "capital")] - 1.0 / n).max() < 1e-12)
+    check("...while its RISK is not -- that divergence is the thesis",
+          abs(comparison.allocation[(EQUAL_CAPITAL, "risk")] - 1.0 / n).max() > 0.01)
+    check("equal RISK really is flat for ERC",
+          abs(comparison.allocation[(ERC_UNLEVERED, "risk")] - 1.0 / n).max() < 1e-6)
+    check("...while its CAPITAL is not",
+          abs(comparison.allocation[(ERC_UNLEVERED, "capital")] - 1.0 / n).max() > 0.01)
+
+    # The two limiting cases the formula has to honour, hand-built so neither
+    # depends on the fixture. These are what make the measured numbers readable.
+    equal = pd.DataFrame([[1.0 / n] * n], columns=list(UNIVERSE))
+    one_sleeve = pd.DataFrame([[1.0] + [0.0] * (n - 1)], columns=list(UNIVERSE))
+    check(f"effective bets is exactly {n} when every risk share is equal",
+          abs(float(effective_bets(equal).iloc[0]) - n) < 1e-12)
+    check("effective bets is exactly 1 when one sleeve carries all the risk",
+          abs(float(effective_bets(one_sleeve).iloc[0]) - 1.0) < 1e-12)
+    check("a negative risk share can push effective bets BELOW 1 -- the [1, N] bound "
+          "is not guaranteed, so the docstring says so",
+          float(effective_bets(pd.DataFrame([[1.5, -0.5, 0.0, 0.0]],
+                                            columns=list(UNIVERSE))).iloc[0]) < 1.0)
+    try:
+        effective_bets(pd.DataFrame())
+        raise AssertionError("FAILED: an empty frame did not raise")
+    except ComparisonError:
+        check("an empty risk-contribution frame raises rather than returning nothing", True)
+
+    check("ERC takes exactly N effective bets at every rebalance, by construction",
+          abs(comparison.effective_bets[ERC_UNLEVERED] - n).max() < 1e-6)
+    check("1/N takes fewer, and the concentration table reports the mean of the "
+          "per-rebalance values rather than 1 / the mean concentration",
+          comparison.concentration.at[EQUAL_CAPITAL, "effective_bets_mean"] < n
+          and abs(comparison.concentration.at[EQUAL_CAPITAL, "effective_bets_mean"]
+                  - comparison.effective_bets[EQUAL_CAPITAL].mean()) < 1e-12)
+    check("the worst single-sleeve risk share is reported and exceeds 1/N for 1/N",
+          comparison.concentration.at[EQUAL_CAPITAL, "worst_sleeve_risk_share"] > 1.0 / n)
 
     print(f"\n{checks} checks passed")
     print("\nFixture data: shape, not magnitude. Nothing was written to disk.")
