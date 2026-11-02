@@ -40,7 +40,7 @@ Run a self-check from the repo root::
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
 import matplotlib
@@ -96,6 +96,52 @@ CRISIS_ALPHA = 0.18
 
 FIGURE_DPI = 150
 DEFAULT_FIGSIZE = (11.0, 5.5)
+
+# The return/volatility plane (step 57). Iso-ratio rays every 0.10 of
+# return-to-volatility: 0.05 was tried first and drew eleven near-parallel grey
+# lines across a chart with nine points on it, which is texture rather than a
+# reference. Label geometry is in fractions of the axis so it does not have to
+# know what the units are -- a label sits LABEL_OFFSET_FRACTION of the width
+# from its marker, flips to the marker's left once the marker is past
+# LABEL_FLIP_FRACTION of the width, and keeps at least LABEL_MIN_GAP of the
+# height from its neighbour.
+ISO_RATIO_STEP = 0.10
+LABEL_OFFSET_FRACTION = 0.018
+LABEL_FLIP_FRACTION = 0.58
+LABEL_MIN_GAP = 0.058
+
+# ``src.comparison``'s row labels, resolved on demand rather than copied here.
+# Three reasons the import is inside the functions: ``src.comparison`` pulls in
+# the whole engine and ``src.viz`` is imported by callers that only want a
+# chart; ``src.comparison`` stays free to import ``src.viz`` later without a
+# cycle; and a label copied as a literal here would silently stop matching the
+# day the label is edited there. ``render_comparison`` raises rather than
+# rendering an empty figure if a name stops resolving.
+
+
+def comparison_panel_rules() -> tuple[str, ...]:
+    """The rules that get a risk-share panel, in the order a reader meets them.
+
+    The two protagonists, equal risk first: the flat panel, then the one that is
+    supposed to look like it and does not.
+    """
+    from .comparison import EQUAL_CAPITAL, ERC_UNLEVERED
+
+    return (ERC_UNLEVERED, EQUAL_CAPITAL)
+
+
+def comparison_counterfactual() -> frozenset[str]:
+    """The row names that are not strategies anyone can run."""
+    from .comparison import COUNTERFACTUAL
+
+    return COUNTERFACTUAL
+
+
+def comparison_lever_path() -> tuple[str, str]:
+    """The unlevered row and its matched twin, for the arrow on the plane chart."""
+    from .comparison import ERC_MATCHED_FINANCED, ERC_UNLEVERED
+
+    return (ERC_UNLEVERED, ERC_MATCHED_FINANCED)
 
 
 def _colour_map(tickers: Sequence[str]) -> dict[str, str]:
@@ -229,6 +275,33 @@ def _shade_crises(ax, windows: Mapping[str, tuple[str, str]] | None = None,
                 xycoords=("data", "axes fraction"),
                 color=MUTED, fontsize=8, va="top", ha="left", rotation=90,
             )
+    ax.set_xlim(left, right)
+
+
+def _mark_crises_over_fill(ax, windows: Mapping[str, tuple[str, str]] | None = None) -> None:
+    """Mark the crisis windows on top of a filled chart, as edges rather than a wash.
+
+    ``_shade_crises`` draws an ``axvspan`` at ``zorder=0``, which an opaque
+    stackplot covers completely -- on a stacked-area panel it is ink that never
+    reaches the page. This draws the window *boundaries* over the fill instead:
+    two hairlines and a label, in white, which reads against every colour in the
+    palette without tinting the bands underneath. The windows still come from
+    ``config.CRISIS_WINDOWS``, so one edit moves them everywhere.
+    """
+    left, right = ax.get_xlim()
+    for label, (start, end) in (windows or CRISIS_WINDOWS).items():
+        start_num = mdates.date2num(pd.Timestamp(start))
+        end_num = mdates.date2num(pd.Timestamp(end))
+        if end_num < left or start_num > right:
+            continue
+        for edge in (start_num, end_num):
+            if left <= edge <= right:
+                ax.axvline(edge, color="white", linewidth=0.9, alpha=0.8,
+                           linestyle=(0, (3, 2)), zorder=2)
+        ax.annotate(
+            label, xy=(max(start_num, left), 0.985), xycoords=("data", "axes fraction"),
+            color="white", fontsize=8, va="top", ha="left", rotation=90, zorder=3,
+        )
     ax.set_xlim(left, right)
 
 
@@ -497,6 +570,350 @@ def plot_correlation_and_diversification(
 
 
 # ---------------------------------------------------------------------------
+# Step 57 -- the two comparison charts
+# ---------------------------------------------------------------------------
+# The four charts above all describe ONE strategy. These two describe the
+# comparison: where two rules put their risk, and where every rule lands on the
+# return/volatility plane. They take plain frames rather than a RuleComparison
+# so that neither is tied to the shape of one dataclass -- ``render_comparison``
+# at the bottom is the adapter that pulls them out of one.
+
+
+def plot_rule_risk_shares(
+    risk_shares: Mapping[str, pd.DataFrame],
+    path: str | Path | None = None,
+    title: str | None = None,
+) -> Path:
+    """Each rule's risk shares through time, one panel per rule, on one y-axis.
+
+    :func:`plot_risk_contributions` is this chart with one panel. Putting the
+    rules side by side is what makes the comparison visible rather than
+    inferable: equal risk draws four flat ribbons at 1/N, and equal capital
+    draws the same four sleeves wandering between 9% and 60% of the risk -- on
+    the same scale, in the same colours, over the same crisis shading. Read it
+    for *which panel is flat*.
+
+    Each panel's subtitle carries that rule's mean effective bets, because the
+    number is the one-line version of what the panel shows and the eye cannot
+    integrate a band's width over twenty years.
+
+    ``risk_shares`` maps a rule's name to its ``risk_contributions`` frame --
+    rows summing to 1, one column per sleeve. Panels are drawn in the order the
+    mapping gives them, so the caller controls which rule a reader meets first.
+    """
+    if not risk_shares:
+        raise ValueError("cannot plot risk shares for no rules at all")
+    for name, frame in risk_shares.items():
+        if frame.empty:
+            raise ValueError(f"{name}'s risk-share frame is empty")
+
+    # Colours keyed on the union of the sleeves, in first-seen order, so a rule
+    # holding a subset (60/40 has no DBC) cannot inherit another sleeve's colour
+    # -- the same reason _colour_map is keyed by ticker everywhere else.
+    sleeves: list[str] = []
+    for frame in risk_shares.values():
+        sleeves.extend(t for t in frame.columns if t not in sleeves)
+    colours = _colour_map(sleeves)
+
+    n_panels = len(risk_shares)
+    figure, axes = _new_figure(
+        figsize=(6.2 * n_panels, 5.4), nrows=1, ncols=n_panels, sharey=True
+    )
+    panels = np.atleast_1d(np.asarray(axes, dtype=object)).ravel()
+
+    for ax, (name, frame) in zip(panels, risk_shares.items()):
+        tickers = list(frame.columns)
+        n = len(tickers)
+        ax.stackplot(
+            frame.index,
+            [frame[t].to_numpy() for t in tickers],
+            colors=[colours[t] for t in tickers],
+            labels=[f"{_label(t)} - {frame[t].mean():.0%} mean" for t in tickers],
+            edgecolor="white",
+            linewidth=0.4,
+        )
+        # The 1/N ladder, as in plot_risk_contributions: the levels an
+        # equal-RISK book's bands land on. Drawn on both panels on purpose -- it
+        # is the reference the equal-capital panel is being read against.
+        for k in range(1, n):
+            ax.axhline(k / n, color="white", linewidth=0.9, linestyle=(0, (4, 3)), alpha=0.85)
+
+        _style_axes(ax, ylabel="Share of portfolio volatility")
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlim(frame.index[0], frame.index[-1])
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+        ax.grid(False)
+        _mark_crises_over_fill(ax)
+
+        # Computed here rather than imported from src.comparison: this chart
+        # must not depend on the module that will import it back.
+        bets = float((1.0 / (frame.astype("float64") ** 2).sum(axis=1)).mean())
+        _title(ax, name, f"{bets:.2f} of {n:.2f} effective bets on average")
+        ax.legend(
+            loc="upper center", bbox_to_anchor=(0.5, -0.06), ncol=2,
+            frameon=False, fontsize=8.5, labelcolor=INK,
+        )
+
+    figure.suptitle(
+        title or "Where each rule puts its risk",
+        x=0.01, ha="left", color=INK, fontsize=13,
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.94))
+    return _save(figure, path or REPORTS_DIR / "rule_risk_shares.png", tight=False)
+
+
+def _spread_labels(
+    ax,
+    points: Sequence[tuple[float, float]],
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+) -> list[tuple[float, float, str]]:
+    """Label anchors for a scatter whose points cluster, as ``(x, y, ha)``.
+
+    Returns one anchor per point, in the order given. Points in the right-hand
+    part of the axes get their label to the *left* so it cannot run off the
+    edge; the rest get it to the right. Within each side, labels are sorted by
+    height and pushed apart to at least ``LABEL_MIN_GAP`` of the axis height,
+    from the bottom up and then from the top down, so a cluster fans out
+    instead of overprinting.
+
+    Deliberately simple rather than a full label-placement solver: the chart it
+    serves has fewer than a dozen points, an anchor is always joined to its
+    marker by a leader line, and a reader can follow a leader. What it must not
+    do is move the *markers*, which is the one thing that would be dishonest.
+    """
+    x0, x1 = xlim
+    y0, y1 = ylim
+    width = max(x1 - x0, 1e-12)
+    height = max(y1 - y0, 1e-12)
+    offset = LABEL_OFFSET_FRACTION * width
+
+    anchors: list[tuple[float, float, str]] = [(0.0, 0.0, "left")] * len(points)
+    for on_right in (False, True):
+        group = [
+            index
+            for index, (x, _) in enumerate(points)
+            if ((x - x0) / width > LABEL_FLIP_FRACTION) == on_right
+        ]
+        group.sort(key=lambda index: points[index][1])
+
+        # Up from the bottom, then back down from the top: the second pass is
+        # what stops the first from pushing the whole stack off the top edge.
+        placed: list[float] = []
+        for index in group:
+            fraction = (points[index][1] - y0) / height
+            if placed:
+                fraction = max(fraction, placed[-1] + LABEL_MIN_GAP)
+            placed.append(fraction)
+        overflow = placed[-1] - (1.0 - LABEL_MIN_GAP / 2) if placed else 0.0
+        if overflow > 0:
+            for position in range(len(placed) - 1, -1, -1):
+                placed[position] = min(
+                    placed[position],
+                    (placed[position + 1] - LABEL_MIN_GAP)
+                    if position + 1 < len(placed)
+                    else (1.0 - LABEL_MIN_GAP / 2),
+                )
+
+        for index, fraction in zip(group, placed):
+            x = points[index][0]
+            anchors[index] = (
+                x - offset if on_right else x + offset,
+                y0 + fraction * height,
+                "right" if on_right else "left",
+            )
+    return anchors
+
+
+def plot_return_vol_plane(
+    summary: pd.DataFrame,
+    path: str | Path | None = None,
+    title: str | None = None,
+    counterfactual: Collection[str] = (),
+    match_vol: float | None = None,
+    lever_path: tuple[str, str] | None = None,
+) -> Path:
+    """Every rule as a point on the volatility/return plane, with iso-ratio rays.
+
+    The chart that makes the comparison read as a *position* rather than a
+    number. Two books at different volatilities are not comparable on return,
+    which is the entire reason the matched column exists -- and on this plane
+    that stops being an argument and becomes a picture. The rays are constant
+    return-to-volatility, so a point's ratio is which ray it sits on, and
+    levering a book would move it *along* its own ray if leverage were free.
+
+    It is not, and the chart is drawn to show it. ``lever_path`` names the
+    unlevered row and its matched twin, and the arrow between them is where the
+    book actually went once financing was charged -- it lands below the ray it
+    started on, by the cost of the leverage. ``match_vol`` draws the vertical
+    the matched column was aiming at, so the distance from the vertical to where
+    the point landed is the overlay's overshoot, also shown rather than stated.
+
+    ``counterfactual`` rows are drawn hollow. They are not strategies anyone can
+    run, and a filled marker among filled markers is exactly how a reader ends
+    up quoting one.
+
+    ``summary`` is a :func:`src.riskmetrics.realized_risk_table` frame, or
+    anything with ``annual_volatility`` and ``sharpe_ratio`` columns indexed by
+    rule.
+
+    **The y-axis is the arithmetic annualized return, not CAGR, and that is
+    load-bearing.** This project's ratio is ``mean(r) * periods / (sd *
+    sqrt(periods))`` -- the return-to-volatility ratio every table here prints --
+    and ``CAGR / volatility`` is a different number, smaller by the compounding
+    drag and by a different amount for every row. Plotting CAGR against
+    volatility would draw points whose position implied one ratio while their
+    label quoted another, which is precisely the kind of two-numbers-for-one-
+    thing this repo refuses elsewhere. With the arithmetic mean on the axis,
+    a point's ratio IS the ray it sits on, exactly.
+    """
+    required = {"annual_volatility", "sharpe_ratio"}
+    missing = required - set(summary.columns)
+    if missing or summary.empty:
+        raise ValueError(
+            f"need a non-empty summary with {sorted(required)}; missing {sorted(missing)}"
+        )
+
+    counterfactual = set(counterfactual)
+    vols = summary["annual_volatility"].astype("float64")
+    # ratio * volatility == mean(excess) * periods_per_year, i.e. the annualized
+    # arithmetic return, recovered rather than recomputed so the two cannot drift.
+    ratios = summary["sharpe_ratio"].astype("float64")
+    cagrs = ratios * vols
+
+    figure, ax = _new_figure(figsize=(9.8, 6.6))
+
+    x_max = float(max(vols.max(), match_vol or 0.0)) * 1.24
+    y_min = min(0.0, float(cagrs.min()) * 1.25)
+    y_max = float(cagrs.max()) * 1.25
+
+    # Iso-ratio rays through the origin, at round ratios bracketing the data,
+    # each labelled where it leaves the axes rather than in a legend -- a legend
+    # of parallel grey lines tells a reader nothing about which is which. Every
+    # ray gets a label: the shallow ones exit through the right-hand edge, the
+    # steep ones through the top, and an unlabelled ray is just clutter.
+    finite = ratios.replace([np.inf, -np.inf], np.nan).dropna()
+    if len(finite):
+        step = ISO_RATIO_STEP
+        low = np.floor(float(finite.min()) / step) * step
+        high = np.ceil(float(finite.max()) / step) * step
+        for level in np.arange(max(low, step), high + step / 2, step):
+            ax.plot([0.0, x_max], [0.0, level * x_max], color=GRID, linewidth=0.8,
+                    zorder=0, linestyle=(0, (6, 4)))
+            if level * x_max <= y_max:
+                anchor, align = (x_max, level * x_max), {"ha": "right", "va": "bottom"}
+            else:
+                anchor, align = (y_max / level, y_max), {"ha": "left", "va": "top"}
+            ax.annotate(f"{level:.2f}", xy=anchor, xycoords="data",
+                        color=MUTED, fontsize=8, zorder=0, **align)
+
+    if match_vol is not None:
+        ax.axvline(match_vol, color=INK, linewidth=0.9, alpha=0.4, linestyle=(0, (3, 3)))
+        # Anchored in axes fraction rather than at y_max, so it clears the ray
+        # label that also lives on the top edge.
+        ax.annotate(
+            f"match point {match_vol:.2%}", xy=(match_vol, 0.92),
+            xycoords=("data", "axes fraction"), color=MUTED, fontsize=8.5,
+            ha="right", va="top", rotation=90,
+        )
+
+    # The lever path, drawn before the markers so the arrow sits under them.
+    if lever_path is not None:
+        start, end = lever_path
+        if start in summary.index and end in summary.index:
+            ax.annotate(
+                "",
+                xy=(vols[end], cagrs[end]), xytext=(vols[start], cagrs[start]),
+                arrowprops={"arrowstyle": "-|>", "color": PALETTE[1],
+                            "linewidth": 1.3, "shrinkA": 7, "shrinkB": 7,
+                            "linestyle": "--"},
+            )
+
+    for name in summary.index:
+        hollow = name in counterfactual
+        ax.scatter(
+            vols[name], cagrs[name], s=74, zorder=3,
+            facecolor="white" if hollow else PALETTE[0],
+            edgecolor=PALETTE[1] if hollow else PALETTE[0],
+            linewidth=1.5 if hollow else 0.8,
+        )
+
+    _style_axes(ax, ylabel="Annualized return", xlabel="Annualized volatility")
+    ax.set_xlim(0.0, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    # Labels last, and spread apart. Several rules land within a tenth of a
+    # percent of each other on both axes -- that clustering is the finding, so
+    # the labels cannot simply be nailed to their markers or the interesting
+    # part of the chart is the part that is unreadable. Each label is pushed to
+    # a free vertical slot and joined to its marker by a hairline, which keeps
+    # the marker where the data puts it and moves only the text.
+    placements = _spread_labels(
+        ax, [(float(vols[n]), float(cagrs[n])) for n in summary.index],
+        (0.0, x_max), (y_min, y_max),
+    )
+    for name, (label_x, label_y, align) in zip(summary.index, placements):
+        ax.annotate(
+            f"{name}  {ratios[name]:.3f}",
+            xy=(vols[name], cagrs[name]), xytext=(label_x, label_y), xycoords="data",
+            textcoords="data", color=INK, fontsize=8.5, va="center", ha=align,
+            zorder=4,
+            arrowprops={"arrowstyle": "-", "color": MUTED, "linewidth": 0.6,
+                        "shrinkA": 1, "shrinkB": 5},
+        )
+    ax.xaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    _title(
+        ax,
+        title or "Return against volatility - every construction rule",
+        "Dashed rays are constant return-to-volatility; a point sits on its own. "
+        "Hollow markers are not runnable.",
+    )
+    return _save(figure, path or REPORTS_DIR / "return_vol_plane.png")
+
+
+def render_comparison(
+    comparison,
+    reports_dir: str | Path | None = None,
+    panel_rules: Sequence[str] | None = None,
+) -> dict[str, Path]:
+    """Render both comparison charts from one ``src.comparison.RuleComparison``.
+
+    The adapter, and the only thing here that knows what a ``RuleComparison``
+    looks like -- duck-typed rather than imported, so ``src.viz`` keeps sitting
+    strictly downstream and imports nothing that imports it back. This is what
+    ``compare_rules.py`` calls.
+
+    The risk-share panels are limited to the two protagonists. The reference
+    rules have blocks in the printed report, but a five-panel figure is a
+    different chart; this one exists to put equal risk beside equal capital.
+    """
+    directory = Path(reports_dir) if reports_dir is not None else REPORTS_DIR
+    panel_rules = comparison_panel_rules() if panel_rules is None else panel_rules
+    results = comparison.rule_results
+    panels = {
+        name: results[name].risk_contributions for name in panel_rules if name in results
+    }
+    if not panels:
+        raise ValueError(
+            f"none of {list(panel_rules)} is in the comparison's rule_results "
+            f"({sorted(results)}); there is nothing to put side by side"
+        )
+    return {
+        "rule_risk_shares": plot_rule_risk_shares(
+            panels, directory / "rule_risk_shares.png"
+        ),
+        "return_vol_plane": plot_return_vol_plane(
+            comparison.summary,
+            directory / "return_vol_plane.png",
+            counterfactual=comparison_counterfactual(),
+            match_vol=comparison.matched_target_vol,
+            lever_path=comparison_lever_path(),
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # The set
 # ---------------------------------------------------------------------------
 def render_all(
@@ -535,7 +952,7 @@ def render_all(
 
 if __name__ == "__main__":  # pragma: no cover
     # Imported here, not at module scope: src/ must never depend on tests/.
-    from tests.fixtures import make_fake_result, make_fake_returns
+    from tests.fixtures import make_fake_result, make_fake_returns, make_fake_risk_free
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     # src.covariance logs one INFO line per PSD repair, and the diversification
@@ -547,18 +964,33 @@ if __name__ == "__main__":  # pragma: no cover
     fake_returns = make_fake_returns()
     fake_result = make_fake_result(strategy="Risk parity (fixture)")
 
-    # Rendered into a throwaway directory, NOT reports/. The four charts and
-    # crisis_drawdowns.csv tracked in reports/ are the real Phase 5 results the
-    # README cites, and render_all's default destination is exactly those paths:
-    # a self-check that wrote there overwrote them with fixture charts, which
-    # look identical to real ones. tests/test_stress.py already does the same.
+    # The two comparison charts need a whole comparison behind them, not one
+    # BacktestResult -- two engine runs and four benchmarks, which is a few
+    # seconds. Built here rather than faked because the point of this check is
+    # that render_comparison can read a real RuleComparison.
+    from .comparison import compare_rules  # local: only this self-check needs it
+
+    fake_rf = make_fake_risk_free().reindex(fake_returns.index).ffill().bfill()
+    fake_comparison = compare_rules(fake_returns, fake_rf)
+
+    # Rendered into a throwaway directory, NOT reports/. The charts and
+    # crisis_drawdowns.csv tracked in reports/ are the real results the README
+    # cites, and both render functions default to exactly those paths: a
+    # self-check that wrote there overwrote them with fixture charts, which look
+    # identical to real ones. tests/test_stress.py already does the same.
     import tempfile
 
     with tempfile.TemporaryDirectory() as scratch:
-        written = render_all(fake_result, fake_returns, reports_dir=scratch)
+        written = {
+            **render_all(fake_result, fake_returns, reports_dir=scratch),
+            **render_comparison(fake_comparison, reports_dir=scratch),
+        }
         for name, destination in written.items():
             size_kb = destination.stat().st_size / 1024
             print(f"  {name:28s} -> {destination.name}  ({size_kb:.0f} KB)")
+        missing = [name for name, d in written.items() if not d.exists()]
+        assert not missing, f"render returned paths that do not exist: {missing}"
+
     print(f"\n{len(written)} charts rendered from fixture data into a temporary directory "
           f"and discarded. Shape, not magnitude -- the real ones come from "
-          f"run_backtest.py and live in reports/.")
+          f"run_backtest.py and compare_rules.py and live in reports/.")
