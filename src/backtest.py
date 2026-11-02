@@ -77,6 +77,7 @@ import pandas as pd
 
 from .config import (
     COV_EWMA_HALFLIFE_DAYS,
+    COV_SHRINKAGE,
     COV_WARMUP_TRADING_DAYS,
     LEVERAGE_CAP,
     SATURATION_REPORT_FRACTION,
@@ -105,7 +106,9 @@ def run_backtest(
     leverage_cap: tuple[float, float] = LEVERAGE_CAP,
     cov_halflife: float = COV_EWMA_HALFLIFE_DAYS,
     vol_halflife: float = VOL_EWMA_HALFLIFE_DAYS,
+    shrinkage: float = COV_SHRINKAGE,
     warmup_trading_days: int = COV_WARMUP_TRADING_DAYS,
+    rebalance_months: int = 1,
     periods_per_year: int = TRADING_DAYS_PER_YEAR,
     strategy: str = DEFAULT_STRATEGY_NAME,
 ) -> BacktestResult:
@@ -123,13 +126,23 @@ def run_backtest(
         ``align_risk_free`` puts it on the price calendar. The default of ``0.0``
         makes leverage free and is there for tests and for isolating the
         financing leg's contribution -- never for a headline number.
-    target_vol, leverage_cap, cov_halflife, vol_halflife:
+    target_vol, leverage_cap, cov_halflife, vol_halflife, shrinkage:
         Overrides for the ``config.py`` policy, so a sensitivity sweep does not
-        have to edit the shared constants file.
+        have to edit the shared constants file. ``shrinkage`` goes straight to
+        ``covariance.estimate_covariance_with_diagnostics``; at 0.0 the estimator
+        is the raw EWMA, which is what the sweep in ``src/sensitivity.py`` uses
+        to ask how much of ERC's edge is the shrinkage rather than the solver.
     warmup_trading_days:
         History required before the first rebalance. Governs both the covariance
         and the trailing-vol estimate, which is why ``VOL_WARMUP_TRADING_DAYS``
         was set equal to ``COV_WARMUP_TRADING_DAYS`` rather than independently.
+    rebalance_months:
+        Rebalance every ``n``-th month-end rather than every one. The calendar is
+        still built month-by-month and then thinned, so the **first** rebalance
+        date -- and therefore the warm-up and the start of the return series --
+        does not move with this argument. That is what makes two frequencies
+        comparable: a quarterly run that started a quarter later would differ for
+        two reasons at once.
 
     Notes
     -----
@@ -143,9 +156,16 @@ def run_backtest(
     if returns.empty:
         raise ValueError("cannot back-test an empty return frame")
 
+    if int(rebalance_months) != rebalance_months or rebalance_months < 1:
+        raise ValueError(
+            f"rebalance_months must be a whole number of months >= 1, got {rebalance_months!r}"
+        )
+
     frame = returns.sort_index()
     tickers = list(frame.columns)
     rebalance_dates = month_end_rebalance_dates(frame.index, warmup_trading_days)
+    # Thinned from the front, so the first date is the same at every frequency.
+    rebalance_dates = rebalance_dates[:: int(rebalance_months)]
 
     weight_rows: list[np.ndarray] = []
     rc_rows: list[np.ndarray] = []
@@ -165,7 +185,10 @@ def run_backtest(
             )
 
         cov, diagnostics = estimate_covariance_with_diagnostics(
-            window, halflife=cov_halflife, periods_per_year=periods_per_year
+            window,
+            halflife=cov_halflife,
+            shrinkage=shrinkage,
+            periods_per_year=periods_per_year,
         )
 
         try:
@@ -258,7 +281,9 @@ def run_backtest(
             leverage_cap=leverage_cap,
             cov_halflife=cov_halflife,
             vol_halflife=vol_halflife,
+            shrinkage=shrinkage,
             warmup_trading_days=warmup_trading_days,
+            rebalance_months=int(rebalance_months),
             periods_per_year=periods_per_year,
             diagnostics=diagnostics_frame,
             panel=panel,
@@ -294,7 +319,9 @@ def _build_meta(
     leverage_cap: tuple[float, float],
     cov_halflife: float,
     vol_halflife: float,
+    shrinkage: float,
     warmup_trading_days: int,
+    rebalance_months: int,
     periods_per_year: int,
     diagnostics: pd.DataFrame,
     panel: pd.DataFrame,
@@ -405,6 +432,8 @@ def _build_meta(
             periods_per_year * (panel["strategy"] - panel["leverage"] * panel["unlevered"]).mean()
         ),
         "cov_halflife": float(cov_halflife),
+        "shrinkage": float(shrinkage),
+        "rebalance_months": int(rebalance_months),
         "vol_halflife": float(vol_halflife),
         "warmup_trading_days": int(warmup_trading_days),
         "periods_per_year": int(periods_per_year),

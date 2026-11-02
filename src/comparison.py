@@ -519,9 +519,11 @@ _CAVEATS: tuple[str, ...] = (
     "Two rows are counterfactual and are marked: the financing-omitted ones. Nobody can borrow "
     "at zero. They are reported only because the difference from their financed twin IS the cost "
     "of leverage, which is one of the three findings.",
-    "No transaction costs, bid-ask spread or borrow spread over the bill rate, on any row. ERC "
-    "re-optimises every month and 1/N barely trades, so costs would not fall evenly -- they would "
-    "hurt ERC more. Step 58 measures that; until it does, these levels are optimistic for ERC.",
+    "No transaction costs, bid-ask spread or borrow spread over the bill rate, on any row, so "
+    "every level here is optimistic. src/sensitivity.py measures what that is worth, and the "
+    "obvious version of the objection is wrong: ERC re-optimises every month, but a 1/N book "
+    "drifts off 25% and has to be traded back every month too, so the costs do not fall nearly "
+    "as unevenly as 'equal capital barely trades' implies. Read the breakeven there.",
     "One data date per table. These numbers are measured through the date printed above and will "
     "not match a run on a different date.",
 )

@@ -49,12 +49,16 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import textwrap
 from pathlib import Path
 
 import pandas as pd
 
 from run_backtest import load_data
 from src.comparison import (
+    EQUAL_CAPITAL,
+    ERC_MATCHED_FINANCED,
+    ERC_UNLEVERED,
     ComparisonError,
     compare_rules,
     format_comparison_report,
@@ -68,6 +72,16 @@ from src.config import (
 )
 from src.data import DataUnavailableError
 from src.riskparity import ERCSolverError
+from src.sensitivity import (
+    SensitivityError,
+    cost_comparison,
+    format_cost_table,
+    format_sensitivity_report,
+    format_turnover_table,
+    sweep,
+    turnover,
+    turnover_table,
+)
 from src.types import ContractViolation
 from src.viz import render_comparison
 
@@ -75,6 +89,7 @@ log = logging.getLogger("compare_rules")
 
 SUMMARY_CSV = "rule_comparison.csv"
 ALLOCATION_CSV = "risk_allocation.csv"
+SWEEP_CSV = "sensitivity_sweep.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +159,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--sensitivities",
+        action="store_true",
+        help=(
+            "Also sweep the estimator: covariance halflife, shrinkage, warm-up "
+            "and rebalance frequency, each across a grid bracketing its default, "
+            "with ERC and 1/N re-run together at every setting. This is the "
+            "answer to 'ERC needs an estimated covariance and 1/N needs nothing'. "
+            "It is roughly fifty engine runs, so it is off by default; the "
+            "turnover and trading-cost block is printed either way"
+        ),
+    )
+    parser.add_argument(
         "--refresh-prices",
         action="store_true",
         help=(
@@ -180,8 +207,44 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
-def write_tables(comparison, reports_dir: Path) -> list[Path]:
-    """The two frames a reader would want in a spreadsheet, as CSV.
+def cost_block(comparison, returns: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+    """Turnover and the cost breakeven, from the results the comparison already built.
+
+    No engine runs: the turnover is reconstructed from the weights frames and
+    the sleeve returns, and the cost sweep is arithmetic on return series. That
+    is why this prints on every run and the estimator sweep does not.
+
+    Both rules are measured on their *allocation*. The matched column's own
+    leverage path is passed to its cost comparison separately, because a book
+    held at 1.5x trades 1.5x the notional to move the same distance.
+    """
+    erc = comparison.rule_results[ERC_UNLEVERED]
+    equal = comparison.rule_results[EQUAL_CAPITAL]
+    traded = turnover_table({ERC_UNLEVERED: erc, EQUAL_CAPITAL: equal}, returns)
+    erc_trades = turnover(erc.weights, returns)["total"]
+    equal_trades = turnover(equal.weights, returns)["total"]
+    costs = [
+        cost_comparison(
+            comparison.series[ERC_UNLEVERED], erc_trades,
+            comparison.series[EQUAL_CAPITAL], equal_trades,
+        ),
+        # The levered row as well. The project's headline is about the matched
+        # column, and charging a cost only to the unlevered one would answer
+        # the easier half of the question.
+        cost_comparison(
+            comparison.series[ERC_MATCHED_FINANCED], erc_trades,
+            comparison.series[EQUAL_CAPITAL], equal_trades,
+            erc_leverage=comparison.matched_leverage,
+            erc_label=ERC_MATCHED_FINANCED,
+        ),
+    ]
+    return traded, costs
+
+
+def write_tables(
+    comparison, reports_dir: Path, swept: pd.DataFrame | None = None
+) -> list[Path]:
+    """The frames a reader would want in a spreadsheet, as CSV.
 
     The printed report is the deliverable; these exist so a number in the README
     can be checked against a file rather than against a screenshot. Written even
@@ -192,7 +255,12 @@ def write_tables(comparison, reports_dir: Path) -> list[Path]:
     allocation = reports_dir / ALLOCATION_CSV
     comparison.summary.to_csv(summary)
     comparison.allocation.to_csv(allocation)
-    return [summary, allocation]
+    written = [summary, allocation]
+    if swept is not None:
+        sweep_path = reports_dir / SWEEP_CSV
+        swept.to_csv(sweep_path, index=False)
+        written.append(sweep_path)
+    return written
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -257,7 +325,34 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(format_comparison_report(comparison))
 
-    written = write_tables(comparison, args.reports_dir)
+    traded, costs = cost_block(comparison, returns)
+    if args.sensitivities:
+        print("\nSweeping the estimator (about fifty engine runs; this is the slow part)...")
+        try:
+            swept = sweep(returns, risk_free)
+        except (SensitivityError, ComparisonError) as exc:
+            print(f"\nerror: the estimator sweep could not be completed: {exc}",
+                  file=sys.stderr)
+            return 1
+    else:
+        swept = None
+
+    print()
+    if swept is None:
+        # The turnover and cost half of step 58, which needs no extra engine
+        # runs. The knob sweep's own header is inside format_sensitivity_report,
+        # so this branch supplies its own.
+        print("What each rule trades, and what that would cost")
+        print(textwrap.indent(format_turnover_table(traded), "  "))
+        for comparison_at_cost in costs:
+            print(f"\n  {comparison_at_cost.erc_label} against "
+                  f"{comparison_at_cost.benchmark_label}, both charged the same rate")
+            print(textwrap.indent(format_cost_table(comparison_at_cost), "  "))
+        print("\n  (--sensitivities also sweeps the estimator itself.)")
+    else:
+        print(format_sensitivity_report(swept, traded, costs))
+
+    written = write_tables(comparison, args.reports_dir, swept)
     if args.no_charts:
         print("\nCharts skipped (--no-charts).")
     else:
