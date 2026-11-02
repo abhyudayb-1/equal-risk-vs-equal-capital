@@ -14,10 +14,16 @@ data/cache/
 # magnitude-meaningless -- and a committed fixture chart is indistinguishable
 # from a real result to anyone browsing the repo.
 #
-# The four charts and crisis_drawdowns.csv that ARE tracked were force-added
-# (`git add -f`) in Phase 5 from a live `python run_backtest.py`, which is what
-# TASKS.md step 33 asks for: the README cites them, so they have to be readable
-# without cloning and running. Tracked files stay tracked and re-render in place.
-# If you regenerate them from fixtures, do not commit the result.
+# Eight files in here ARE tracked, force-added (`git add -f`) from one live run,
+# because the README cites them and they have to be readable without cloning and
+# running: the four engine charts and crisis_drawdowns.csv from run_backtest.py,
+# and rule_risk_shares.png, return_vol_plane.png, rule_comparison.csv and
+# risk_allocation.csv from compare_rules.py. Tracked files stay tracked and
+# re-render in place.
+#
+# Two rules about them. If you regenerate them from fixtures, do not commit the
+# result. And re-render ALL of them or none: they are one live run on one data
+# date, and refreshing half the directory mixes two dates in one place, which is
+# the failure mode this whole project keeps guarding against.
 reports/
 
