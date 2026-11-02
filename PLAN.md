@@ -58,6 +58,11 @@ README, keyless data sources only, `reports/` for generated PNG/CSV.
 existing ones, and say in the PR body which block you touched. This is the only file both
 people write, and append-only keeps it conflict-free in practice.
 
+**This split stopped binding at step 32** and Phase 8 does not revive it; its steps name a branch
+each, not an owner. The table above also predates three modules that belong to neither column:
+`src/riskmetrics.py` and `src/headtohead.py` (shared measurement, salvaged out of two removed
+products) and `src/comparison.py` (the study itself — see the Phase 8 section).
+
 ---
 
 ## Target layout
@@ -179,9 +184,16 @@ charts, reconcile, then the 2022 analysis together.
 
 ---
 
-## The 2022 write-up (the thing that makes this portfolio-grade)
+## The 2022 write-up (evidence, not the thesis)
 
-**This section was rewritten after step 10, when live data refuted the original thesis.**
+**This section is a chapter of evidence now, not the project's payload.** Through `v1.4` the
+write-up was built around 2022; the project's question is now equal risk against equal capital
+(see Context), and 2022 earns its place by being where the covariance-estimated diversification
+ERC depends on visibly stops holding. Step 53 added a reason to read it carefully: measured
+against **1/N** rather than 60/40, unlevered ERC **loses** 2022 on both return and drawdown. See
+the Phase 8 section.
+
+**This section was also rewritten once before, after step 10, when live data refuted the original thesis.**
 The plan said risk parity broke in 2022 "because stock-bond correlation turned positive."
 It did not. Measured on real data across `2022-01-03 → 2022-10-12`, the rolling 63-day
 SPY/TLT correlation **averaged −0.09 and was positive on only 31% of days**. The persistent

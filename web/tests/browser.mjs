@@ -22,7 +22,7 @@ try {
     await page.setViewportSize({ width, height });
     await page.goto(process.env.QA_URL || "http://127.0.0.1:5173");
     await page
-      .getByRole("heading", { name: "Risk parity. The whole picture." })
+      .getByRole("heading", { name: "Equal risk. Equal capital." })
       .waitFor();
     await page.locator(".hero .performance").scrollIntoViewIfNeeded();
     await page.locator(".hero .recharts-line-curve").first().waitFor();
@@ -115,7 +115,7 @@ try {
   });
   await animatedPage.goto(process.env.QA_URL || "http://127.0.0.1:5173");
   await animatedPage
-    .getByRole("heading", { name: "Risk parity. The whole picture." })
+    .getByRole("heading", { name: "Equal risk. Equal capital." })
     .waitFor();
   await animatedPage.locator("#findings").scrollIntoViewIfNeeded();
   await animatedPage.waitForTimeout(700);
