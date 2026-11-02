@@ -44,16 +44,17 @@ that replays the window (step 43, below):**
    exactly complementary to (1) and (2). The candidate's correlation to each
    of the four sleeves individually ships alongside it, since that decomposes
    *why* the portfolio correlation came out where it did.
-4. :func:`simulate_mixed_books` / :func:`realized_risk_table` -- the three
-   above are all *model* numbers (a covariance matrix's view of risk). This
-   one replays the same trailing window: the baseline book, the book with the
-   candidate mixed in at each candidate weight, and the candidate alone, each
-   as a constant-weight daily return series, summarised with realized risk
-   metrics (drawdown, historical VaR / CVaR, downside deviation, Sortino,
-   Calmar, ...). It is a historical simulation of *today's* weights on the
-   window's own history -- in-sample by construction, unlevered, and labelled
-   as such in the report. It answers "what risk has this mix actually
-   realized", which the covariance view cannot.
+4. :func:`simulate_mixed_books` plus ``riskmetrics.realized_risk_table`` --
+   the three above are all *model* numbers (a covariance matrix's view of
+   risk). This one replays the same trailing window: the baseline book, the
+   book with the candidate mixed in at each candidate weight, and the
+   candidate alone, each as a constant-weight daily return series, summarised
+   with realized risk metrics (drawdown, historical VaR / CVaR, downside
+   deviation, Sortino, Calmar, ...) from ``src/riskmetrics.py``. It is a
+   historical simulation of *today's* weights on the window's own history --
+   in-sample by construction, unlevered, and labelled as such in the report.
+   It answers "what risk has this mix actually realized", which the covariance
+   view cannot.
 
 Run a self-check from the repo root (this one, unlike the seven Phase 0-5
 module self-checks, touches the network for its live-ticker demonstration --
@@ -80,17 +81,16 @@ from .config import (
     SUMMARY_LINE_WIDTH,
     TRADING_DAYS_PER_YEAR,
     UNIVERSE,
-    VAR_CONFIDENCE,
 )
 from .covariance import estimate_covariance
 from .data import DataUnavailableError, daily_returns, fetch_prices
-from .metrics import (
-    _ZERO_VARIANCE_EPS,
-    _drawdown_series,
-    cagr,
-    max_drawdown,
-    sharpe_ratio,
-    summarize,
+from .metrics import sharpe_ratio
+from .riskmetrics import (
+    _REALIZED_DELTA_KEYS,
+    _REALIZED_ROWS,
+    _format_delta,
+    format_metric_table,
+    realized_risk_table,
 )
 from .riskparity import ERCSolution, portfolio_volatility, risk_contributions, solve_erc_with_status
 
@@ -478,169 +478,14 @@ def compensation_test(
 # Everything above reads risk off a covariance matrix. This block replays the
 # same trailing window instead, so the report can say what a mix has actually
 # been through (drawdown, tail losses, downside risk), not just what a model
-# expects. Every function follows metrics.py's conventions: dropna + float64,
-# NaN on input too short to mean anything, ``periods_per_year`` required where
-# annualising, and the zero-variance guard so a degenerate series reads as
-# undefined rather than as a ratio of ~1e16.
+# expects.
+#
+# The metrics themselves live in src/riskmetrics.py -- they are pure functions
+# of a return series with no dependence on a candidate stock, and more than one
+# report needs them. What stays here is the part that is specific to this
+# analysis: constructing the mixed books whose risk is being measured.
 BASELINE_BOOK = "baseline"
 CANDIDATE_ALONE_BOOK = "stock alone"
-
-
-def _clean(returns: pd.Series) -> pd.Series:
-    return returns.dropna().astype("float64")
-
-
-def _check_confidence(confidence: float) -> None:
-    if not 0.0 < confidence < 1.0:
-        raise ValueError(f"confidence must be strictly between 0 and 1, got {confidence}")
-
-
-def historical_var(returns: pd.Series, confidence: float = VAR_CONFIDENCE) -> float:
-    """Historical value-at-risk: the ``1 - confidence`` quantile of the returns.
-
-    Returned as a **negative return**, the same sign convention as
-    ``metrics.max_drawdown`` -- "-0.02" is a 2% one-period loss that ``confidence``
-    of periods did not exceed. Empirical, not parametric: it makes no normality
-    assumption, which matters for a single stock's fat tails. The price of that
-    is sample size -- see ``config.VAR_CONFIDENCE`` for why 95% and not 99%.
-    """
-    _check_confidence(confidence)
-    r = _clean(returns)
-    if len(r) < 2:
-        return float("nan")
-    return float(np.quantile(r.to_numpy(), 1.0 - confidence))
-
-
-def historical_cvar(returns: pd.Series, confidence: float = VAR_CONFIDENCE) -> float:
-    """Expected shortfall: the mean of the returns at or below :func:`historical_var`.
-
-    The tail is never empty -- the VaR quantile is never below the sample
-    minimum, so at least the worst observation is always in it.
-    """
-    r = _clean(returns)
-    var = historical_var(r, confidence)
-    if np.isnan(var):
-        return float("nan")
-    return float(r[r <= var].mean())
-
-
-def _period_risk_free(periods_per_year: int, annual_risk_free_rate: float) -> float:
-    """De-compounded per-period rate -- the same conversion ``sharpe_ratio`` makes."""
-    return (1.0 + annual_risk_free_rate) ** (1.0 / periods_per_year) - 1.0
-
-
-def _period_downside_deviation(r: pd.Series, mar: float) -> float:
-    """Root-mean-square of the shortfall below ``mar``, over ALL periods.
-
-    The denominator is the full sample, not just the losing periods: a series
-    that rarely falls short is *less* risky, and dividing by the count of
-    losers instead would make it look worse.
-    """
-    shortfall = np.minimum(r.to_numpy() - mar, 0.0)
-    return float(np.sqrt(np.mean(shortfall**2)))
-
-
-def downside_deviation(
-    returns: pd.Series,
-    periods_per_year: int,
-    annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
-) -> float:
-    """Annualised downside deviation, with the risk-free rate as the threshold."""
-    r = _clean(returns)
-    if len(r) < 2:
-        return float("nan")
-    mar = _period_risk_free(periods_per_year, annual_risk_free_rate)
-    return _period_downside_deviation(r, mar) * float(np.sqrt(periods_per_year))
-
-
-def sortino_ratio(
-    returns: pd.Series,
-    periods_per_year: int,
-    annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
-) -> float:
-    """Annualised Sortino: mean excess return over downside deviation.
-
-    Same threshold as :func:`downside_deviation` and the same per-period
-    risk-free rate ``sharpe_ratio`` subtracts, so at rf = 0 the two ratios
-    differ only in which risk they divide by. NaN when there is no downside at
-    all -- the ratio is infinite there, and reporting a huge finite number for
-    it would be the same silent lie ``_ZERO_VARIANCE_EPS`` exists to prevent.
-    """
-    r = _clean(returns)
-    if len(r) < 2:
-        return float("nan")
-    mar = _period_risk_free(periods_per_year, annual_risk_free_rate)
-    downside = _period_downside_deviation(r, mar)
-    if not np.isfinite(downside) or downside < _ZERO_VARIANCE_EPS:
-        return float("nan")
-    return float((r.mean() - mar) / downside * np.sqrt(periods_per_year))
-
-
-def calmar_ratio(returns: pd.Series, periods_per_year: int) -> float:
-    """CAGR over the magnitude of the max drawdown; NaN if it never drew down."""
-    worst = max_drawdown(returns)
-    if np.isnan(worst) or worst > -_ZERO_VARIANCE_EPS:
-        return float("nan")
-    growth = cagr(returns, periods_per_year)
-    if np.isnan(growth):
-        return float("nan")
-    return float(growth / abs(worst))
-
-
-def drawdown_duration(returns: pd.Series) -> tuple[int, bool]:
-    """(longest stretch below a prior peak in periods, whether it is still open).
-
-    A period is "underwater" when its drawdown is below zero, measured the way
-    ``metrics`` measures it -- from a running peak floored at the 1.0 starting
-    value. The flag is True when the longest stretch runs to the last period
-    of the series, i.e. it has not recovered by the end of the window and the
-    number is a lower bound on how long it will really last. On a tie the
-    earlier stretch wins.
-    """
-    dd = _drawdown_series(returns)
-    if dd is None:
-        return 0, False
-    underwater = dd.to_numpy() < 0.0
-    longest, run, open_at_end = 0, 0, False
-    for i, below in enumerate(underwater):
-        run = run + 1 if below else 0
-        if run > longest:
-            longest, open_at_end = run, i == len(underwater) - 1
-    return longest, open_at_end
-
-
-def risk_summary(
-    returns: pd.Series,
-    periods_per_year: int,
-    name: str = "",
-    annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
-    confidence: float = VAR_CONFIDENCE,
-) -> dict:
-    """One row of realized risk and return metrics for a periodic return series.
-
-    ``metrics.summarize``'s row (return, vol, Sharpe, max drawdown and its
-    dates) extended with the tail, downside and drawdown-duration measures.
-    """
-    r = _clean(returns)
-    row = summarize(r, periods_per_year, name, annual_risk_free_rate)
-    days, still_open = drawdown_duration(r)
-    row.update(
-        {
-            "var": historical_var(r, confidence),
-            "cvar": historical_cvar(r, confidence),
-            "worst_day": float(r.min()) if len(r) else float("nan"),
-            "downside_deviation": downside_deviation(r, periods_per_year, annual_risk_free_rate),
-            "sortino_ratio": sortino_ratio(r, periods_per_year, annual_risk_free_rate),
-            "calmar_ratio": calmar_ratio(r, periods_per_year),
-            "longest_drawdown_days": days,
-            "longest_drawdown_open": still_open,
-            # pandas' bias-corrected sample skew / Fisher excess kurtosis; NaN
-            # below 3 / 4 observations rather than a number from too little data.
-            "skew": float(r.skew()),
-            "excess_kurtosis": float(r.kurt()),
-        }
-    )
-    return row
 
 
 def simulate_mixed_books(
@@ -685,19 +530,6 @@ def simulate_mixed_books(
         books[label] = full @ _mixed_weights(baseline, w)
     books[CANDIDATE_ALONE_BOOK] = returns[candidate].to_numpy()
     return pd.DataFrame(books, index=returns.index)
-
-
-def realized_risk_table(
-    book_returns: pd.DataFrame,
-    periods_per_year: int = TRADING_DAYS_PER_YEAR,
-    annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
-) -> pd.DataFrame:
-    """One :func:`risk_summary` row per book, indexed by book name."""
-    rows = [
-        risk_summary(book_returns[book], periods_per_year, str(book), annual_risk_free_rate)
-        for book in book_returns.columns
-    ]
-    return pd.DataFrame(rows).set_index("name").rename_axis(None)
 
 
 @dataclass(frozen=True)
@@ -848,75 +680,6 @@ _CAVEATS: tuple[str, ...] = (
     "and the VaR / CVaR rest on few observations (a 5% tail is 5% of the "
     "observation count above).",
 )
-
-
-# Rows of the realized before/after table: (label, key in the realized frame,
-# kind). Risk measures first, return context last. "pct" values print as
-# percentages, "ratio" as plain numbers, "days" as whole periods.
-_REALIZED_ROWS: tuple[tuple[str, str, str], ...] = (
-    ("annual volatility", "annual_volatility", "pct"),
-    ("max drawdown", "max_drawdown", "pct"),
-    ("longest drawdown (days)", "longest_drawdown_days", "days"),
-    (f"VaR {VAR_CONFIDENCE:.0%} (daily)", "var", "pct"),
-    (f"CVaR {VAR_CONFIDENCE:.0%} (daily)", "cvar", "pct"),
-    ("worst day", "worst_day", "pct"),
-    ("downside deviation", "downside_deviation", "pct"),
-    ("Sortino", "sortino_ratio", "ratio"),
-    ("Calmar", "calmar_ratio", "ratio"),
-    ("skew", "skew", "ratio"),
-    ("excess kurtosis", "excess_kurtosis", "ratio"),
-    ("CAGR", "cagr", "pct"),
-    ("total return", "total_return", "pct"),
-    ("Sharpe", "sharpe_ratio", "ratio"),
-)
-# The subset whose change vs baseline is worth a second table -- the risk rows.
-_REALIZED_DELTA_KEYS: frozenset[str] = frozenset(
-    {
-        "annual_volatility", "max_drawdown", "longest_drawdown_days", "var", "cvar",
-        "worst_day", "downside_deviation", "sortino_ratio", "calmar_ratio",
-    }
-)
-
-
-def _format_metric(value: float, kind: str) -> str:
-    """One table cell; NaN prints ``--`` so an undefined metric never reads as 0."""
-    if pd.isna(value):
-        return "--"
-    if kind == "pct":
-        return f"{value:.2%}"
-    if kind == "days":
-        return f"{int(value)}"
-    return f"{value:.3f}"
-
-
-def _format_delta(value: float, kind: str) -> str:
-    if pd.isna(value):
-        return "--"
-    if kind == "pct":
-        return f"{value * 100:+.2f}pp"
-    if kind == "days":
-        return f"{int(value):+d}"
-    return f"{value:+.3f}"
-
-
-def format_metric_table(realized: pd.DataFrame) -> str:
-    """Metrics as rows, one column per series, from a :func:`realized_risk_table` frame.
-
-    Shared by this module's position report and ``src/compare.py``'s head-to-head
-    report, so the two print an identical set of rows in an identical format.
-    Undefined metrics print ``--`` and an unrecovered longest drawdown is flagged
-    ``(open)``.
-    """
-    cells: dict[str, dict[str, str]] = {}
-    for label, key, kind in _REALIZED_ROWS:
-        cells[label] = {}
-        for book in realized.index:
-            text = _format_metric(realized.at[book, key], kind)
-            if key == "longest_drawdown_days" and realized.at[book, "longest_drawdown_open"]:
-                text += " (open)"
-            cells[label][book] = text
-    return pd.DataFrame(cells).T.to_string()
-
 
 def _format_realized_section(report: IncrementalReport) -> list[str]:
     """The "Realized risk, before vs after" block of the position report."""

@@ -13,8 +13,11 @@ monkeypatches ``fetch_prices`` the same way the module's own self-check
 attacks the ``INCREMENTAL_MIN_HISTORY_DAYS`` guard -- so the whole file runs
 with no network access, matching every other suite in this project.
 
-Five things are under test (the fifth, step 43, is the realized-risk block --
-see its section below), one function each:
+Five things are under test (the fifth, step 43, is the mixed-book replay --
+see its section below), one function each. The realized risk *metrics* those
+books are summarised with moved to ``src/riskmetrics.py`` and are checked by
+``tests/test_riskmetrics.py``; what is still tested here is the construction
+of the books themselves, which is the part specific to a candidate stock:
 
 * **Perturbation weights sum to 1**, at every candidate weight in
   ``INCREMENTAL_CANDIDATE_WEIGHTS`` -- ``perturbation_scan``'s whole
@@ -39,7 +42,6 @@ see its section below), one function each:
 
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 
@@ -419,102 +421,6 @@ def test_fetch_window_raises_on_thin_candidate_history() -> None:
 METRIC_TOLERANCE = 1e-12
 
 
-def test_historical_var_and_cvar_hand_derived() -> None:
-    """r_k = (k - 51) / 1000 for k = 1..100, so the sorted returns are
-    -0.050, -0.049, ..., +0.049. The 5% quantile sits at position 0.05 * 99 =
-    4.95 of the sorted array, i.e. 95% of the way from sorted[4] = -0.046 to
-    sorted[5] = -0.045: VaR = -0.046 + 0.95 * 0.001 = -0.04505. The tail at or
-    below it is exactly sorted[0..4] = -0.050 .. -0.046, mean -0.048.
-    """
-    r = pd.Series((np.arange(1, 101) - 51) / 1000.0)
-    check(
-        "historical VaR 95% equals the hand-interpolated quantile -0.04505",
-        abs(incremental.historical_var(r, 0.95) - (-0.04505)) < METRIC_TOLERANCE,
-    )
-    check(
-        "historical CVaR 95% equals the mean of the five worst returns, -0.048",
-        abs(incremental.historical_cvar(r, 0.95) - (-0.048)) < METRIC_TOLERANCE,
-    )
-    check(
-        "CVaR is never better than VaR",
-        incremental.historical_cvar(r, 0.95) <= incremental.historical_var(r, 0.95),
-    )
-    check(
-        "VaR on fewer than two observations is NaN, not a number from nothing",
-        np.isnan(incremental.historical_var(pd.Series([0.01]))),
-    )
-    expect_raises(
-        "a confidence outside (0, 1) is rejected",
-        ValueError,
-        lambda: incremental.historical_var(r, 1.0),
-    )
-
-
-def test_downside_deviation_and_sortino_hand_derived() -> None:
-    """r = [+1%, -2%, +3%, -1%] at rf = 0: the shortfalls are [0, -.02, 0, -.01],
-    mean square (0.0004 + 0.0001) / 4 = 0.000125 over ALL four periods, and
-    the mean return is 0.0025.
-    """
-    r = pd.Series([0.01, -0.02, 0.03, -0.01])
-    per_period_downside = math.sqrt((0.0004 + 0.0001) / 4.0)
-    annual = math.sqrt(252)
-    check(
-        "annualised downside deviation matches sqrt(mean shortfall^2) * sqrt(252)",
-        abs(incremental.downside_deviation(r, 252, 0.0) - per_period_downside * annual)
-        < METRIC_TOLERANCE,
-    )
-    check(
-        "Sortino matches mean excess / downside deviation * sqrt(252)",
-        abs(incremental.sortino_ratio(r, 252, 0.0) - 0.0025 / per_period_downside * annual)
-        < METRIC_TOLERANCE,
-    )
-
-    no_downside = pd.Series([0.001, 0.002, 0.003, 0.002])
-    check(
-        "a series with no losing period has zero downside deviation",
-        incremental.downside_deviation(no_downside, 252, 0.0) == 0.0,
-    )
-    check(
-        "...and an UNDEFINED Sortino (NaN), not a huge finite ratio",
-        np.isnan(incremental.sortino_ratio(no_downside, 252, 0.0)),
-    )
-
-
-def test_drawdown_duration_and_calmar_hand_derived() -> None:
-    """r = [+10%, -5%, -5%, +5%, +10%]: the curve is 1.1, 1.045, 0.99275,
-    1.0424, 1.1466. Periods 2-4 sit below the 1.1 peak (three of them) and
-    period 5 makes a new high, so the longest stretch is 3 and it recovered.
-    The trough is 1.1 * 0.95^2, a drawdown of 1 - 0.9025 = 9.75% exactly.
-    """
-    r = pd.Series([0.10, -0.05, -0.05, 0.05, 0.10])
-    days, still_open = incremental.drawdown_duration(r)
-    check("longest drawdown lasts 3 periods on the hand-built path", days == 3)
-    check("...and it has recovered by the end of the series", still_open is False)
-
-    days, still_open = incremental.drawdown_duration(r.iloc[:4])
-    check("cutting the series before the recovery keeps the 3-period stretch", days == 3)
-    check("...and flags it as still open at the window end", still_open is True)
-
-    days, still_open = incremental.drawdown_duration(pd.Series([-0.05, -0.05]))
-    check(
-        "a series that starts below its initial value is underwater from the first "
-        "period (the peak is floored at the 1.0 starting value, as in metrics.py)",
-        (days, still_open) == (2, True),
-    )
-
-    # ppy = 5 makes the five periods exactly one year, so CAGR is just growth - 1.
-    growth = 1.10 * 0.95 * 0.95 * 1.05 * 1.10
-    expected = (growth - 1.0) / (1.0 - 0.95 * 0.95)
-    check(
-        "Calmar equals CAGR over the 9.75% max drawdown",
-        abs(incremental.calmar_ratio(r, 5) - expected) < METRIC_TOLERANCE,
-    )
-    check(
-        "Calmar is NaN for a series that never draws down",
-        np.isnan(incremental.calmar_ratio(pd.Series([0.001, 0.002, 0.003]), 252)),
-    )
-
-
 def _mixed_books_match_definition(returns: pd.DataFrame, baseline_weights: np.ndarray) -> bool:
     """True iff every ``+w%`` column equals ``(1-w) * baseline + w * candidate``,
     recomputed here from the definition. Factored out so the mutation test
@@ -661,13 +567,6 @@ def test_realized_section_in_the_position_report() -> None:
     check("...with a change-vs-baseline block", "Change vs baseline" in text)
     check("...and the in-sample caveat", "in-sample replay" in text)
 
-    check("an undefined metric prints as -- not as a number",
-          incremental._format_metric(float("nan"), "ratio") == "--")
-    check("an undefined change prints as -- too",
-          incremental._format_delta(float("nan"), "pct") == "--")
-    check("a percentage-point change carries its sign",
-          incremental._format_delta(-0.0123, "pct") == "-1.23pp")
-
 
 if __name__ == "__main__":
     test_perturbation_weights_sum_to_one()
@@ -686,9 +585,6 @@ if __name__ == "__main__":
     test_analyze_position_end_to_end_offline()
     test_fetch_window_raises_on_thin_candidate_history()
 
-    test_historical_var_and_cvar_hand_derived()
-    test_downside_deviation_and_sortino_hand_derived()
-    test_drawdown_duration_and_calmar_hand_derived()
     test_simulate_mixed_books_identities()
     test_mixed_book_definition_check_has_teeth()
     test_realized_section_in_the_position_report()

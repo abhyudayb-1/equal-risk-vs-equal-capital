@@ -316,11 +316,14 @@ second backtest, and it shipped as new, additive files only:
     756-day window and all of a recent IPO's data, and a full-history fetch trips
     `data._validate`'s late-start guard for anything listed after 2006. `compensation_test`
     already holds its baseline weights constant the same way, so this is consistent with it.
-  - **The risk functions live in `src/incremental.py`, not `src/metrics.py`.** `metrics.py` is a
-    deliberately verbatim port (see "Conventions inherited"); `historical_var`, `historical_cvar`,
-    `downside_deviation`, `sortino_ratio`, `calmar_ratio`, `drawdown_duration` and `risk_summary`
-    follow its conventions but sit beside their only consumer. Do not move them into `metrics.py`
-    as a tidy-up without deciding that deliberately.
+  - **The risk functions now live in `src/riskmetrics.py` — still not in `src/metrics.py`.**
+    `metrics.py` is a deliberately verbatim port (see "Conventions inherited"); `historical_var`,
+    `historical_cvar`, `downside_deviation`, `sortino_ratio`, `calmar_ratio`, `drawdown_duration`,
+    `risk_summary`, `realized_risk_table` and `format_metric_table` follow its conventions but are
+    new code, so they sit in their own module beside the port rather than inside it. They started
+    out in `src/incremental.py` beside their only consumer and moved out once a second consumer
+    existed; the rule that still holds is the one about `metrics.py`, which must not be rewritten.
+    Covered by `tests/test_riskmetrics.py` (50 checks), every expectation hand-derived.
   - **`_mixed_weights` is shared with `perturbation_scan`.** The "scale the baseline by `(1−w)`,
     insert the candidate at `w`" construction exists once, so the model-based scan and the replay
     cannot describe different portfolios under the same `+5%` label.
@@ -424,10 +427,12 @@ details and are not:
   `BacktestResult`, repeated in `compare.crisis_table` because these are bare series. The two series
   share one index, so the later starter decides; a ticker that listed after a window's peak gets
   `NaN`, never a partial window that reads like a full one.
-- **The metric rows are shared with Phase 6, not re-derived.** `compare.py` imports
-  `incremental.risk_summary` / `realized_risk_table` and `incremental.format_metric_table`, which was
-  extracted from `_format_realized_section` for this, so both reports print identical rows in an
-  identical format. The dependency runs `compare` → `incremental`; keep it that way.
+- **The metric rows are shared, not re-derived.** `compare.py` and `incremental.py` both import
+  `risk_summary` / `realized_risk_table` / `format_metric_table` from **`src/riskmetrics.py`**, so
+  both reports print identical rows in an identical format. `format_metric_table` was extracted
+  from `_format_realized_section` for this. The dependency used to run `compare` → `incremental`,
+  which inverted nothing but did make one report's formatter live inside the other's module; both
+  now depend on `riskmetrics` instead and neither depends on the other.
 - **The relative metrics have exact definitions worth keeping:** beta is `cov(s, t) / var(t)`;
   up/down capture are the strategy's mean return on the days the ticker rose/fell as a multiple of
   the ticker's own mean on them (arithmetic daily means); the tail block is the ticker's worst
@@ -468,7 +473,8 @@ python3 -m venv .venv
 .venv/bin/python tests/test_riskparity.py     # RC identity, the ERC oracle, degenerate cases
 .venv/bin/python tests/test_lookahead.py      # the <= t guard, incl. removing it to prove the teeth
 .venv/bin/python tests/test_incremental.py    # Phase 6: perturbation scan, compensation test, 5-asset limit,
-                                              # realized risk (step 43)
+                                              # the mixed-book replay (step 43)
+.venv/bin/python tests/test_riskmetrics.py    # VaR/CVaR, Sortino, Calmar, drawdown duration, the shared table
 .venv/bin/python tests/test_compare.py        # step 44: relative metrics, tail block, crisis windows, guards
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py              # full run -> reports/
@@ -494,7 +500,7 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.compare       # step 44: a full report from fixtures; offline, writes nothing
 ```
 
-Run every suite after any change to `src/`. **All nine test suites run offline, and so do eight
+Run every suite after any change to `src/`. **All ten test suites run offline, and so do eight
 of the nine module self-checks** — verified by blocking `socket.connect` / `getaddrinfo` and
 re-running each one, not by assumption. `src/data.py` imports `requests`, so the import graph
 touches the network stack, but nothing under `tests/` opens a connection. `src.incremental` is
