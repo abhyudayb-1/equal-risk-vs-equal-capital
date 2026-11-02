@@ -145,6 +145,7 @@ config.py → data.py → covariance.py → riskparity.py → overlay.py → bac
 | `src/backtest.py` | The monthly rebalance loop that ties the above together into a `BacktestResult`. Owns no maths; its job is to walk the calendar in the right order and never look forward. Solver non-convergence is counted into `meta`; a genuinely broken price series raises and kills the run. |
 | `src/metrics.py` | CAGR, annualised volatility, Sharpe, drawdown, hit rate, and the crisis-window slicing every table is built on. Ported from a predecessor repo with `periods_per_year` made a required argument, since this project accrues daily rather than monthly. |
 | `src/riskmetrics.py` | The realized-risk measures the metrics port does not carry: historical VaR and CVaR at `VAR_CONFIDENCE`, downside deviation, Sortino, Calmar, longest drawdown and whether it is still open — plus the one table formatter every report prints them with, so two reports cannot label the same metric differently. New code that *follows* `metrics.py`'s conventions rather than being added to a file that is a verbatim port. |
+| `src/comparison.py` | **The study.** Equal risk against equal capital over one book: 1/N, ERC unlevered, and ERC levered by the overlay to 1/N's *own* realised volatility so the two returns are comparable — with naive 1/σ, max Sharpe and 60/40 as reference rows and the financing-omitted rows marked counterfactual. Also the risk-allocation block: capital weight beside risk share per sleeve, and effective bets `1 / Σ RCᵢ²`. The matched column comes from a second `run_backtest` call, never a hand-rolled overlay. |
 | `src/headtohead.py` | One daily return series against another on a shared index: correlation, beta `cov(s, b) / var(b)`, tracking error, up/down capture, what the strategy did on the benchmark's worst `1 − VAR_CONFIDENCE` of days, and the per-crisis-window table. Named for roles (`strategy` vs `benchmark`), so the same functions serve any pairwise comparison. **Not yet wired into `run_backtest.py`** — it and `riskmetrics.py` are held for the equal-risk-against-equal-capital comparison, and are covered by their own suites in the meantime. |
 | `src/benchmarks.py` | The four unlevered comparators: equal weight, 60/40, naive inverse-volatility ("risk parity" as usually shipped, which ignores correlations) and a rolling long-only max-Sharpe tangency portfolio. All return the same `BacktestResult` the engine does. |
 | `src/stress.py` | The crisis decomposition — every strategy across every crisis window, with the capital-weight-in-bonds and mean-leverage columns that make the ranking interpretable — plus the regime diagnostics: rolling SPY/TLT correlation and the diversification ratio `Σwᵢσᵢ / σₚ`. |
@@ -213,7 +214,13 @@ untouched and the adjustment is absorbed by the correlation structure.
 
 An ERC book over these four sleeves runs at whatever volatility the sleeves happen to offer, which
 for a bond-heavy allocation is well below what an equity investor is comparing it against. The
-overlay scales the whole portfolio to a chosen level instead:
+overlay scales the whole portfolio to a chosen level instead.
+
+**In this project that is a comparison instrument, not a second product.** Two books at different
+volatilities cannot be compared on return, so the overlay's job is to put ERC at 1/N's own
+volatility — and the financing it charges is then one of the costs being measured. It is also the
+most expensive single mechanism in the repo (see the COVID result below), which is a finding in its
+own right rather than a defect:
 
 ```
 L_t = TARGET_VOL / σ̂_t,     clipped to [0.5, 3.0]
@@ -332,8 +339,16 @@ The strategy is a good defence against a grinding decline and a poor one against
 ## The 2022 Failure Mode
 
 2022 is the more interesting failure, because it is the one where *diversification itself* broke
-rather than where the overlay mistimed. Risk parity still beat 60/40 that year (−17.72% vs
-−25.83%), so the interest is in the mechanism, not the ranking.
+rather than where the overlay mistimed.
+
+**Read the ranking carefully, though.** Risk parity beat 60/40 that year (−17.72% vs −25.83%),
+which is what this section was originally written around — but 60/40 is not the rule this project
+argues with. Measured against **equal capital**, unlevered ERC *loses* 2022 on both return and
+drawdown (−14.28% vs −12.25%, −16.82% vs −16.33%), because DBC returned **+21.4%** and was the only
+sleeve that worked: 1/N holds it at 25% of capital, ERC at 16.3%, since equal *risk* means less
+*money* in the most volatile sleeve. The sleeve ERC underweights by construction is sometimes the
+sleeve with the return. That measurement is `src/comparison.py`'s (step 53); `PLAN.md`'s Phase 8
+section records it, and step 59 folds it into this chapter.
 
 **The obvious explanation is wrong, and this repo checked.** The story usually told is that the
 stock/bond correlation flipped positive and destroyed the hedge. Measured over the drawdown window

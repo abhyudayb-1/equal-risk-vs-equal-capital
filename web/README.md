@@ -1,9 +1,14 @@
 # Risk Parity Lab
 
-The interactive research notebook for the existing Python portfolio engine.
-Only `web/` and `.github/workflows/web-export.yml` are added. No engine files or
-tracked reports are edited. Historical results and repository activity have separate
-dates and provenance.
+The interactive research notebook for the Python study in this repository: what allocating
+equal *risk* buys over allocating equal *capital*, and what it costs in volatility and return.
+
+Every figure comes from `web/export_data.py`, which calls the same `src/` functions
+`run_backtest.py` does, so nothing on the site is computed twice. No tracked report under
+`reports/` is edited by anything here. (An earlier version of this line said no engine files are
+touched either; that stopped being true when the tree moved onto `main` and `src/config.py`
+gained the read-only-filesystem hook the deployment needs.) Historical results and repository
+activity have separate dates and provenance.
 
 ## Local preview
 

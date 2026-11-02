@@ -350,16 +350,16 @@ export default function App() {
                     </span>
                   </div>
                   <h1>
-                    Risk parity.
+                    Equal risk.
                     <br />
-                    <span>The whole picture.</span>
+                    <span>Equal capital.</span>
                   </h1>
                   <div className="hero-bottom">
                     <p>
-                      Equal risk. Unequal outcomes. Our volatility-targeted
-                      portfolio {gap > 0 ? "trailed" : "outperformed"} a simple
-                      60/40 allocation. Here is the evidence, including where
-                      the model broke down.
+                      What does allocating equal <em>risk</em> buy you over
+                      allocating equal <em>capital</em>, and what does it cost
+                      in volatility and return? Here is the evidence, including
+                      where equalising risk loses.
                     </p>
                     <a
                       className="text-link"
