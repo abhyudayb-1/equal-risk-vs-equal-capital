@@ -36,9 +36,17 @@ quant pipeline is that the analysis half normally can't start until the engine h
 output. This plan removes that dependency with a **frozen result contract + synthetic fixture**
 on day one, so both people are unblocked from hour 2 onward.
 
-**Home:** `shivakasula/portfolio-allocation-capstone-project` (private; the repo was created under
-`abhyudayb-1` and later transferred, so older notes name the old owner). Working copy on Person A's
-machine is `D:\Project 15`; local `main` tracks `origin/main`.
+**Home:** `abhyudayb-1/equal-risk-vs-equal-capital` (private). Working copy is
+`D:\Project 15`; local `main` tracks `origin/main`.
+
+The project lived at `shivakasula/portfolio-allocation-capstone-project` through
+`v2.0` and was copied here as a clean repository -- not a fork -- with full history and every tag.
+**Two consequences worth knowing before reading a reference in these documents.** Pull-request
+numbers (`PR #52`, `#71`, and the `Merge pull request #NN` subjects throughout `git log`) are the
+*original* repository's numbering and do not correspond to anything here; they remain the accurate
+record of what landed and in what order, which is what they were ever for. And `web/QA.md`,
+`web/PROJECT_NOTES.md` and the CI-run links in them point at artifacts that live in the old
+repository; they are dated evidence from before the reframing and already carry banners saying so.
 
 **Conventions are inherited from `abhyudayb-1/sp500-factor-backtester`,** which is mature and
 sets the house style: `src/` module-per-stage pipeline, `config.py` as the single source of

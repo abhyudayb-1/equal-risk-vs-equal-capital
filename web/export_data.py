@@ -25,7 +25,7 @@ from src.metrics import summarize, _drawdown_series as drawdown_series
 from src.overlay import unlevered_returns, financed_returns
 from src.stress import crisis_decomposition, rolling_correlation, rolling_diversification_ratio
 
-REPO = "shivakasula/portfolio-allocation-capstone-project"
+REPO = "abhyudayb-1/equal-risk-vs-equal-capital"
 
 
 # encoding="utf-8" is not optional on Windows. Without it `text=True` decodes

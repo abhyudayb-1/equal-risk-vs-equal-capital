@@ -24,6 +24,12 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 > Rows below are left as they landed, because `git log` records the same thing and the code stays
 > reachable at its tags. Where a row describes removed work, a note says so.
 
+**Pull-request numbers in this file -- `PR #52`, `#71`, and the `Merge pull request #NN` subjects
+in `git log` -- are the ORIGINAL repository's numbering** (`shivakasula/portfolio-allocation-capstone-project`,
+where this project lived through `v2.0`). They do not correspond to anything in this repository,
+which was started as a clean copy with full history. They are still the accurate record of what
+landed and in what order.
+
 **`git log --oneline` is the truth; this table is a convenience that goes stale.** Commit subjects
 are `Step NN [A|B]: ...`, so the log reads as the same ledger. Step numbers, owners and the full
 "done when" for each row live in `TASKS.md` — that text is the spec, not this summary.

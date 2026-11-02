@@ -67,8 +67,8 @@ Requires Python 3.10+. Everything is keyless — prices come from yfinance and t
 from FRED's public CSV endpoint, so there are no API keys to obtain or configure.
 
 ```bash
-git clone https://github.com/abhyudayb-1/portfolio-allocation-capstone-project.git
-cd portfolio-allocation-capstone-project
+git clone https://github.com/abhyudayb-1/equal-risk-vs-equal-capital.git
+cd equal-risk-vs-equal-capital
 
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt        # macOS / Linux

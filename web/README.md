@@ -40,7 +40,7 @@ ignored `web/.env.local` for local development:
 | Variable | Value |
 | --- | --- |
 | `GITHUB_READ_TOKEN` | Fine-grained token scoped only to the capstone repository, Contents / Issues / Pull requests read-only |
-| `GITHUB_REPOSITORY` | `shivakasula/portfolio-allocation-capstone-project` |
+| `GITHUB_REPOSITORY` | `abhyudayb-1/equal-risk-vs-equal-capital` |
 | `GITHUB_DATA_BRANCH` | `web-ui` for this preview, `main` after merge |
 
 Never use a `VITE_` prefix for a secret. Never commit tokens. No webhook is used,
