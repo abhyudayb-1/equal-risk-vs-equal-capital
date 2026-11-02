@@ -21,7 +21,7 @@ call :func:`src.backtest.run_backtest` a second time for the matched column,
 because that is also a pure function and because ``backtest.py`` owns the overlay
 alignment that a hand-rolled ``leverage = target / vol`` would get wrong (see
 AGENTS.md/CLAUDE.md under ``backtest.py`` and ``overlay.py``). The data fetching
-and the printing-to-a-terminal belong to the CLI, step 56.
+and the printing-to-a-terminal belong to ``compare_rules.py``.
 
 Metric rows come from :mod:`src.riskmetrics` and the pairwise blocks from
 :mod:`src.headtohead`, both of which were salvaged out of removed products for
@@ -60,6 +60,7 @@ from .config import (
     ANNUAL_RISK_FREE_RATE,
     COV_WARMUP_TRADING_DAYS,
     LEVERAGE_CAP,
+    MIN_MATCHABLE_VOL,
     SUMMARY_LINE_WIDTH,
     TARGET_VOL,
     TRADING_DAYS_PER_YEAR,
@@ -123,6 +124,24 @@ class RuleComparison:
     ``realized_vol`` is what it actually delivered; they differ by roughly 12.5%
     because a trailing estimator cannot hit a target exactly. Both are carried
     so a report can print the gap rather than imply there isn't one.
+
+    ``rule_results`` is the ``BacktestResult`` each distinct-weight rule actually
+    produced, keyed the same way every table here is. It is carried rather than
+    discarded because ``allocation`` and ``concentration`` are *summaries* of it:
+    a chart that wants the risk shares through time (step 57) or a sweep that
+    wants the weights to measure turnover from (step 58) needs the frames, and
+    re-running five rules to get them back would be both slow and a second
+    chance to run them on different inputs.
+
+    ``matched_leverage`` is the matched run's own leverage path, carried because
+    it is not recoverable from anything else here -- the ``rule_results`` entry
+    for ERC is the *published-target* run, which holds the same weights at a
+    different size. A trading-cost estimate for the matched column needs it.
+
+    ``matched_target_overridden`` says whether ``matched_target_vol`` is 1/N's
+    own realized volatility or a value the caller supplied. When it is an
+    override, the ``ERC @ 1/N vol`` rows are **not** matched to 1/N and every
+    printed form says so -- a column whose label lies is worse than no column.
     """
 
     data_through: str
@@ -132,7 +151,10 @@ class RuleComparison:
     target_vol: float
     matched_target_vol: float
     matched_realized_vol: float
+    matched_target_overridden: bool
+    matched_leverage: pd.Series
     equal_capital_vol: float
+    rule_results: dict
     series: pd.DataFrame
     summary: pd.DataFrame
     relative: pd.DataFrame
@@ -158,9 +180,15 @@ def matched_target_vol(
     if not isinstance(benchmark_returns, pd.Series):
         raise ComparisonError("benchmark_returns must be a pandas Series of daily returns")
     vol = float(summarize(benchmark_returns, periods_per_year)["annual_volatility"])
-    if not np.isfinite(vol) or vol <= 0.0:
+    # Against MIN_MATCHABLE_VOL rather than against 0.0. A constant return
+    # series is degenerate but its measured volatility is float noise -- 1.7e-18,
+    # not 0.0, because the constant is not exactly representable -- so a bare
+    # `vol <= 0` test passes it and the overlay is handed a target it can only
+    # answer by sitting on its leverage floor. See config.MIN_MATCHABLE_VOL.
+    if not np.isfinite(vol) or vol <= MIN_MATCHABLE_VOL:
         raise ComparisonError(
-            f"benchmark volatility is {vol!r}; there is no target to lever an ERC book to"
+            f"benchmark volatility is {vol!r}, at or below the {MIN_MATCHABLE_VOL:g} floor; "
+            "there is no meaningful target to lever an ERC book to"
         )
     return vol
 
@@ -307,6 +335,7 @@ def compare_rules(
     sleeve_returns: pd.DataFrame,
     risk_free: pd.Series,
     target_vol: float = TARGET_VOL,
+    match_vol: float | None = None,
     leverage_cap: tuple[float, float] = LEVERAGE_CAP,
     periods_per_year: int = TRADING_DAYS_PER_YEAR,
     annual_risk_free_rate: float = ANNUAL_RISK_FREE_RATE,
@@ -319,6 +348,13 @@ def compare_rules(
     engine run on purpose -- ``backtest.py`` owns the one-day alignment between a
     leverage decision and the return it earns, and reproducing it here by hand is
     the bug this project is shaped to prevent.
+
+    ``match_vol`` replaces 1/N's realised volatility as the matched column's
+    target. It exists to ask "what if the match point were somewhere else" --
+    60/40's volatility, say, or a round number -- and it makes the ``ERC @ 1/N
+    vol`` label untrue, so :class:`RuleComparison` records that it was used and
+    every printed form says so. 1/N's own volatility is measured and reported
+    either way, because that is what the override is being compared against.
 
     Raises
     ------
@@ -367,11 +403,23 @@ def compare_rules(
     equal_capital_vol = matched_target_vol(
         benchmarks[EQUAL_CAPITAL].returns.loc[index], periods_per_year
     )
-    log.info("Re-running the engine at 1/N's realised %.3f%% volatility...", equal_capital_vol * 100)
+    overridden = match_vol is not None
+    if overridden:
+        if not np.isfinite(match_vol) or match_vol <= MIN_MATCHABLE_VOL:
+            raise ComparisonError(
+                f"match_vol must be a volatility above {MIN_MATCHABLE_VOL:g}, got {match_vol!r}"
+            )
+        log.warning(
+            "Matched column overridden to %.3f%%; 1/N's own realised volatility is %.3f%%. "
+            "The 'ERC @ 1/N vol' rows are not matched to 1/N on this run.",
+            match_vol * 100, equal_capital_vol * 100,
+        )
+    match_target = float(match_vol) if overridden else equal_capital_vol
+    log.info("Re-running the engine at %.3f%% volatility...", match_target * 100)
     matched = run_backtest(
         sleeve_returns,
         risk_free=risk_free,
-        target_vol=equal_capital_vol,
+        target_vol=match_target,
         leverage_cap=leverage_cap,
         periods_per_year=periods_per_year,
         warmup_trading_days=warmup_trading_days,
@@ -435,9 +483,12 @@ def compare_rules(
         n_observations=len(index),
         n_rebalances=len(engine.weights),
         target_vol=target_vol,
-        matched_target_vol=equal_capital_vol,
+        matched_target_vol=match_target,
         matched_realized_vol=matched_realized_vol,
+        matched_target_overridden=overridden,
+        matched_leverage=matched.leverage,
         equal_capital_vol=equal_capital_vol,
+        rule_results=allocation_results,
         series=series,
         summary=summary,
         relative=relative,
@@ -468,9 +519,11 @@ _CAVEATS: tuple[str, ...] = (
     "Two rows are counterfactual and are marked: the financing-omitted ones. Nobody can borrow "
     "at zero. They are reported only because the difference from their financed twin IS the cost "
     "of leverage, which is one of the three findings.",
-    "No transaction costs, bid-ask spread or borrow spread over the bill rate, on any row. ERC "
-    "re-optimises every month and 1/N barely trades, so costs would not fall evenly -- they would "
-    "hurt ERC more. Step 58 measures that; until it does, these levels are optimistic for ERC.",
+    "No transaction costs, bid-ask spread or borrow spread over the bill rate, on any row, so "
+    "every level here is optimistic. src/sensitivity.py measures what that is worth, and the "
+    "obvious version of the objection is wrong: ERC re-optimises every month, but a 1/N book "
+    "drifts off 25% and has to be traded back every month too, so the costs do not fall nearly "
+    "as unevenly as 'equal capital barely trades' implies. Read the breakeven there.",
     "One data date per table. These numbers are measured through the date printed above and will "
     "not match a run on a different date.",
 )
@@ -501,18 +554,28 @@ def format_concentration_table(concentration: pd.DataFrame) -> str:
 
 def format_comparison_report(comp: RuleComparison) -> str:
     """Human-readable account of one :func:`compare_rules` run."""
+    match_source = "an OVERRIDDEN" if comp.matched_target_overridden else "1/N's realised"
     lines = [
         "Equal risk vs equal capital -- multi-asset construction comparison",
         f"  window        : {comp.start} -> {comp.data_through} "
         f"({comp.n_observations} return days, {comp.n_rebalances} rebalances)",
         f"  universe      : {'/'.join(UNIVERSE)}",
         f"  published tgt : {comp.target_vol:.1%} volatility",
-        f"  matched column: levered toward 1/N's realised {comp.matched_target_vol:.2%}, "
+        f"  matched column: levered toward {match_source} {comp.matched_target_vol:.2%}, "
         f"and actually realised {comp.matched_realized_vol:.2%} "
         f"({comp.matched_realized_vol / comp.matched_target_vol - 1:+.1%} overshoot)",
         f"  same weights  : {'yes' if comp.weights_unchanged else 'NO -- see the error'} "
         "(the target scales the book, it does not re-solve it)",
     ]
+    if comp.matched_target_overridden:
+        # The row labels say "@ 1/N vol" and on this run they do not mean it.
+        # Said here, where a reader meets the number, rather than only in the
+        # caveats at the bottom.
+        lines.append(
+            f"! the match point was overridden: 1/N's own realised volatility is "
+            f"{comp.equal_capital_vol:.2%}, so the '{ERC_MATCHED_FINANCED}' and "
+            f"'{ERC_MATCHED_FREE}' rows are NOT matched to 1/N on this run"
+        )
 
     health = comp.meta["engine"].get("run_health", "unknown")
     lines.append(f"  engine health : {health}" if health == "clean" else f"! engine health : {health}")

@@ -321,3 +321,67 @@ SATURATION_REPORT_FRACTION: float = 0.25
 # choice would not. Every table prints its own observation count beside it for
 # the same reason.
 VAR_CONFIDENCE: float = 0.95
+
+# ---------------------------------------------------------------------------
+# The equal-risk vs equal-capital comparison -- src/comparison.py
+# ---------------------------------------------------------------------------
+# Floor on the volatility an ERC book may be levered *to*. The matched column's
+# target is another rule's realized volatility, so a degenerate benchmark would
+# otherwise hand the overlay a nonsense target and get a straight-faced answer
+# back: a numerically-flat return series (a constant that is not exactly
+# representable in binary) measures 1.7e-18 rather than 0.0, which is positive,
+# finite, and passes a bare `vol <= 0` guard. Levering an ERC book to 1.7e-18
+# volatility just pins the overlay at its leverage FLOOR and reports a column.
+#
+# Set four orders of magnitude below anything real and ten above the noise:
+# every rule in this project realizes 6%-12% annualized, the thinnest window
+# worth measuring is still ~1e-3, and the degenerate cases measure ~1e-18. There
+# is no scale to make this relative to -- the target is itself a volatility --
+# so it is absolute, which is only safe because a volatility's units are fixed.
+MIN_MATCHABLE_VOL: float = 1e-8
+
+# ---------------------------------------------------------------------------
+# The estimation-error sweep and trading costs -- src/sensitivity.py
+# ---------------------------------------------------------------------------
+# The standard objection to the whole comparison is that ERC needs an ESTIMATED
+# covariance and 1/N needs nothing, so ERC's edge could be an artifact of four
+# well-chosen estimator settings. These grids are what answers it, and each one
+# brackets its default rather than exploring around it: a sweep whose settings
+# all sit on one side of the default measures a slope, not a sensitivity.
+#
+# Halflives from 20 days (a month of memory -- the estimate is mostly last
+# month) to 250 (a year, nearly the whole warm-up window), around the 60 in
+# COV_EWMA_HALFLIFE_DAYS.
+SENSITIVITY_COV_HALFLIVES: tuple[int, ...] = (20, 40, 60, 120, 250)
+
+# Shrinkage from 0.0 -- the raw EWMA, no shrinkage at all, which is the setting
+# that says how much of ERC's edge the shrinkage is responsible for -- to 0.50,
+# halfway to a diagonal covariance, i.e. halfway to ignoring correlations and
+# therefore halfway to naive 1/sigma. Around the 0.10 in COV_SHRINKAGE.
+SENSITIVITY_SHRINKAGES: tuple[float, ...] = (0.0, 0.05, 0.10, 0.25, 0.50)
+
+# Warm-up from half a year to two, around the year in COV_WARMUP_TRADING_DAYS.
+# This one moves the sample as well as the estimate -- a longer warm-up starts
+# the comparison later -- so both rules take it together and the row prints its
+# own observation count.
+SENSITIVITY_WARMUPS: tuple[int, ...] = (126, 252, 504)
+
+# Rebalance every month, quarter, half-year or year. Monthly is the default and
+# the most expensive; annual is where an estimated covariance has the least
+# chance to be wrong often and the most chance to be stale.
+SENSITIVITY_REBALANCE_MONTHS: tuple[int, ...] = (1, 3, 6, 12)
+
+# One-way cost per unit of capital traded, in basis points, for the cost
+# sensitivity. Nothing in this project charges a cost by default, so 0 is the
+# headline and the rest are the question. The range brackets what these four
+# ETFs plausibly cost: SPY/TLT/TIP quote inside a basis point and DBC is the
+# wide one, so 1-5bp is realistic retail-to-institutional, 10-25bp is
+# pessimistic, and 50bp is there to find the breakeven rather than to be
+# believed.
+COST_RATES_BPS: tuple[float, ...] = (0.0, 1.0, 5.0, 10.0, 25.0, 50.0)
+
+# Upper bound for the breakeven-cost search, as a decimal. 5% one-way per unit
+# traded is far past any real market; the search reports "beyond this" rather
+# than a number if it gets there, because an extrapolated breakeven is not a
+# measurement.
+MAX_BREAKEVEN_COST: float = 0.05

@@ -285,12 +285,14 @@ charts; the correlation and diversification ratio share one figure, and the tabl
 
 ---
 
-## Phase 8 — The matched-risk ERC vs 1/N comparison (the current work)
+## Phase 8 — The matched-risk ERC vs 1/N comparison (**done**, tagged `v2.0`)
 
-Everything above describes the engine. This phase is the comparison the project now exists to
-make, and it is the first phase whose numbers are already measured but **not yet reproducible from
-anything in `src/`** — which is the gap step 53 closes. `TASKS.md` Phase 8 has the numbered steps;
-this section is the design and the measurements that constrain it.
+Everything above describes the engine. This phase is the comparison the project exists to make. It
+started as the one phase whose numbers were already measured but **not reproducible from anything
+in `src/`**; `src/comparison.py`, `src/sensitivity.py` and `compare_rules.py` closed that, and
+every figure below is now that CLI's own output. `TASKS.md` Phase 8 has the numbered steps and what
+each actually produced; this section is the design, the measurements, and the two results the
+phase found that nobody expected going in.
 
 ### What has to be compared, and why three columns rather than two
 
@@ -308,32 +310,39 @@ volatility with the financing leg omitted.** It is not a strategy anyone can run
 the difference between it and the row above is the cost of leverage, and that difference is one of
 the three findings.
 
-### Measured already, by a scan, and the implementation must reproduce these
+### The measured table, and where it comes from
 
-Run on live data through **2026-10-30**, 237 rebalances, 4,950 return days, using `run_backtest`,
-`benchmarks.equal_weight`, `overlay.unlevered_returns` / `financed_returns` and
-`metrics.summarize` — no new estimator, no hand-rolled alignment. **Step 53 has since landed and
-`comparison.compare_rules()` reproduces every row below**, which is how the one error in this
-table was found: 60/40's ratio is 0.777, not the 0.778 an earlier draft carried.
+**This table is `compare_rules.py`'s own output** (step 56), on live data through **2026-11-02**:
+2007-03-01 → 2026-11-02, 237 rebalances, 4,951 return days, `run_health clean`. It replaces the
+hand-run scan that stood here while Phase 8 was being built — that scan was through 2026-10-30 and
+is superseded, not merely re-dated. Regenerate it with:
+
+```
+.venv/bin/python compare_rules.py --no-charts
+```
 
 | | CAGR | vol | return/vol | max drawdown | mean leverage |
 | --- | --- | --- | --- | --- | --- |
-| ERC unlevered | 5.12% | 6.90% | **0.759** | −17.15% | 1.00x |
-| Naive 1/σ | 4.86% | 6.64% | 0.747 | −16.69% | 1.00x |
-| 1/N (equal weight) | 5.79% | 8.35% | **0.716** | −28.09% | 1.00x |
-| Max Sharpe | 6.73% | 10.48% | 0.674 | −26.59% | 1.00x |
-| 60/40 | 8.59% | 11.44% | 0.777 | −29.92% | 1.00x |
-| ERC @ 10% target, financed | 7.14% | 11.25% | 0.669 | −29.10% | 1.76x |
-| ERC @ 10% target, financing omitted | 8.32% | 11.25% | 0.767 | −29.05% | 1.76x |
-| **ERC @ 1/N's vol, financed** | 6.28% | 9.40% | **0.696** | −24.85% | 1.47x |
-| ERC @ 1/N's vol, financing omitted | 7.00% | 9.40% | 0.767 | −24.81% | 1.47x |
+| ERC unlevered | 5.10% | 6.90% | **0.756** | −17.15% | 1.00x |
+| Naive 1/σ | 4.84% | 6.64% | 0.745 | −16.69% | 1.00x |
+| 1/N (equal weight) | 5.76% | 8.36% | **0.712** | −28.09% | 1.00x |
+| Max Sharpe | 6.66% | 10.49% | 0.667 | −26.59% | 1.00x |
+| 60/40 | 8.61% | 11.44% | 0.779 | −29.92% | 1.00x |
+| ERC @ 10% target, financed | 7.09% | 11.25% | 0.665 | −29.10% | 1.76x |
+| ERC @ 10% target, financing omitted | 8.27% | 11.25% | 0.763 | −29.05% | 1.76x |
+| **ERC @ 1/N's vol, financed** | 6.24% | 9.40% | **0.692** | −24.85% | 1.47x |
+| ERC @ 1/N's vol, financing omitted | 6.96% | 9.40% | 0.763 | −24.81% | 1.47x |
+
+**One extra trading day moved every ratio by about 0.003**, which is worth knowing before anyone
+treats a third decimal here as stable: the *ranking* is the result, the level is not. 60/40 reading
+0.779 here against the scan's 0.777 is that same effect, not a corrected error.
 
 **Three findings, and the second is the one the project leads with:**
 
 1. **Equal risk is a better risk allocation.** ERC hits 25% risk a sleeve to 1.6e-07 while its
    capital runs SPY 20.0% / TLT 21.8% / DBC 16.3% / TIP 41.9%. 1/N holds capital flat and lets risk
    go where it likes: SPY's risk share spans **8.9% to 60.3%** (mean 32.9%), DBC's averages
-   **41.8%**, TIP's **9.0%**, and TLT's turns **negative** (−6.3%) in some months. Worst
+   **41.8%**, TIP's **9.0%**, and TLT's turns **negative** in some months. Worst
    single-sleeve risk concentration 1/N reaches: **66.5%**. In effective bets (`1 / Σ RCᵢ²`),
    **ERC 4.00 against 1/N 2.92** out of a possible 4.00 — the mean of the per-rebalance values.
    An earlier draft of this line said 2.83, which was `1 / mean(Σ RC²)` rather than
@@ -346,11 +355,11 @@ table was found: 60/40's ratio is 0.777, not the 0.778 an earlier draft carried.
    times and bottomed at 1.84, but 60/40 bottomed at **0.78** and max Sharpe at **0.88**. Any test
    asserting `>= 1` would be asserting something about the rule, not about the formula.
 2. **Equalizing risk wins on risk-adjusted return until the leverage is paid for.** Unlevered,
-   0.759 against 0.716 and a drawdown of −17.2% against −28.1%, for 67 bp/yr less return. Levered
-   to 1/N's own volatility with the real T-bill charged: **0.696, below 1/N**. With the financing
-   leg omitted: 0.767, above it. State both.
+   0.756 against 0.712 and a drawdown of −17.2% against −28.1%, for 66 bp/yr less return. Levered
+   to 1/N's own volatility with the real T-bill charged: **0.692, below 1/N**. With the financing
+   leg omitted: 0.763, above it. State both.
 3. **Most of ERC's edge is the volatility scaling, not the correlation structure.** Naive 1/σ
-   reaches 0.747 of ERC's 0.759 with no optimizer, no gradient and no restart ladder. The ERC
+   reaches 0.745 of ERC's 0.756 with no optimizer, no gradient and no restart ladder. The ERC
    solver is worth about one point of return-to-vol over inverse-volatility weighting on this
    universe. That is a real result about this project's own mathematical core and it is not
    flattering to it.
@@ -392,12 +401,75 @@ Report it. It belongs beside the three findings, not behind them.
   never the ERC solve, which is what makes a matched-risk column cheap — one extra engine run, not
   a redesign. It is also why `TASKS.md` step 49's browser explorer is sound.
 
-### What this phase must not do
+### What the sensitivities found (step 58), and why the objection is weaker than it looks
 
-- **Do not hand-roll the overlay or the one-day alignment** to build the matched column. Call
+Two objections stand against everything above, and both are answered by measurement rather than by
+assertion. `src/sensitivity.py` owns them; `compare_rules.py --sensitivities` runs them.
+
+**"ERC needs an estimated covariance and 1/N needs none."** True, and it is the right question:
+if ERC's edge lives only at the four settings in `config.py`, the edge belongs to the settings.
+Each knob is swept across a grid bracketing its default with **both rules re-run together** at
+every setting, one window and one calendar — a sweep that moved the engine's warm-up and left 1/N's
+alone would compare two rules over two samples and call the difference a sensitivity. Seventeen
+settings, on the 2026-11-02 data:
+
+| Knob | Range | ERC's unlevered gap over 1/N |
+| --- | --- | --- |
+| Covariance halflife | 20 – 250 days (default 60) | +0.038 to +0.060 |
+| Shrinkage intensity | 0.00 – 0.50 (default 0.10) | +0.036 to +0.047 |
+| Warm-up | 126 – 504 days (default 252) | +0.043 to +0.045 |
+| Rebalance frequency | 1 – 12 months (default 1) | **−0.029** to +0.043 |
+
+Unlevered, ERC won at **16 of 17**. The single failure is the informative one: at **annual**
+rebalancing it scores 0.683 against 1/N's 0.712 and loses, and at six-monthly the edge is already
+down to +0.003. **Equal risk is a claim about a covariance that moves, and a book re-solving once a
+year is holding last year's answer.** That is the one setting the unlevered conclusion is
+genuinely sensitive to, and it should be said rather than buried in a seventeen-row table.
+
+At 1/N's volatility, financed, ERC was behind at **all 17**, from −0.010 to −0.071. No estimator
+setting rescues it, which makes finding 2 stronger rather than weaker: **the gap is the financing,
+not the covariance.**
+
+**"ERC re-optimises every month and 1/N barely trades."** The second half of that is false, and the
+reason it looks true is a modelling convention rather than a fact about the rules. Both
+`benchmarks.fixed_weight` and `backtest.run_backtest` hold their weights **constant** between
+rebalances, which is arithmetically a book traded back to target every day — so 1/N's weights frame
+shows exactly 0.0% turnover. Read straight off, it says equal capital is free to run.
+
+Turnover is therefore **reconstructed**: at each rebalance the previous target is carried forward
+by the sleeves' realised returns and the trade is measured from that drifted book to the new
+target, one-way, as a fraction of the book. Measured:
+
+| | ERC | 1/N |
+| --- | --- | --- |
+| Traded per rebalance | 1.89% | 1.26% |
+| of which drifting back to target | 1.03% | 1.26% |
+| of which re-optimising | 1.83% | 0.00% |
+| Traded per year | 22.7% | 15.1% |
+
+A 1/N book drifts off 25% and has to be traded back every month too, so ERC trades about **1.5x**
+what equal capital does, not ten times it. Charging both rules the same rate, ERC's unlevered
+advantage survives to a breakeven of **291bp per unit traded** — past any real market on four of
+the most liquid ETFs in existence. For the matched column there is no breakeven to find: it is
+behind at zero cost already.
+
+Note that drift-back and re-optimisation do **not** sum to the total. They partly cancel, because
+ERC drifts toward its next solution about as often as away from it — both move with volatility. A
+tidier definition that summed would overstate ERC's trading.
+
+### What this phase must not do — and these still bind on anything built on top of it
+
+- **Do not hand-roll the overlay or the one-day alignment** to build a matched column. Call
   `run_backtest(returns, risk_free=rf, target_vol=...)` and let `backtest.py` own it — see
-  `AGENTS.md`/`CLAUDE.md` under `backtest.py`.
+  `AGENTS.md`/`CLAUDE.md` under `backtest.py`. `tests/test_comparison.py` swaps the second engine
+  run for the naive `leverage = target / vol` rescale and asserts the matched column moves, so the
+  difference is pinned rather than asserted.
 - **Do not run a rule only on a sub-window** and compare. Run full history, slice afterwards; a
-  shorter start changes the covariance warm-up and therefore the weights.
-- **Do not reuse `README.md`'s 2026-07-31 figures in the same table as these.** One data date per
-  table, named.
+  shorter start changes the covariance warm-up and therefore the weights. The same rule applies to
+  the estimator sweep: a knob that moves the warm-up has to move **both** rules, which is why
+  `benchmarks.equal_weight` forwards `warmup_trading_days` and `rebalance_months`.
+- **One data date per table, named.** `README.md`, the table above and `AGENTS.md`/`CLAUDE.md`'s
+  "What this is" are all 2026-11-02. The 2026-07-31 and 2026-10-30 figures earlier drafts carried
+  are superseded, not alternatives — a refresh means re-running `compare_rules.py` and
+  `run_backtest.py` and updating all three documents together, because one extra trading day moves
+  every ratio in the third decimal.

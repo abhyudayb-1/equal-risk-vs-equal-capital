@@ -4,10 +4,12 @@ Step-by-step build order for the study described in [`PLAN.md`](PLAN.md): what a
 *risk* buys over allocating equal *capital* across a multi-asset book, and what it costs in
 volatility and return. Every step is one branch and ends in one pushed PR.
 
-> **Where to start today: Phase 8 (steps 53–60), at the bottom.** Phases 0–5 (steps 1–35) are
-> built and are the engine the study runs on. Phase 6 and steps 43–44 were **removed** when the
-> project was narrowed — see `AGENTS.md`/`CLAUDE.md`'s ledger for what went and which tags hold
-> it, and do not look for them here. Phase 7 (the website) is **re-scoped** and waits on Phase 8.
+> **Phase 8 (steps 53–60) is DONE.** The study is built, reproducible from
+> `compare_rules.py`, and written up. Phases 0–5 (steps 1–35) are the engine it runs on. Phase 6
+> and steps 43–44 were **removed** when the project was narrowed — see `AGENTS.md`/`CLAUDE.md`'s
+> ledger for what went and which tags hold it, and do not look for them here. **Phase 7 (the
+> website) is where to start today**: it was re-scoped and waiting on Phase 8, and Phase 8 has
+> landed, so the site can now publish a comparison the repo reproduces.
 
 **Person A — Engine** (`abhyudayb-1`) · **Person B — Analysis** (`shivakasula`)
 
@@ -246,13 +248,20 @@ Steps 47 and 48 depend only on 45 and can run in parallel; 49 needs 45's split f
 
 ---
 
-## Phase 8 — The matched-risk ERC vs 1/N comparison (the current work)
+## Phase 8 — The matched-risk ERC vs 1/N comparison (**done**, tagged `v2.0`)
 
-**This is what the cleanup cleared the way for, and it starts from a problem rather than a blank
-page.** The project's three headline findings are already *measured* — they are in `PLAN.md`'s
+**This is what the cleanup cleared the way for, and it started from a problem rather than a blank
+page.** The project's three headline findings were already *measured* — they were in `PLAN.md`'s
 Phase 8 section and quoted in `AGENTS.md`/`CLAUDE.md`'s "What this is" — but **nothing in `src/`
-reproduces them.** A figure no function can regenerate is exactly what this repo does not tolerate
-anywhere else, so step 53 lands first and the rest hang off it.
+reproduced them.** A figure no function can regenerate is exactly what this repo does not tolerate
+anywhere else, so step 53 landed first and the rest hung off it.
+
+**All eight steps are done.** `src/comparison.py` is the study, `src/sensitivity.py` is the
+estimation-error and cost answer, `compare_rules.py` is the CLI, and `README.md` is refreshed onto
+one data date (2026-11-02) with every table regenerable from that CLI. What the phase *found*, as
+opposed to what it built, is in `PLAN.md`'s Phase 8 section — including the two results that were
+not visible before it ran: equal risk loses 2022 against equal capital, and its unlevered advantage
+survives a trading cost of 291bp but not an annual rebalance.
 
 Read `PLAN.md`'s Phase 8 section before starting any step here. It has the three-column design, the
 measured table the implementation must reproduce, the two measurement traps (the overlay overshoots
@@ -269,23 +278,47 @@ one branch and one "done when"; the "done when" text is the spec.
 
 | # | Branch | What | Done when |
 |---|---|---|---|
-| 53 | `feat/53-comparison-core` | `src/comparison.py`: the three-column comparison as pure functions of a `BacktestResult` mapping plus the sleeve returns — 1/N, ERC unlevered, and ERC levered to 1/N's realized volatility with financing charged — plus naive 1/σ and 60/40 as reference rows and the financing-omitted row flagged as counterfactual. Reuses `riskmetrics.risk_summary` / `format_metric_table` and `headtohead.relative_metrics` / `tail_block` / `crisis_table`, which exist unused for exactly this. The matched column comes from a second `run_backtest` call at 1/N's volatility, never a hand-rolled overlay. | Reproduces every row of `PLAN.md`'s Phase 8 table to the printed precision on the same data date; the matched column's *realized* volatility is reported next to the target rather than instead of it |
-| 54 | `feat/54-risk-allocation` | `src/comparison.py`: the risk-allocation block — per-sleeve capital weight beside risk share for both rules, each rule's risk-share range and worst single-sleeve concentration, and **effective bets `1 / Σ RCᵢ²`** per rebalance. `benchmarks.fixed_weight` already computes 1/N's time-varying risk contributions, so this needs no new estimator. | Reproduces ERC 4.00 / 1/N 2.92 effective bets, SPY's 8.9%–60.3% range and the 66.5% worst concentration; a test pins effective bets to exactly N when risk shares are equal and to 1 when one sleeve carries all the risk |
-| 55 | `feat/55-comparison-tests` | `tests/test_comparison.py`: standalone, offline, house style. The identities (risk shares sum to 1; effective bets **exactly N and exactly 1 in the two limiting cases** — *not* bounded inside `[1, N]`, which step 54 measured to be false once a risk share goes negative: 60/40 bottoms at 0.78 effective bets and max Sharpe at 0.88), the matched-column construction against a hand-built two-asset case whose answer is known in advance, and **the mutation**: swap the second engine run for a naive `leverage = target / vol` rescale and assert the matched column moves. A column that cannot tell those apart is not testing the overlay. | `python tests/test_comparison.py` prints `N checks passed`, exits 0, and still passes with `socket.connect` patched to raise |
-| 56 | `feat/56-comparison-cli` | `compare_rules.py`: the CLI. Prints the three-column table, the risk-allocation block, the crisis table and the caveats, naming the data date and the realized-vs-target volatility gap on every run. Flags: `--start`, `--target-vol` (override the matched target), `--refresh-prices`, `--reports-dir`, `--no-charts`, `--verbose`, `--help`. Imports `load_data` from `run_backtest.py` so the data path is identical to the headline run. | `compare_rules.py --help` documents every flag; a live run prints a complete report; an infeasible ERC solve reports cleanly instead of as a traceback (`ERCSolverError` caught before `ValueError`) |
-| 57 | `feat/57-comparison-charts` | `src/viz.py`: two charts — risk share through time for **both** rules side by side (the existing ERC chart is half of this one), and the return/volatility plane with every row plotted, so the matched-risk comparison reads as a position rather than a number. Renders into `--reports-dir`; the self-check renders into a temp dir. | Both PNGs render from fixtures and from a live run, and `git status` shows `reports/` unmodified after `python -m src.viz` |
-| 58 | `feat/58-sensitivities` | The estimation-error question, which is the standard objection to this whole comparison: how much of ERC's edge survives the covariance being *estimated*? Sweep `COV_EWMA_HALFLIFE_DAYS`, `COV_SHRINKAGE`, the warm-up length and the rebalance frequency, reporting ERC's return-to-vol and effective bets at each against 1/N's, which needs no estimate at all. Also report **turnover** per rebalance for both rules plus a cost sensitivity: ERC re-optimises monthly and 1/N barely trades, so "costs not modelled" is currently honest but is also the obvious attack. | A table over at least three settings per knob; any setting at which ERC stops beating 1/N is stated plainly in the output rather than buried |
-| 59 | `feat/59-readme` | `README.md`: refresh Results onto **one** data date and rewrite the headline around the three findings. The 2022 and COVID sections become the evidence chapters they now are rather than the thesis. Drop the remaining "risk parity + volatility targeting" framing language. | Every number in `README.md` comes from one live run on one date, and `compare_rules.py` regenerates every table in the comparison section |
-| 60 | — | Final review of 53–59, tag `v2.0`. | Every number in `README.md` and in `AGENTS.md`/`CLAUDE.md` traces to a function in `src/`, and the scan figures in `PLAN.md`'s Phase 8 table have been replaced by the CLI's own output |
+| 53 ✅ | `feat/53-comparison-core` | `src/comparison.py`: the three-column comparison as pure functions of a `BacktestResult` mapping plus the sleeve returns — 1/N, ERC unlevered, and ERC levered to 1/N's realized volatility with financing charged — plus naive 1/σ and 60/40 as reference rows and the financing-omitted row flagged as counterfactual. Reuses `riskmetrics.risk_summary` / `format_metric_table` and `headtohead.relative_metrics` / `tail_block` / `crisis_table`, which exist unused for exactly this. The matched column comes from a second `run_backtest` call at 1/N's volatility, never a hand-rolled overlay. | Reproduces every row of `PLAN.md`'s Phase 8 table to the printed precision on the same data date; the matched column's *realized* volatility is reported next to the target rather than instead of it |
+| 54 ✅ | `feat/54-risk-allocation` | `src/comparison.py`: the risk-allocation block — per-sleeve capital weight beside risk share for both rules, each rule's risk-share range and worst single-sleeve concentration, and **effective bets `1 / Σ RCᵢ²`** per rebalance. `benchmarks.fixed_weight` already computes 1/N's time-varying risk contributions, so this needs no new estimator. | Reproduces ERC 4.00 / 1/N 2.92 effective bets, SPY's 8.9%–60.3% range and the 66.5% worst concentration; a test pins effective bets to exactly N when risk shares are equal and to 1 when one sleeve carries all the risk |
+| 55 ✅ | `feat/55-comparison-tests` | `tests/test_comparison.py`: standalone, offline, house style. The identities (risk shares sum to 1; effective bets **exactly N and exactly 1 in the two limiting cases** — *not* bounded inside `[1, N]`, which step 54 measured to be false once a risk share goes negative: 60/40 bottoms at 0.78 effective bets and max Sharpe at 0.88), the matched-column construction against a hand-built two-asset case whose answer is known in advance, and **the mutation**: swap the second engine run for a naive `leverage = target / vol` rescale and assert the matched column moves. A column that cannot tell those apart is not testing the overlay. | `python tests/test_comparison.py` prints `N checks passed`, exits 0, and still passes with `socket.connect` patched to raise |
+| 56 ✅ | `feat/56-comparison-cli` | `compare_rules.py`: the CLI. Prints the three-column table, the risk-allocation block, the crisis table and the caveats, naming the data date and the realized-vs-target volatility gap on every run. Flags: `--start`, `--target-vol` (override the matched target), `--refresh-prices`, `--reports-dir`, `--no-charts`, `--verbose`, `--help`. Imports `load_data` from `run_backtest.py` so the data path is identical to the headline run. | `compare_rules.py --help` documents every flag; a live run prints a complete report; an infeasible ERC solve reports cleanly instead of as a traceback (`ERCSolverError` caught before `ValueError`) |
+| 57 ✅ | `feat/57-comparison-charts` | `src/viz.py`: two charts — risk share through time for **both** rules side by side (the existing ERC chart is half of this one), and the return/volatility plane with every row plotted, so the matched-risk comparison reads as a position rather than a number. Renders into `--reports-dir`; the self-check renders into a temp dir. | Both PNGs render from fixtures and from a live run, and `git status` shows `reports/` unmodified after `python -m src.viz` |
+| 58 ✅ | `feat/58-sensitivities` | The estimation-error question, which is the standard objection to this whole comparison: how much of ERC's edge survives the covariance being *estimated*? Sweep `COV_EWMA_HALFLIFE_DAYS`, `COV_SHRINKAGE`, the warm-up length and the rebalance frequency, reporting ERC's return-to-vol and effective bets at each against 1/N's, which needs no estimate at all. Also report **turnover** per rebalance for both rules plus a cost sensitivity: ERC re-optimises monthly and 1/N barely trades, so "costs not modelled" is currently honest but is also the obvious attack. | A table over at least three settings per knob; any setting at which ERC stops beating 1/N is stated plainly in the output rather than buried |
+| 59 ✅ | `feat/59-readme` | `README.md`: refresh Results onto **one** data date and rewrite the headline around the three findings. The 2022 and COVID sections become the evidence chapters they now are rather than the thesis. Drop the remaining "risk parity + volatility targeting" framing language. | Every number in `README.md` comes from one live run on one date, and `compare_rules.py` regenerates every table in the comparison section |
+| 60 ✅ | — | Final review of 53–59, tag `v2.0`. | Every number in `README.md` and in `AGENTS.md`/`CLAUDE.md` traces to a function in `src/`, and the scan figures in `PLAN.md`'s Phase 8 table have been replaced by the CLI's own output |
 
-Steps 54–57 depend on 53. Step 58 depends on 53 and is the one most likely to produce an
-uncomfortable result, so run it **before** writing step 59, not after. Step 59 depends on
-everything.
+Steps 54–57 depended on 53. Step 58 was run **before** step 59, as planned, and it was indeed the
+uncomfortable one — see "What actually happened" below.
 
-**One scoping decision to make deliberately before step 53, not as a side effect of step 58.** The
+### What actually happened, where it differs from the spec above
+
+Worth reading before trusting the row text, because three steps landed differently:
+
+- **Step 57 landed before step 56**, because the CLI calls `viz.render_comparison` and a CLI
+  committed first would have referenced a function that did not exist yet. The numbering is the
+  spec's, not a dependency order.
+- **Steps 55 and 58 each found a bug in earlier work rather than only testing it**, which is what
+  this repo expects of a test step. Step 55 found that `comparison.matched_target_vol`'s
+  `vol <= 0` guard passed a *numerically* flat series — a constant return that is not exactly
+  representable measures 1.7e-18, not 0.0 — and would have handed the overlay that as a target;
+  the guard now runs against `config.MIN_MATCHABLE_VOL` and the suite pins both degenerate forms.
+  Step 58 found that reading turnover off a weights frame reports **0.0%** for 1/N, because
+  `benchmarks.fixed_weight` holds weights constant between rebalances, which is arithmetically a
+  book traded back to target every day. Turnover is reconstructed from the drift instead.
+- **Step 58 needed two new engine arguments**, `run_backtest(..., shrinkage=, rebalance_months=)`
+  and the matching forwarding in `benchmarks.equal_weight` / `fixed_weight`. That is additive and
+  was anticipated — `run_backtest`'s docstring already said its overrides exist "so a sensitivity
+  sweep does not have to edit the shared constants file" — but it is an engine change, so it is
+  recorded here rather than left to be discovered in a diff.
+- **The cost block prints on every run; only the knob sweep is behind `--sensitivities`.** The
+  turnover and breakeven need no extra engine runs, and the comparison report's own caveat about
+  unmodelled costs is weaker if the measurement that answers it is opt-in.
+
+**One scoping decision that was made deliberately and stands: the comparison is four sleeves.** The
 comparison is four sleeves. 1/N and ERC diverge further as the universe grows and as volatility
 dispersion widens, so a wider universe would strengthen the result. But `DATA_START_DATE` is pinned
 to DBC's 2006 inception, `data._validate`'s late-start guard rejects anything listed after it, and
 `cache.write_frame` replaces the whole shared price cache — the guard that used to work around that
 last point, `data.fetch_ticker_prices`, was removed along with the ticker comparison. Widening
-`UNIVERSE` is therefore real data-layer work, not a config edit.
+`UNIVERSE` is therefore real data-layer work, not a config edit. Step 58's sweep did not touch it,
+and `README.md`'s limitations section names it as the open one.

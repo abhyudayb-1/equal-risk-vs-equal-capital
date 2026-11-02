@@ -87,6 +87,7 @@ def fixed_weight(
     strategy: str,
     cov_estimator: CovEstimator | None = None,
     warmup_trading_days: int = COV_WARMUP_TRADING_DAYS,
+    rebalance_months: int = 1,
 ) -> BacktestResult:
     """Backtest a constant target allocation, rebalanced monthly.
 
@@ -108,6 +109,18 @@ def fixed_weight(
         ``src.covariance.estimate_covariance``, the same estimator the engine
         uses -- pass a different one only to deliberately judge the benchmarks
         against a different covariance than the engine saw.
+    rebalance_months:
+        Rebalance every ``n``-th month-end rather than every one, thinned from
+        the front so the first date does not move. It matches the engine's
+        argument of the same name and exists for the same reason: a sweep over
+        rebalance frequency has to move *both* rules, or it is comparing two
+        different windows as well as two different frequencies.
+
+        Note what it does and does not change here. The capital weights are
+        constant, so thinning the calendar leaves this benchmark's **returns**
+        unchanged -- only the risk-contribution rows, which are estimated per
+        rebalance, thin out with it. That is not a hole in the argument; see the
+        note on this convention below.
 
     Notes
     -----
@@ -115,6 +128,17 @@ def fixed_weight(
     with returns, matching ``tests.fixtures.make_fake_result``. This is the
     convention to reconcile with ``src/backtest.py`` in Phase 5 -- see the module
     docstring of the fixture for why the one-day shift below is not negotiable.
+
+    That convention has a consequence worth naming, because it is easy to read
+    this function as modelling a monthly-rebalanced book and it does not.
+    Holding the weights constant between rebalances is arithmetically a book
+    traded back to target *every day*. ``src/backtest.py`` does the same with
+    its own weights, so the comparison stays fair -- both rules get identical
+    treatment -- but neither rule's **trading** is described by its weights
+    frame, and the turnover either would really incur has to be reconstructed
+    from the drift the frame does not show. ``src/sensitivity.py`` does exactly
+    that, and says so, rather than reading 0.0% turnover off 1/N's constant
+    weights and concluding that equal capital is free to run.
     """
     if returns.empty:
         raise ValueError("cannot backtest an empty return frame")
@@ -135,9 +159,18 @@ def fixed_weight(
     if not np.isclose(w.sum(), 1.0):
         raise ValueError(f"{strategy} target weights sum to {w.sum():.6f}, not 1.0")
 
+    if int(rebalance_months) != rebalance_months or rebalance_months < 1:
+        raise ValueError(
+            f"rebalance_months must be a whole number of months >= 1, got {rebalance_months!r}"
+        )
+
     returns = returns[tickers].sort_index()
     estimate_cov = cov_estimator or estimate_covariance
+    # Thinned from the front, so the first rebalance date -- and therefore the
+    # warm-up and the start of the return series -- does not move with the
+    # frequency. The engine does the same, for the same reason.
     rebalance = month_end_rebalance_dates(returns.index, warmup_trading_days)
+    rebalance = rebalance[:: int(rebalance_months)]
 
     # Risk contributions move even though capital weights do not -- that is the
     # comparison the project is built to make, so they are recomputed from the
@@ -164,6 +197,7 @@ def fixed_weight(
         strategy,
         {
             "solver_failures": 0,
+            "rebalance_months": int(rebalance_months),
             "target_weights": dict(target),
             "cov_estimator": getattr(estimate_cov, "__name__", repr(estimate_cov)),
         },
@@ -207,12 +241,20 @@ def equal_weight(
     tickers: tuple[str, ...] | list[str] | None = None,
     cov_estimator: CovEstimator | None = None,
     strategy: str = "Equal weight",
+    warmup_trading_days: int = COV_WARMUP_TRADING_DAYS,
+    rebalance_months: int = 1,
 ) -> BacktestResult:
     """Equal *capital* in every sleeve -- 25% each over the four-asset universe.
 
     The naive diversification everyone reaches for first, and the one the ERC
     solver is arguing against: equal capital concentrates risk in whichever
     sleeve happens to be most volatile.
+
+    ``warmup_trading_days`` and ``rebalance_months`` are forwarded rather than
+    left at their defaults because this is the rule the engine is measured
+    against. A sweep that moved the engine's warm-up and not 1/N's would compare
+    two rules over two different windows and report the difference as a
+    sensitivity to the warm-up.
     """
     tickers = list(tickers if tickers is not None else returns.columns)
     if not tickers:
@@ -222,6 +264,8 @@ def equal_weight(
         {t: 1.0 / len(tickers) for t in tickers},
         strategy,
         cov_estimator,
+        warmup_trading_days=warmup_trading_days,
+        rebalance_months=rebalance_months,
     )
 
 
