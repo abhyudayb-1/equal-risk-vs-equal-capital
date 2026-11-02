@@ -1,4 +1,0 @@
-# Replaces .gitignore for uploads.
-node_modules
-dist
-screenshots

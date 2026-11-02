@@ -17,7 +17,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 > | `src/comparison.py`, `src/sensitivity.py`, `compare_rules.py` (steps 53–60, `v2.0`) | **the study itself** — the comparison, the estimator sweep and the cost breakeven, all from one CLI |
 > | Incremental position analysis, "add one stock to the book" (steps 36–43, `v1.1`/`v1.3`) | **REMOVED** — see its section below |
 > | Head-to-head against a ticker (step 44, `v1.4`) | **REMOVED** — see its section below |
-> | `web/` — the research site | **on `main` now**, with four non-research features removed; see "The website" below |
+> | `web/` — the research site | **REMOVED** — it answered the old question and its data was separately dated; see "The website" below. `TASKS.md` Phase 9 rebuilds it |
 > | `TASKS.md` Phase 8 (steps 53–60) | **done, tagged `v2.0`** — the study, its suites, its CLI, its charts, the sensitivities and the write-up |
 > | `TASKS.md` Phase 7 (website, steps 45–52) | **the work to pick up** — re-scoped (steps 46 and 51 struck) and it was waiting on Phase 8, which has landed |
 >
@@ -472,45 +472,48 @@ one of its worst 5% of days, while earning 7.1% against 28.5% at a *lower* Sharp
 story, not a return story — and "chosen with hindsight" always applies: a ticker someone asks
 about is usually one that did well.
 
-## The website (`web/`)
+## The website (`web/`) — REMOVED
 
-`web/` is a Vite + React research site that reads **only** what `web/export_data.py` writes, so
-every figure on it traces back to the same `src/` functions `run_backtest.py` uses. It arrived on
-`main` with the cleanup; before that it lived on the unmerged `web-ui` branch (PR #62), which is
-superseded. The live deploy is `risk-parity-lab.vercel.app`.
+`web/` is gone from `main`: a Vite + React research site, 43 tracked files, reading only what
+`web/export_data.py` wrote. It arrived with the cleanup and had four non-research features removed
+from it (a position-analysis tab, a Gemini-backed chatbot, a passcode-gated two-person timeline
+workspace, and the Build log). It was deleted when the decision was made to rebuild the site from
+scratch rather than retrofit it.
 
-**Six tabs:** Overview, Findings, The data, Benchmarks, Hardening, Method. **Four features were
-removed** with the rest of the cleanup, because none of them was about portfolio construction and
-three had no subject left once `src/incremental.py` and `src/compare.py` went: the position-analysis
-tab and its `api/analyze.py` / `api/search.py` Python functions, a Gemini-backed research chatbot,
-a passcode-gated two-person timeline workspace, and the Build log tab. `api/live.js` is the only
-handler left, so `web/bundle_engine.py` and `web/requirements.txt` are gone too — there is no
-Python serverless function to ship `src/` into any more.
+**Why it went, which is not only "a rewrite is coming":**
 
-**Read this before touching anything under `web/`:**
+- **It answered the old question.** `export_data.py` called `run_backtest` and `build_benchmarks`
+  and knew nothing about `src/comparison.py` or `src/sensitivity.py`, so the site published the
+  engine against four benchmarks — not equal risk against equal capital. Phase 8 made the project
+  compute something the site had no way to show.
+- **Its data was stale and separately dated.** `web/data/results.json` sat at `market_data_through
+  2026-10-30` while everything else moved to 2026-11-02, which is exactly the two-dates-in-one-place
+  failure this project guards against everywhere else.
+- **Nothing depended on it.** No module under `src/`, no test and neither CLI referenced `web/`;
+  only the four documents mentioned it. Deleting it broke nothing, verified rather than assumed.
 
-- **Node and npm are not installed on the working machine**, so the PR that removed those features
-  **could not build or test the JS**. What was done instead: a static check that every relative
-  import still resolves and no identifier is left imported-but-unused, plus a full live run of
-  `web/export_data.py`. **Run `npm ci && npm test && npm run build` before trusting the bundle**,
-  and note `web/package-lock.json` is stale until `npm install` regenerates it.
-- **`web/QA.md` and `web/PROJECT_NOTES.md` are dated evidence from before the cleanup** and carry
-  banners saying so. They were deliberately *not* rewritten — re-measuring needs node.
-- **`web/data/*.json` is generated and checked in.** It is refreshed by CI and was refreshed by
-  hand in the cleanup from a verified live run. `history.json` now feeds only the version badge in
-  the header; trimming it is `TASKS.md` step 45's job.
-- **Two encoding bugs in `export_data.py` were found by running it and are fixed.** Both were
-  Windows-only and both pre-dated the cleanup: `subprocess.check_output(..., text=True)` and
-  `Path.read_text()` with no `encoding=` decode as cp1252, so `gh api` died on byte 0x81 of a real
-  pull-request body (taking the whole export down, because `UnicodeDecodeError` was not in the
-  `except` clause that exists to degrade gracefully) and every em-dash in `TASKS.md` reached the
-  export as mojibake — which also corrupted the phase titles, since the title regex skips leading
-  non-word characters and the first byte of the mojibake is a letter. **Always pass
-  `encoding="utf-8"` in this file.**
-- **The site must not publish a comparison the repo cannot reproduce.** `TASKS.md` Phase 7 waited
-  on Phase 8 for exactly this reason. **Phase 8 has landed**, so the block is lifted — but
-  `web/export_data.py` does not yet read `src/comparison.py`, so anything the site says about the
-  comparison today still has no function behind it. Wiring that in is Phase 7's job.
+**Reachable, not destroyed:** it is in this repository's history before the removal commit, and in
+`shivakasula/portfolio-allocation-capstone-project`.
+
+**What replaces it is `TASKS.md` Phase 9 (steps 61–65)**, which starts from the export rather than
+from a framework. Two things carried forward rather than copied: the export must emit *the study*
+(one source for every figure, which is why nothing under `src/` changes to serve a site), and the
+browser explorer — sliding the volatility target to watch ERC and 1/N change places is the one
+thing a static write-up cannot do, and it works only because the target never feeds back into the
+ERC weights.
+
+**Two traps from it that outlived it**, because they will bite the next export too:
+
+- **`subprocess.check_output(..., text=True)` and `Path.read_text()` decode as cp1252 on Windows.**
+  Both bit the old exporter: `gh api` died on byte 0x81 of a real pull-request body — taking the
+  whole export down, because `UnicodeDecodeError` was not in the `except` clause that existed to
+  degrade gracefully — and every em-dash in `TASKS.md` reached the export as mojibake, which also
+  corrupted the phase titles, since the title regex skips leading non-word characters and the first
+  byte of the mojibake is a letter. **Always pass `encoding="utf-8"`.**
+- **Table figures must come from the Python-computed values, never re-derived from rounded chart
+  series.** A 7-significant-figure equity series gives a drawdown 9e-7 off the real one — fine for
+  a chart, wrong for a number someone quotes.
+
 
 ## Setup and commands
 

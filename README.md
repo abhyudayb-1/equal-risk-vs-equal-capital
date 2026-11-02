@@ -624,5 +624,5 @@ tests/                standalone test scripts + the synthetic fixture
 reports/              generated CSVs and charts (the committed set is from one live run)
 data/cache/           cached network pulls (gitignored; delete a file to force a re-pull)
 PLAN.md               design rationale and the pinned maths
-TASKS.md              numbered build order, one owner per step
+TASKS.md              numbered build order; Phase 9 is the site, still to build
 ```

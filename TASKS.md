@@ -4,12 +4,16 @@ Step-by-step build order for the study described in [`PLAN.md`](PLAN.md): what a
 *risk* buys over allocating equal *capital* across a multi-asset book, and what it costs in
 volatility and return. Every step is one branch and ends in one pushed PR.
 
-> **Phase 8 (steps 53–60) is DONE.** The study is built, reproducible from
-> `compare_rules.py`, and written up. Phases 0–5 (steps 1–35) are the engine it runs on. Phase 6
-> and steps 43–44 were **removed** when the project was narrowed — see `AGENTS.md`/`CLAUDE.md`'s
-> ledger for what went and which tags hold it, and do not look for them here. **Phase 7 (the
-> website) is where to start today**: it was re-scoped and waiting on Phase 8, and Phase 8 has
-> landed, so the site can now publish a comparison the repo reproduces.
+> **Phase 8 (steps 53–60) is DONE** and tagged `v2.0`. The study is built, reproducible from
+> `compare_rules.py`, and written up on one data date. Phases 0–5 (steps 1–35) are the engine it
+> runs on.
+>
+> **Where to start today: Phase 9 (steps 61–65), at the bottom** — the site, rebuilt around the
+> bottom line rather than retrofitted onto the old one.
+>
+> **Removed, and not to be looked for here:** Phase 6 and steps 43–44 (the project was narrowed),
+> and Phase 7 with the `web/` tree it was written against — its section below says why, and
+> `AGENTS.md`/`CLAUDE.md`'s ledger says which tags hold what went.
 
 **The project is continued by one person** (`abhyudayb-1`) in a repository they own. Steps 1–35
 carry an **Owner** column recording who built each one, back when Person A (`abhyudayb-1`, engine)
@@ -183,72 +187,23 @@ comparison the repo cannot yet reproduce.)*
 
 ---
 
-## Phase 7 — Website feature parity (JOINT, starts only after PR #62 is merged)
+## Phase 7 — Website feature parity — REMOVED
 
-> **Re-scoped after the cleanup. Five of its eight steps survive.** This phase was specified when
-> the site had a position-analysis tab backed by `analyze_position.py` and a comparison tab backed
-> by `compare_ticker.py`. Both products were removed from `main`, so **steps 46 and 51 are struck**
-> — 46 covered the realized-risk and comparison tabs, 51 the analyzer's settings, and neither has
-> a subject any more. Everything the paragraphs below say about realized-risk metrics, head-to-head
-> metrics, `compare_to_ticker`, `calendar_warning` and the `--lookback-days` / `--weights` settings
-> went with them: **read those paragraphs as a record of what the site showed in September 2026,
-> not as a spec.**
->
-> **Steps 45, 47, 48, 49 and 50 stand, and two of them matter more now than when they were
-> written.** Step 47 publishes the engine's own crisis leverage figures, which are the overlay's
-> cost — part 3 of the project's question. Step 49's browser explorer lets a reader slide the
-> volatility target and watch ERC and 1/N change places, which *is* the new thesis made
-> interactive; `PLAN.md`'s Phase 8 confirms the property it relies on (the target never feeds back
-> into the ERC weights). **Phase 8 comes first** — the site should not publish a comparison the
-> repo cannot yet reproduce.
+Steps 45–52 are gone, with the `web/` tree they were written against. The phase existed to close
+one gap: **the site showed less than the project computed.** Phase 8 closed it from the other side
+— `compare_rules.py` now prints every row the site was missing, and `README.md` carries the
+overlay-lag figures — so steps 45 and 47 were answering a question that had moved. Step 48 needed
+a CI run to read its evidence from, and there is no `.github/` on `main`. And the phase was gated
+on "starts only after PR #62 is merged", which will not happen: #62 predates the cleanup and
+restores four features and two products that no longer exist.
 
-This is the "UI and backend get their own plan" the ground rules above defer to. The live site
-(`risk-parity-lab.vercel.app`) is built by PR #62's `web/` tree, and a gap audit against `main`
-found that it shows less than the project computes: no unlevered-ERC or financing-omitted rows, no
-overlay-lag numbers, the realized-risk and head-to-head metrics hidden or shown as raw JSON, and
-none of the CLI's settings (`--start`, `--target-vol`, `--max-leverage`, `--lookback-days`,
-`--weights`). Steps 43 and 44 are recorded in `CLAUDE.md`'s ledger rather than here, so this phase
-numbers from 45.
+**Reachable, not destroyed.** The `web/` tree and the full Phase 7 text are in the history of
+`shivakasula/portfolio-allocation-capstone-project` and in this repository's own log before the
+removal commit.
 
-**Nothing under `src/` changes in this phase.** All new numbers are produced by
-`web/export_data.py`, which already calls the real engine (`load_data`, `run_backtest`,
-`build_benchmarks`, `compare_to_ticker`), so the site has exactly one source for every figure.
-`web/` is B's area; step 50's equivalence tests go to A, the way step 28 did, because they guard the
-engine's own alignment rule.
-
-Four measurements shape the design, and are the reasons it is not built the obvious way:
-
-- **An engine run takes 0.5 s** (benchmarks 2.1 s, data load 1.3 s, measured on the full sample) —
-  not the "minutes of compute" `export_data.py`'s comment claims. Precomputing many runs is cheap.
-- **Leverage is `clip(target_vol / trailing_vol, cap)`, and `trailing_vol` depends only on the
-  weights.** Neither the target nor the cap feeds back into the ERC weights, so those two settings
-  can be re-applied in the browser with no engine run at all.
-- **`results.json` is 2.7 MB and served `no-cache`.** About 2 MB is daily equity plus drawdown
-  series, and drawdowns are derivable from equity. Fix the payload before adding to it.
-- **Every missing realized-risk and comparison metric is already exported** (Calmar, skew, excess
-  kurtosis, worst day, longest drawdown and its open flag, beta, tracking error, capture, the tail
-  block, `calendar_warning`). Those steps are UI only.
-
-**Checked before any step started.** Every claim the steps below rest on was measured against the
-real engine and PR #62's export, and the steps were revised to match: a reference implementation of
-the browser overlay reproduced `run_backtest` exactly (0.0 difference) at the defaults and at four
-non-default settings, with the weights and trailing vol bit-identical across all of them; the
-proposed `core.json` is 3.8 KB gzipped against 649 KB for today's `results.json`; a later start date
-changes the weights only during its first year; and the engine's own crisis leverage differs sharply
-from the equal-weight figures `CLAUDE.md` used to quote (step 47). The numbers are in each step.
-
-| # | Who | Branch | What | Done when |
-|---|---|---|---|---|
-| 45 | B | `feat/b45-web-payload` | `web/export_data.py` + the data loader: split `results.json` into `core.json` (metrics, financing, crisis, mechanisms, run summary, config — everything above the fold) and lazily loaded `series.json` (via the existing `DeferredChart`); drop the drawdown series and derive it client-side from equity; store series columnar (one shared date array, values rounded to 7 significant figures); move the raw `diagnostics` / `benchmark_diagnostics` dumps into their own lazy file; content-hash every data file and serve it `public, max-age=31536000, immutable`, leaving only `manifest.json` as `no-cache`. Also correct the "minutes of compute" comment. Measured: `core.json` 3.8 KB gzipped (today's `results.json` is 649 KB); `series.json` ~122 KB gzipped at 7 significant figures, which is fine because it is lazy. **Table figures (max drawdown and the like) come from `core.json`, computed in Python — never re-derived from rounded chart series.** | First-load data under 100 KB gzipped; a test proves every chart value equals the old export to 1e-6; the client-side drawdown matches the exported one to 1e-6 (it is exact from full-precision equity, and 9e-7 off from 7-significant-figure equity, so 1e-12 is the wrong bar for chart data); Lighthouse in `web/screenshots/` shows no LCP/TBT regression |
-| 47 | B | `feat/b47-web-headline` | The README's headline findings. Benchmark table gains **Unlevered ERC** and **Financing omitted** rows (already in `financing`) and a **Total return** column (already in `summarize`), the three financing rows visibly grouped. `export_data.py` computes, per crisis window, the share of days held above 1.0x leverage and the minimum leverage with its date, shown on the crisis cards. **Compute these from the engine's own leverage, which changes only at the monthly rebalances.** Measured on the engine (data through 2026-10): GFC above 1.0x on 76% of days, minimum 0.79x from 2009-01-02; **COVID on 100%** — it held 2.33x, then 2.18x, through the whole crash and only cut to 0.64x at the 2020-03-31 rebalance, after the 03-23 trough; 2022 on 52%, minimum 0.82x. The 69% / 54% / 26% that `CLAUDE.md` used to quote came from a daily, equal-weight overlay and must not be reused. | A test recomputes the levered-share figures with pandas directly from `engine.leverage` and matches; on the same data they reproduce the figures above; the new rows match `README.md`'s Results table at its printed precision, or README is refreshed to the same data date in the same PR |
-| 48 | B | `feat/b48-web-evidence` | The verification on the site, from a real run. CI already runs the suites: have the export record each suite's `N checks passed` line and the solver-oracle agreement figure into the manifest, and render them in the guardrails section, each linked to its test file. | The figures shown are read from that CI run's output, never typed in; a failing suite blocks the export rather than publishing a stale pass |
-| 49 | B | `feat/b49-web-explorer` | Strategy settings explorer. **Target vol and leverage cap in the browser:** export daily unlevered returns, the daily risk-free rate and each rebalance's `trailing_vol` (measured 53 KB gzipped at 10 significant figures, lazy); JS computes `L = clip(t/σ̂, [lo, hi])` per rebalance, applies it **strictly before** each return date (the one-day rule), then `L·r_a − (L−1)·r_f` and the metrics, on every slider input. **Start date by slicing, not re-running:** measured at starts in 2010, 2015 and 2019, a later start changes the weights only in its first year (at most 1.2 pp), they converge to ~1e-5 within two years, and CAGR over the overlap matches the full-history run to four decimals. So the explorer cuts the full-history run to the chosen date range in the browser and says so — the same "run the whole history, cut afterwards" rule step 44 uses — with no per-start files. **Slider bounds mirror the engine's own validation:** target vol > 0, leverage floor > 0 (`overlay` raises on a floor of 0: "the overlay may hold no position at all, which is a different strategy"), floor ≤ ceiling. The explorer's result is always shown *beside* the published one, never in place of it. Also have the export write a fixture of Python `run_backtest(target_vol=…, leverage_cap=…)` at 2–3 non-default settings, for step 50. | Every slider update completes in under 16 ms (the reference implementation takes 0.1 ms); a setting the engine would reject cannot be entered; the published numbers never change when the explorer moves |
-| 50 | A | `feat/a50-web-explorer-tests` | Equivalence tests for step 49's browser overlay, owned by A the way step 28 was, because they guard the engine's own alignment rule. | JS at the default settings reproduces `engine.returns` to 1e-10 (the measured reference matches exactly at full precision and to 1.1e-11 from the 10-significant-figure payload); JS matches step 49's Python fixture at every non-default setting (the reference matched exactly at 6%, 15%, a 1.5x cap and a 0.25–2.0x cap); **switching the JS to "at or before" makes the test fail**, and the run differs on **exactly the rebalance dates and no others** (measured: all 235) — the `test_lookahead.py` mutation technique, with the date set as the positive control |
-| 52 | Both | — | Final review of steps 45, 47–50, tag `v1.5`. | Every number on the site traces to a function in `src/` through `export_data.py`, and both can explain how the browser explorer is proven equal to the engine |
-
-Steps 47 and 48 depend only on 45 and can run in parallel; 49 needs 45's split files and 50 needs 49.
-
----
+**The two ideas worth carrying forward are in Phase 9 below**, rewritten rather than copied: the
+export has to emit *the study* rather than the old engine-against-benchmarks run, and the browser
+explorer is still the one thing a static write-up cannot do.
 
 ---
 
@@ -326,3 +281,50 @@ to DBC's 2006 inception, `data._validate`'s late-start guard rejects anything li
 last point, `data.fetch_ticker_prices`, was removed along with the ticker comparison. Widening
 `UNIVERSE` is therefore real data-layer work, not a config edit. Step 58's sweep did not touch it,
 and `README.md`'s limitations section names it as the open one.
+
+---
+
+## Phase 9 — The site (steps 61–65)
+
+**One job: make the bottom line legible to someone who will not clone the repo.** That bottom line
+is one question with three measured answers and two measured limits, and the site is finished when
+a reader gets all five without being told to run anything:
+
+1. **Equal risk is a better risk allocation than equal capital.** 4.00 effective bets against 2.92;
+   1/N's SPY risk share spanning 8.9% to 60.3% while its capital never moves off 25%.
+2. **And it still loses on risk-adjusted return once the leverage is paid for.** 0.692 against
+   0.712 at matched volatility with the real bill rate charged; 0.763 with the financing leg
+   dropped. The distance between those two numbers is the whole finding.
+3. **Most of what it buys is the volatility scaling, not the correlations.** Naive 1/σ reaches
+   0.745 of ERC's 0.756 with no optimizer at all.
+4. **The limit on (1):** equal risk *loses* 2022 to equal capital, because the sleeve it
+   underweights by construction was the only one that paid.
+5. **The limit on the machinery:** the deepest drawdown in the sample is the overlay's, not the
+   allocation rule's — COVID at −29.10%, entered at 2.33x.
+
+A site that shows the first three and hides the last two is marketing. The repo does not do that
+anywhere else and the site does not get an exception.
+
+**Two rules carried over from Phase 7, both still load-bearing:**
+
+- **Nothing under `src/` changes to serve the site.** Every figure comes from the same functions
+  `compare_rules.py` calls, so there is exactly one source for every number. A figure the site
+  computes for itself is a figure that can disagree with the README.
+- **The site must not publish a comparison the repo cannot reproduce.** That was Phase 7's gate on
+  Phase 8; it now reads as a standing rule rather than a dependency.
+
+**The stack is deliberately unspecified.** The old `web/` was Vite + React and is deleted; step 62
+picks what replaces it. Steps 61, 63 and 64 are framework-agnostic on purpose — 61 writes JSON, 63
+is arithmetic, 64 is a Python test.
+
+| # | Branch | What | Done when |
+|---|---|---|---|
+| 61 | `feat/61-site-export` | `export_site_data.py`: a third CLI beside `run_backtest.py` and `compare_rules.py`, writing the study as JSON. It owns no maths — it calls `comparison.compare_rules()` and `sensitivity.sweep()` / `cost_comparison()` and serialises what comes back: the nine-row table, the risk-allocation block, effective bets, the crisis tables, the turnover and breakeven, and the sweep. Records the data date, the source commit and `run_health` in a manifest, the way the old export did. Series go in their own lazily-loadable file; table figures come from the Python-computed values and are **never** re-derived from rounded chart series. | A test asserts every table figure in the JSON equals `compare_rules.py`'s own output to 1e-9 on the same data, and that the manifest's data date matches the comparison's; the export runs offline from the price cache; first-load JSON under 100 KB gzipped |
+| 62 | `feat/62-site` | The site itself, over step 61's JSON. Lands the five findings above, each with the number and the sentence that makes it mean something — including both limits. The three financing rows visibly grouped, and the two counterfactual rows marked as not runnable wherever they appear. | A reader who has not cloned the repo can state all five findings after one pass; every number on the page traces to a field in step 61's JSON; `npm run build` (or the chosen equivalent) passes |
+| 63 | `feat/63-site-explorer` | The explorer, and the reason the site exists rather than a PDF. Export the daily unlevered returns, the daily risk-free rate and each rebalance's `trailing_vol`; the browser computes `L = clip(target/σ̂, [lo, hi])` per rebalance, applies it **strictly before** each return date, then `L·r_a − (L−1)·r_f`, and re-renders the comparison on every slider input. This works **only** because the target never feeds back into the ERC weights — `compare_rules.py` asserts that property on every run, and `PLAN.md`'s Phase 8 section records the measurement. Sliding the target is watching ERC and 1/N change places, which is finding 2 made interactive. Slider bounds mirror the engine's own validation (target > 0, floor > 0, floor ≤ ceiling). The explorer's result is always shown *beside* the published one, never in place of it. | Every slider update under 16 ms; a setting the engine would reject cannot be entered; the published numbers never move when the explorer does |
+| 64 | `feat/64-site-explorer-tests` | Equivalence tests for step 63, written in Python against a fixture the export writes at 2–3 non-default settings. The JS reproduces the engine's **one-day alignment rule**, which is the invariant everything in this repo rests on, so this gets the `test_lookahead.py` treatment: **switching the JS to "at or before" must make the test fail**, and the run must differ on exactly the rebalance dates and no others. | JS matches `run_backtest` to 1e-10 at the defaults and at every non-default setting in the fixture; the mutation fails; the date set is the positive control |
+| 65 | — | Final review of 61–64, tag `v3.0`. | Every number on the site traces to a function in `src/` through step 61's export, and the five findings on the page match `README.md` on one data date |
+
+Steps 62–64 depend on 61. Step 64 depends on 63. Step 63 is optional in the sense that 62 stands
+without it — but it is the only part of this phase that does something a README cannot, so dropping
+it makes the site a slower way to read the README.

@@ -47,9 +47,9 @@ The project lived at `shivakasula/portfolio-allocation-capstone-project` through
 **Two consequences worth knowing before reading a reference in these documents.** Pull-request
 numbers (`PR #52`, `#71`, and the `Merge pull request #NN` subjects throughout `git log`) are the
 *original* repository's numbering and do not correspond to anything here; they remain the accurate
-record of what landed and in what order, which is what they were ever for. And `web/QA.md`,
-`web/PROJECT_NOTES.md` and the CI-run links in them point at artifacts that live in the old
-repository; they are dated evidence from before the reframing and already carry banners saying so.
+record of what landed and in what order, which is what they were ever for. And the `web/` tree,
+which held its own dated evidence and CI-run links pointing at the old repository, has since been
+deleted — `TASKS.md` Phase 9 rebuilds the site from the export up.
 
 **Conventions are inherited from `abhyudayb-1/sp500-factor-backtester`,** which is mature and
 sets the house style: `src/` module-per-stage pipeline, `config.py` as the single source of
