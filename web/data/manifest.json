@@ -1,0 +1,10 @@
+{
+  "version": "b9826fcc91bf35f3",
+  "generated_at": "2026-11-01T23:36:53.009688+00:00",
+  "source_commit": "3559a2d34a02aa28e21d92d36d0334b6d869d37c",
+  "market_data_through": "2026-10-30",
+  "files": [
+    "results.json",
+    "history.json"
+  ]
+}

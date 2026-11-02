@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.prerender/
+.env*
+!.env.example
+.vercel/
+test-results/
+__pycache__/
+.vercel

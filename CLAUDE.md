@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > | `src/riskmetrics.py`, `src/headtohead.py` | **kept, no caller yet** — salvaged for Phase 8 |
 > | Incremental position analysis, "add one stock to the book" (steps 36–43, `v1.1`/`v1.3`) | **REMOVED** — see its section below |
 > | Head-to-head against a ticker (step 44, `v1.4`) | **REMOVED** — see its section below |
+> | `web/` — the research site | **on `main` now**, with four non-research features removed; see "The website" below |
 > | `TASKS.md` Phase 7 (website, steps 45–52) | **re-scoped** — steps 46 and 51 struck; that file carries the note |
 > | `TASKS.md` Phase 8 (steps 53–60) | **the new work** — the matched-risk ERC-vs-1/N comparison and its sensitivities |
 >
@@ -412,6 +413,44 @@ and Calmar (0.24 vs 0.20). Against AAPL it was about a third as volatile and bea
 one of its worst 5% of days, while earning 7.1% against 28.5% at a *lower* Sharpe. It is a risk
 story, not a return story — and "chosen with hindsight" always applies: a ticker someone asks
 about is usually one that did well.
+
+## The website (`web/`)
+
+`web/` is a Vite + React research site that reads **only** what `web/export_data.py` writes, so
+every figure on it traces back to the same `src/` functions `run_backtest.py` uses. It arrived on
+`main` with the cleanup; before that it lived on the unmerged `web-ui` branch (PR #62), which is
+superseded. The live deploy is `risk-parity-lab.vercel.app`.
+
+**Six tabs:** Overview, Findings, The data, Benchmarks, Hardening, Method. **Four features were
+removed** with the rest of the cleanup, because none of them was about portfolio construction and
+three had no subject left once `src/incremental.py` and `src/compare.py` went: the position-analysis
+tab and its `api/analyze.py` / `api/search.py` Python functions, a Gemini-backed research chatbot,
+a passcode-gated two-person timeline workspace, and the Build log tab. `api/live.js` is the only
+handler left, so `web/bundle_engine.py` and `web/requirements.txt` are gone too — there is no
+Python serverless function to ship `src/` into any more.
+
+**Read this before touching anything under `web/`:**
+
+- **Node and npm are not installed on Person A's machine**, so the PR that removed those features
+  **could not build or test the JS**. What was done instead: a static check that every relative
+  import still resolves and no identifier is left imported-but-unused, plus a full live run of
+  `web/export_data.py`. **Run `npm ci && npm test && npm run build` before trusting the bundle**,
+  and note `web/package-lock.json` is stale until `npm install` regenerates it.
+- **`web/QA.md` and `web/PROJECT_NOTES.md` are dated evidence from before the cleanup** and carry
+  banners saying so. They were deliberately *not* rewritten — re-measuring needs node.
+- **`web/data/*.json` is generated and checked in.** It is refreshed by CI and was refreshed by
+  hand in the cleanup from a verified live run. `history.json` now feeds only the version badge in
+  the header; trimming it is `TASKS.md` step 45's job.
+- **Two encoding bugs in `export_data.py` were found by running it and are fixed.** Both were
+  Windows-only and both pre-dated the cleanup: `subprocess.check_output(..., text=True)` and
+  `Path.read_text()` with no `encoding=` decode as cp1252, so `gh api` died on byte 0x81 of a real
+  pull-request body (taking the whole export down, because `UnicodeDecodeError` was not in the
+  `except` clause that exists to degrade gracefully) and every em-dash in `TASKS.md` reached the
+  export as mojibake — which also corrupted the phase titles, since the title regex skips leading
+  non-word characters and the first byte of the mojibake is a letter. **Always pass
+  `encoding="utf-8"` in this file.**
+- **The site must not publish a comparison the repo cannot reproduce.** `TASKS.md` Phase 7 waits
+  on Phase 8 for exactly this reason.
 
 ## Setup and commands
 

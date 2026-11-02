@@ -1,0 +1,30 @@
+{
+  "errors": [],
+  "reports": [
+    {
+      "viewport": "desktop",
+      "overflow": false,
+      "violations": []
+    },
+    {
+      "viewport": "mobile",
+      "overflow": false,
+      "violations": []
+    },
+    {
+      "viewport": "small-mobile",
+      "overflow": false,
+      "violations": []
+    },
+    {
+      "viewport": "mobile-dark",
+      "violations": []
+    },
+    {
+      "interactions": "theme, crisis, ticker, realized, comparison, unavailable ticker, offline retention passed"
+    },
+    {
+      "motion": "normal-motion scroll path and reduced-motion path both exercised"
+    }
+  ]
+}
