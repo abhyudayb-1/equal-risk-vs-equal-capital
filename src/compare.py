@@ -1,11 +1,9 @@
 """Head-to-head: the risk-parity strategy against buy-and-hold of any ticker (step 44).
 
-Two other tools answer nearby questions and neither is this one.
 ``run_backtest.py`` compares the strategy only against four fixed, unlevered
-benchmarks; ``analyze_position.py`` asks what *adding* a stock does to the book.
-This module answers the plain version a reader asks first: **how did the
-strategy do against simply buying and holding this ticker, and what was the
-difference in risk?**
+benchmarks. This module answers the plain version a reader asks first: **how
+did the strategy do against simply buying and holding this ticker, and what was
+the difference in risk?**
 
 It compares, on the dates both series exist (the "overlap window"):
 
@@ -257,8 +255,8 @@ def compare_to_ticker(
 # ---------------------------------------------------------------------------
 # The report compare_ticker.py prints
 # ---------------------------------------------------------------------------
-# Stated in the report every run, not only in PLAN.md, for the same reason the
-# incremental report does: a CLI user reads the output, not the design document.
+# Stated in the report every run, not only in PLAN.md: a CLI user reads the
+# output, not the design document.
 _CAVEATS: tuple[str, ...] = (
     "Overlap window only: both sides are measured on the dates the ticker exists, "
     "not over the strategy's full 2006-to-today history, so these numbers will not "

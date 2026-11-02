@@ -322,8 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         # isn't PSD). backtest.py deliberately lets this propagate rather
         # than catching it -- see CLAUDE.md's "two solver failures are
         # different events" -- so this is where it has to stop being a raw
-        # traceback and become a reported error, the same treatment
-        # analyze_position.py already gives the identical exception.
+        # traceback and become a reported error.
         print(f"\nerror: the engine could not solve for equal risk contribution: {exc}",
               file=sys.stderr)
         return 1

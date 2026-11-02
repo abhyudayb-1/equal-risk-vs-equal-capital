@@ -296,51 +296,19 @@ SUMMARY_LINE_WIDTH: int = 88
 SATURATION_REPORT_FRACTION: float = 0.25
 
 # ---------------------------------------------------------------------------
-# Incremental position analysis (Phase 6, step 36) -- src/incremental.py
+# Tail risk -- src/riskmetrics.py, src/headtohead.py
 # ---------------------------------------------------------------------------
-# This block is for a second, independent consumer of covariance.py and
-# riskparity.py: "if we already hold the four-sleeve ERC book, what happens if
-# we add one more stock to it," estimated point-in-time rather than replaying
-# the 2006-to-present backtest. See PLAN.md's "Phase 6" section for the full
-# design. Nothing here changes any constant above -- the core engine's window,
-# solver and overlay are untouched.
-
-# Trailing window for the candidate + universe, ending today. ~3 years, not the
-# full 2006-to-present sample: most candidate stocks investors actually ask
-# about don't have 20 years of history, and splicing a stock's returns onto
-# years before it existed is not a real portfolio. This is the one deliberate
-# trade the whole phase makes -- point-in-time snapshot instead of a second
-# backtest -- and the report states which kind of analysis it is every time.
-INCREMENTAL_LOOKBACK_DAYS: int = 756
-
-# Fixed weights at which the perturbation scan adds the candidate to the
-# existing ERC book (scaling the baseline weights by (1 - w) and inserting the
-# candidate at w). 1% is a token position, 10% is a large single-name stake for
-# a book otherwise built from four asset classes; 5% is the midpoint. These are
-# a reporting choice, not a search -- the unconstrained 5-asset re-solve
-# (step 37) is what finds an equilibrium weight instead of assuming one.
-INCREMENTAL_CANDIDATE_WEIGHTS: tuple[float, ...] = (0.01, 0.05, 0.10)
-
-# Minimum trading days the candidate must have inside the lookback window
-# before its covariance with the universe is trusted. Set equal to
-# COV_WARMUP_TRADING_DAYS rather than a new number: that constant already
-# establishes this project's floor for "enough daily data to trust a
-# covariance estimate," and the incremental analysis needs the same amount of
-# history for the candidate specifically -- the four core sleeves clear this
-# by construction over a 756-day window, so in practice this guard only ever
-# fires on the candidate. A recent IPO or a thinly-traded name that falls short
-# raises DataUnavailableError (data.py's existing "fail loudly, never degrade"
-# policy) rather than returning a covariance estimated from too few points.
-INCREMENTAL_MIN_HISTORY_DAYS: int = COV_WARMUP_TRADING_DAYS
-
-# ---------------------------------------------------------------------------
-# Realized risk, before vs after (Phase 6 extension, step 43) -- src/incremental.py
-# ---------------------------------------------------------------------------
-# Confidence level for the historical VaR / CVaR the realized before/after table
-# reports. 95%, not 99%, on purpose: the trailing window is ~756 daily returns
-# (285 for a recent IPO), so a 5% tail is ~38 observations (~14) while a 1% tail
-# would be ~8 (~3) -- too few for the average-of-the-tail CVaR to mean anything.
-# The report prints the observation count next to the table for the same reason.
+# Confidence level for the historical VaR / CVaR every realized-risk table
+# reports, and for the tail block in a head-to-head comparison. 95%, not 99%,
+# on purpose, and what sets it is the SHORTEST window the code will measure
+# rather than the full sample. The floor is COMPARE_MIN_OVERLAP_DAYS (252
+# trading days): a 5% tail there is ~13 observations, where a 1% tail would be
+# ~3 -- far too few for an average-of-the-tail measure like CVaR to mean
+# anything. On the full 4,897-day sample both would work (~245 against ~49), so
+# 99% is not wrong everywhere, it is wrong at the boundary the guards allow. One
+# confidence level applied everywhere also keeps two reports' tables directly
+# comparable, which a per-report choice would not. Each table prints its own
+# observation count beside it for the same reason.
 VAR_CONFIDENCE: float = 0.95
 
 # ---------------------------------------------------------------------------
@@ -348,10 +316,9 @@ VAR_CONFIDENCE: float = 0.95
 # ---------------------------------------------------------------------------
 # Fewest overlapping trading days between the strategy and the ticker for which
 # the comparison prints at all. Set equal to COV_WARMUP_TRADING_DAYS, the same
-# "a year of daily data is the least we trust" floor the covariance estimate and
-# the incremental analysis already use: below it, a max drawdown or a 5% tail is
-# a handful of observations, and printing it would look more authoritative than
-# it is.
+# "a year of daily data is the least we trust" floor the covariance estimate
+# already uses: below it, a max drawdown or a 5% tail is a handful of
+# observations, and printing it would look more authoritative than it is.
 COMPARE_MIN_OVERLAP_DAYS: int = COV_WARMUP_TRADING_DAYS
 
 # Smallest share of the ticker's trading days (inside the strategy's date range)

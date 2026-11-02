@@ -167,33 +167,15 @@ contract in `src/types.py` is the seam a dashboard would attach to, and it's alr
 
 ---
 
-## Phase 6 — Incremental position analysis (JOINT, starts only after v1.0 is tagged)
-
-**Nothing in Phases 0–5 is superseded by this phase — there is nothing to delete.** Every step
-1–35 still builds the deliverable those phases describe (the four-sleeve engine and its v1.0
-write-up), and this phase does not touch `types.py`, `backtest.py`, `overlay.py`,
-`benchmarks.py`, `stress.py`, `viz.py` or `run_backtest.py`. It is a new, independent consumer
-of `covariance.py` and `riskparity.py`, the same way `stress.py` is a consumer of
-`BacktestResult` — see PLAN.md's "Phase 6" section for the full design and the math.
-
-**Do not start this phase until step 35 has tagged `v1.0`.** The pivot that motivated it — "let
-someone add any stock to the risk-parity book and see whether it's compensated, not whether it
-belongs as a fifth sleeve" — is additive scope, and the original capstone deliverable ships on
-its own timeline first.
-
-| # | Who | Branch | What | Done when |
-|---|---|---|---|---|
-| 36 | A | `feat/a36-incremental-config` | `src/config.py`: append `INCREMENTAL_LOOKBACK_DAYS` (~756 trading days), `INCREMENTAL_CANDIDATE_WEIGHTS` (`(0.01, 0.05, 0.10)`), `INCREMENTAL_MIN_HISTORY_DAYS`. | Constants exist at the bottom of the file; nothing else in `config.py` reformatted |
-| 37 | A | `feat/a37-incremental-core` | `src/incremental.py`: fetch the candidate + universe on the trailing window (any ticker — `data.fetch_prices` already supports this); baseline 4-asset ERC snapshot on that same window; the perturbation scan at `INCREMENTAL_CANDIDATE_WEIGHTS`; the unconstrained 5-asset `solve_erc_with_status` re-solve and its diff against baseline weights. Reuse `covariance.estimate_covariance` and `riskparity`'s primitives — no new statistical machinery. | Runs end to end against a real live ticker; raises `DataUnavailableError` (not a silent empty result) when the candidate has less than `INCREMENTAL_MIN_HISTORY_DAYS` of history |
-| 38 | A | `feat/a38-compensation-test` | `src/incremental.py`: the compensation test `SR_i > SR_p · ρ(i, p)` (derivation in PLAN.md) plus the candidate's correlation to each of the four sleeves individually. | Verified against a hand-derivable two-asset synthetic case where the sign of the inequality is known in advance |
-| 39 | B | `feat/b39-incremental-tests` | `tests/test_incremental.py`: perturbation weights sum to 1 at every candidate weight; the compensation-test formula regression; the 5-asset re-solve's limiting case (a candidate identical to an existing sleeve must split that sleeve's risk contribution); correlation-table correctness. Standalone script, no framework, matches the house style. | `python tests/test_incremental.py` prints `N checks passed` and exits 0 |
-| 40 | B | `feat/b40-incremental-cli` | `analyze_position.py`: `--ticker` (required, any ticker), `--lookback-days`, `--weights`, `--refresh-prices`, `--help`. Formatted report output in the style of `backtest.format_run_summary`, naming plainly that this is a point-in-time snapshot, not a historical backtest. | `analyze_position.py --help` documents every flag; a run against a real live ticker prints a complete report including the caveats in PLAN.md |
-| 41 | Both | `feat/incremental-writeup` | `README.md`: new section covering what the tool answers, a worked example against one real stock, and the explicit caveats (point-in-time, marginal test only, idiosyncratic risk is not a structural risk premium). | Someone who has never seen the tool can run it and correctly interpret what its output does and does not claim |
-| 42 | Both | — | Final review, tag `v1.1`. | Both can explain the compensation-test derivation and every new module, not just their own |
-
----
-
 ## Phase 7 — Website feature parity (JOINT, starts only after PR #62 is merged)
+
+> **Written before the cleanup — partly superseded. Do not build from it as-is.** This phase was
+> specified against the pre-cleanup scope, when the site had a position-analysis tab backed by
+> `analyze_position.py`. That product has been removed from `main`, so **step 51 is struck below**
+> and **step 46's realized-risk half no longer has a subject** (its comparison half still does).
+> The `--lookback-days` and `--weights` settings named in the paragraph below are gone with it.
+> The phase is re-scoped in the cleanup's docs PR; steps 45, 47, 48, 49 and 50 are unaffected and
+> still worth building.
 
 This is the "UI and backend get their own plan" the ground rules above defer to. The live site
 (`risk-parity-lab.vercel.app`) is built by PR #62's `web/` tree, and a gap audit against `main`
@@ -238,10 +220,8 @@ from the equal-weight figures `CLAUDE.md` used to quote (step 47). The numbers a
 | 48 | B | `feat/b48-web-evidence` | The verification on the site, from a real run. CI already runs the suites: have the export record each suite's `N checks passed` line and the solver-oracle agreement figure into the manifest, and render them in the guardrails section, each linked to its test file. | The figures shown are read from that CI run's output, never typed in; a failing suite blocks the export rather than publishing a stale pass |
 | 49 | B | `feat/b49-web-explorer` | Strategy settings explorer. **Target vol and leverage cap in the browser:** export daily unlevered returns, the daily risk-free rate and each rebalance's `trailing_vol` (measured 53 KB gzipped at 10 significant figures, lazy); JS computes `L = clip(t/σ̂, [lo, hi])` per rebalance, applies it **strictly before** each return date (the one-day rule), then `L·r_a − (L−1)·r_f` and the metrics, on every slider input. **Start date by slicing, not re-running:** measured at starts in 2010, 2015 and 2019, a later start changes the weights only in its first year (at most 1.2 pp), they converge to ~1e-5 within two years, and CAGR over the overlap matches the full-history run to four decimals. So the explorer cuts the full-history run to the chosen date range in the browser and says so — the same "run the whole history, cut afterwards" rule step 44 uses — with no per-start files. **Slider bounds mirror the engine's own validation:** target vol > 0, leverage floor > 0 (`overlay` raises on a floor of 0: "the overlay may hold no position at all, which is a different strategy"), floor ≤ ceiling. The explorer's result is always shown *beside* the published one, never in place of it. Also have the export write a fixture of Python `run_backtest(target_vol=…, leverage_cap=…)` at 2–3 non-default settings, for step 50. | Every slider update completes in under 16 ms (the reference implementation takes 0.1 ms); a setting the engine would reject cannot be entered; the published numbers never change when the explorer moves |
 | 50 | A | `feat/a50-web-explorer-tests` | Equivalence tests for step 49's browser overlay, owned by A the way step 28 was, because they guard the engine's own alignment rule. | JS at the default settings reproduces `engine.returns` to 1e-10 (the measured reference matches exactly at full precision and to 1.1e-11 from the 10-significant-figure payload); JS matches step 49's Python fixture at every non-default setting (the reference matched exactly at 6%, 15%, a 1.5x cap and a 0.25–2.0x cap); **switching the JS to "at or before" makes the test fail**, and the run differs on **exactly the rebalance dates and no others** (measured: all 235) — the `test_lookahead.py` mutation technique, with the date set as the positive control |
-| 51 | B | `feat/b51-web-analyzer` | Analyzer settings and any-ticker speed. `/api/analyze` accepts `lookback` (252–1,260) and `weights` (≤ 5 candidate sizes in (0, 0.5], no duplicates), validated by the same rules as `analyze_position.py`, passed straight to `analyze_position(lookback_days=…, candidate_weights=…)`. Successful responses send `Cache-Control: public, s-maxage=86400, stale-while-revalidate=604800` keyed on the normalised ticker + parameters; unavailable ones send `no-store`, so a yfinance outage is never cached for a day. Measure the Python function's cold start first: locally an uncached ticker analyzes in 0.8 s and a cached one in 0.09 s, so the analysis itself is cheap and the serverless cold start (importing pandas/scipy) is the latency that matters. Only if that is slow, precompute ~25 common tickers (mega-caps, SPY/QQQ/GLD, a recent IPO, a US-traded ADR) in the export; if it is over 3 s, show a progress state saying what is being computed. | Invalid parameters return 400 with the CLI's message; a repeat query is served from the edge cache; a short-history IPO renders its shrunk-window note; cold-start latency is recorded in `web/QA.md` |
-| 52 | Both | — | Final review of steps 45–51, tag `v1.5`. | Every number on the site traces to a function in `src/` through `export_data.py`, and both can explain how the browser explorer is proven equal to the engine |
+| 52 | Both | — | Final review of steps 45–50, tag `v1.5`. | Every number on the site traces to a function in `src/` through `export_data.py`, and both can explain how the browser explorer is proven equal to the engine |
 
-Steps 46–48 depend only on 45 and can run in parallel; 49 needs 45's split files and 50 needs 49;
-51 is independent of 46–50.
+Steps 46–48 depend only on 45 and can run in parallel; 49 needs 45's split files and 50 needs 49.
 
 ---
