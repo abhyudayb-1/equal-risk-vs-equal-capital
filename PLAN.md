@@ -323,7 +323,16 @@ table was found: 60/40's ratio is 0.777, not the 0.778 an earlier draft carried.
    go where it likes: SPY's risk share spans **8.9% to 60.3%** (mean 32.9%), DBC's averages
    **41.8%**, TIP's **9.0%**, and TLT's turns **negative** (−6.3%) in some months. Worst
    single-sleeve risk concentration 1/N reaches: **66.5%**. In effective bets (`1 / Σ RCᵢ²`),
-   **ERC 4.00 against 1/N 2.83** out of a possible 4.00.
+   **ERC 4.00 against 1/N 2.92** out of a possible 4.00 — the mean of the per-rebalance values.
+   An earlier draft of this line said 2.83, which was `1 / mean(Σ RC²)` rather than
+   `mean(1 / Σ RC²)`; the two aggregations differ and the second is the one that reads as an
+   average count. Step 54 measures it and pins both limiting cases.
+
+   **The usual `[1, N]` bound is not guaranteed, and on this data it is genuinely breached.** A
+   sleeve that hedges the rest carries a *negative* risk share, the shares still sum to 1, and
+   `Σ RC²` can then exceed 1. Measured over 237 rebalances: 1/N produced a negative share 12
+   times and bottomed at 1.84, but 60/40 bottomed at **0.78** and max Sharpe at **0.88**. Any test
+   asserting `>= 1` would be asserting something about the rule, not about the formula.
 2. **Equalizing risk wins on risk-adjusted return until the leverage is paid for.** Unlevered,
    0.759 against 0.716 and a drawdown of −17.2% against −28.1%, for 67 bp/yr less return. Levered
    to 1/N's own volatility with the real T-bill charged: **0.696, below 1/N**. With the financing

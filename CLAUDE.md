@@ -14,12 +14,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > |---|---|
 > | The four-sleeve ERC engine, overlay, benchmarks, stress, charts (steps 1–35, `v1.0`/`v1.2`) | **kept — this is the project** |
 > | `src/riskmetrics.py`, `src/headtohead.py` | **kept** — salvaged for Phase 8, and `src/comparison.py` consumes both now |
-> | `src/comparison.py` (step 53) | **the study itself** — reproduces every row of `PLAN.md`'s Phase 8 table |
+> | `src/comparison.py` (steps 53–54) | **the study itself** — reproduces `PLAN.md`'s Phase 8 table and the risk-allocation block |
 > | Incremental position analysis, "add one stock to the book" (steps 36–43, `v1.1`/`v1.3`) | **REMOVED** — see its section below |
 > | Head-to-head against a ticker (step 44, `v1.4`) | **REMOVED** — see its section below |
 > | `web/` — the research site | **on `main` now**, with four non-research features removed; see "The website" below |
 > | `TASKS.md` Phase 7 (website, steps 45–52) | **re-scoped** — steps 46 and 51 struck; that file carries the note |
-> | `TASKS.md` Phase 8 (steps 53–60) | **in progress** — step 53 done; 54–60 are the remaining work |
+> | `TASKS.md` Phase 8 (steps 53–60) | **in progress** — steps 53 and 54 done; 55–60 remain |
 >
 > Rows below are left as they landed, because `git log` records the same thing and the code stays
 > reachable at its tags. Where a row describes removed work, a note says so.
@@ -187,8 +187,11 @@ two in one table.
    at 25% and lets risk go where it likes: SPY's risk share runs **8.9% to 60.3%** (mean 32.9%),
    DBC's averages **41.8%**, TIP's **9.0%**, and TLT's goes **negative** (−6.3%) in some months.
    The worst single-sleeve risk concentration 1/N reaches in any month is **66.5%**. In effective
-   bets (1/HHI of risk shares) that is **2.83 of a possible 4.00, against ERC's 4.00** — the
-   compactest statement of the thesis in the repo.
+   bets (1/HHI of risk shares) that is **2.92 of a possible 4.00, against ERC's 4.00** — the
+   compactest statement of the thesis in the repo. (An earlier draft said 2.83. That was
+   `1 / mean(Σ RC²)`; the average number of bets is `mean(1 / Σ RC²)`, and because `1/x` is convex
+   the first understates it. Step 54 computes the second and `comparison.concentration_table`'s
+   docstring records the trap.)
 2. **The unlevered comparison.** ERC 5.12% CAGR / 6.90% vol / **0.759** return-to-vol / −17.2% max
    drawdown, against 1/N's 5.79% / 8.35% / **0.716** / −28.1%. So equalizing risk buys a real
    risk-adjusted improvement and nearly halves the drawdown — and gives up **67 bp/yr of return**
@@ -250,7 +253,7 @@ return-to-volatility at a zero risk-free rate, not a true Sharpe — applied ide
 row, so the ranking is fair even though the level is not.
 
 **The headline the write-up now leads with, and it is not flattering to risk parity.** Equalizing
-risk does buy something real: unlevered ERC takes **4.00 effective bets against 1/N's 2.83**, earns
+risk does buy something real: unlevered ERC takes **4.00 effective bets against 1/N's 2.92**, earns
 **0.759 return-to-vol against 0.716**, and nearly halves the drawdown (−17.2% against −28.1%). Then
 two things take it away. **Lever ERC to 1/N's own volatility so the returns are comparable, charge
 the real T-bill, and it scores 0.696 — below 1/N.** With the financing leg omitted it scores 0.767,
@@ -302,10 +305,10 @@ To resume in a new session: steps 1–44 were built, then the repo was **cut bac
 (see "What this is"). Phase 6's incremental position analysis and the head-to-head against a
 ticker are both removed; `PLAN.md` is now purely the Phases 0–5 design plus the Phase 8 spec,
 `TASKS.md` Phases 0–5 are untouched, its Phase 7 is re-scoped, and **`TASKS.md` Phase 8
-(steps 53–60) is the work to pick up, and step 53 is done** — `src/comparison.py` now reproduces
-every row of `PLAN.md`'s Phase 8 table, so the figures in "What this is" are no longer
-unreproducible. **Step 54 (the risk-allocation block and effective bets) is next**, then 55's
-suite and 56's CLI. Step 58's sensitivities are the ones most likely to be uncomfortable; run them
+(steps 53–60) is the work to pick up, and steps 53 and 54 are done** — `src/comparison.py`
+reproduces every row of `PLAN.md`'s Phase 8 table *and* the risk-allocation block, so the figures
+in "What this is" are no longer unreproducible. **Step 55 (the standalone suite) is next**, then
+56's CLI. Step 58's sensitivities are the ones most likely to be uncomfortable; run them
 before the write-up, not after.
 The fastest way back into the engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
@@ -491,7 +494,7 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
 .venv/bin/python -m src.viz           # the four charts from fixtures, into a temp dir (never reports/)
-.venv/bin/python -m src.comparison    # step 53: the whole comparison from fixtures, 11 checks; offline
+.venv/bin/python -m src.comparison    # steps 53-54: the whole comparison from fixtures, 25 checks; offline
 ```
 
 Run every suite after any change to `src/`. **All nine test suites and all eight module
