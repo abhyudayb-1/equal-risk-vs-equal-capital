@@ -298,46 +298,16 @@ SATURATION_REPORT_FRACTION: float = 0.25
 # ---------------------------------------------------------------------------
 # Tail risk -- src/riskmetrics.py, src/headtohead.py
 # ---------------------------------------------------------------------------
-# Confidence level for the historical VaR / CVaR every realized-risk table
-# reports, and for the tail block in a head-to-head comparison. 95%, not 99%,
-# on purpose, and what sets it is the SHORTEST window the code will measure
-# rather than the full sample. The floor is COMPARE_MIN_OVERLAP_DAYS (252
-# trading days): a 5% tail there is ~13 observations, where a 1% tail would be
-# ~3 -- far too few for an average-of-the-tail measure like CVaR to mean
-# anything. On the full 4,897-day sample both would work (~245 against ~49), so
-# 99% is not wrong everywhere, it is wrong at the boundary the guards allow. One
-# confidence level applied everywhere also keeps two reports' tables directly
-# comparable, which a per-report choice would not. Each table prints its own
-# observation count beside it for the same reason.
+# Confidence level for the historical VaR / CVaR in every realized-risk table,
+# and for the tail block of a pairwise comparison. 95%, not 99%, on purpose, and
+# what sets it is the SHORTEST window worth measuring rather than the full
+# sample. Take COV_WARMUP_TRADING_DAYS (252) as that floor -- it is already this
+# project's "fewest daily observations we trust" bar: a 5% tail there is ~13
+# observations, where a 1% tail would be ~3, far too few for an
+# average-of-the-tail measure like CVaR to mean anything. On the engine's own
+# 4,897-day sample both levels would work (~245 against ~49), so 99% is not
+# wrong everywhere -- it is wrong at the short end, and one level applied
+# everywhere keeps two reports' tables directly comparable where a per-report
+# choice would not. Every table prints its own observation count beside it for
+# the same reason.
 VAR_CONFIDENCE: float = 0.95
-
-# ---------------------------------------------------------------------------
-# Head-to-head comparison against a ticker (step 44) -- src/compare.py
-# ---------------------------------------------------------------------------
-# Fewest overlapping trading days between the strategy and the ticker for which
-# the comparison prints at all. Set equal to COV_WARMUP_TRADING_DAYS, the same
-# "a year of daily data is the least we trust" floor the covariance estimate
-# already uses: below it, a max drawdown or a 5% tail is a handful of
-# observations, and printing it would look more authoritative than it is.
-COMPARE_MIN_OVERLAP_DAYS: int = COV_WARMUP_TRADING_DAYS
-
-# Smallest share of the ticker's trading days (inside the strategy's date range)
-# that must also be strategy trading days. A US-listed ticker is ~100%. A ticker
-# on another exchange's calendar falls well short, and intersecting the two
-# calendars would then pair a multi-day return on one side with a single day's
-# on the other -- a silently wrong comparison, so it raises instead.
-COMPARE_MIN_CALENDAR_MATCH: float = 0.95
-
-# Below this calendar match the comparison still runs but prints a warning. The
-# 0.95 refusal above catches a calendar that cannot be aligned at all (crypto,
-# which trades weekends: measured 69%). It does not catch a foreign weekday
-# exchange, and measured on live tickers every one sits in a narrow band just
-# under a US listing's 100%: Toronto 98.1-98.2%, London 97.8%, Zurich 97.5%,
-# Hong Kong 97.5%, Frankfurt 97.4%, Sydney 97.4%, Tokyo 96.6%. Those pass the
-# refusal and are still not clean -- the ~2-3% of days one market was shut pair
-# a multi-day return with a one-day one, and a market that closes at a different
-# time of day reacts to US news on a different date, which pulls correlation and
-# beta toward zero (the non-synchronous-trading effect). 0.99 sits between the
-# two populations: every US listing and US-traded ADR measured 100%, every
-# foreign exchange measured under 98.3%.
-COMPARE_CALENDAR_WARN_BELOW: float = 0.99

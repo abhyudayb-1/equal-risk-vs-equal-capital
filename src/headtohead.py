@@ -1,12 +1,18 @@
 """Head-to-head comparison of two daily return series, on one shared index.
 
-Carved out of ``src/compare.py``, which was written to compare the strategy
-against buy-and-hold of a ticker. Nothing in here knows about tickers: every
-function takes a ``strategy`` series and a ``benchmark`` series indexed by the
-same dates and answers "how did the first move against the second". That makes
-it the module for any pairwise comparison this project wants -- an equal-risk
-book against an equal-capital one, a levered book against its unlevered self,
-the engine against a single holding.
+Every function takes a ``strategy`` series and a ``benchmark`` series indexed
+by the same dates and answers "how did the first move against the second", so
+this is the module for any pairwise comparison the project wants: an equal-risk
+book against an equal-capital one, a levered book against its unlevered self.
+These were written for the strategy-against-one-ticker comparison that used to
+live in ``src/compare.py`` (reachable at tag ``v1.4``) and were pulled out into
+this module because nothing in them is specific to a ticker; that comparison has
+since been removed and these outlived it.
+
+**Nothing in the shipped code calls these yet.** They are here, with their own
+suite, for the equal-risk-against-equal-capital comparison the project is being
+cut back to — see AGENTS.md / CLAUDE.md. Do not delete them as unreferenced
+without reading that first; equally, do not assume a caller exists.
 
 The parameters are named for their *roles*, not their contents: ``strategy`` is
 the thing being judged and ``benchmark`` is the thing it is judged against. The

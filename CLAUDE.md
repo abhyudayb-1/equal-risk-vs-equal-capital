@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > |---|---|
 > | The four-sleeve ERC engine, overlay, benchmarks, stress, charts (steps 1–35, `v1.0`/`v1.2`) | **kept — this is the project** |
 > | Incremental position analysis, "add one stock to the book" (steps 36–43, `v1.1`/`v1.3`) | **REMOVED** — see its section below |
-> | Head-to-head against a ticker (step 44, `v1.4`) | being removed next; `riskmetrics.py` and `headtohead.py` already salvaged out of it |
+> | Head-to-head against a ticker (step 44, `v1.4`) | **REMOVED** — see its section below; `riskmetrics.py` and `headtohead.py` were salvaged out of it first |
 > | `TASKS.md` Phase 7 (website, steps 45–52) | partly superseded — that file carries the note |
 >
 > Rows below are left as they landed, because `git log` records the same thing and the code stays
@@ -33,9 +33,10 @@ scope, in `v1.2` five bugs and one dead-code removal found by auditing the whole
 incremental analysis, in `v1.3.1` two dead items removed plus a fix so the `src.viz` /
 `src.stress` self-checks stop overwriting the tracked `reports/` files, and in step 44 a
 head-to-head comparison of the strategy against buy-and-hold of any ticker, tagged `v1.4`.
-Nothing is left in any of the six; see "Incremental position analysis" and "Head-to-head
-comparison" below for what `v1.1`, step 43 and step 44 added and found, and "What the v1.2 audit found" below for the fifth
-commit table.
+Both of the post-`v1.0` products — the incremental position analysis and the head-to-head against
+a ticker — have since been removed from `main`; their sections below say what they were, what was
+kept out of them and which tag holds them. "What the v1.2 audit found" below is the fifth commit
+table.
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
@@ -143,17 +144,18 @@ its own PR, with no change to any number, formula or design decision:
 | `src/data.py` / `src/config.py`: removed an unused `import numpy as np` and the unreferenced `BENCHMARK_TICKER` constant, found by scanning every module for imports and config constants with no reference in code or docs. Deliberately kept: the unreferenced helpers in `src/cache.py` and `metrics.cumulative_curve`, because both files are documented verbatim ports that must not be rewritten. | `b226867` (PR #54) |
 | `src/viz.py` / `src/stress.py`: the `python -m` self-checks wrote fixture output into `reports/`, silently replacing the tracked real charts and `crisis_drawdowns.csv`; they now render into a temporary directory. `CLAUDE.md`'s claim that `reports/` is gitignored was corrected (see "Architecture"). | `1f93dfc` (PR #55) |
 
-**`v1.4` is tagged (step 44).** New scope: `run_backtest.py` compares the
-strategy only against four fixed, unlevered benchmarks, so there was no way to ask how the
-strategy did against simply buying and holding a ticker of your choice. `compare_ticker.py
---ticker XYZ` does. Like Phase 6 and step 43 it is not on `TASKS.md`, so this row is its only
-ledger entry:
+**`v1.4` is tagged (step 44).** New scope at the time: `run_backtest.py` compares the strategy
+only against four fixed, unlevered benchmarks, so there was no way to ask how the strategy did
+against simply buying and holding a ticker of your choice. `compare_ticker.py --ticker XYZ` did.
+Like Phase 6 and step 43 it is not on `TASKS.md`, so this row is its only ledger entry — and
+**like Phase 6 it has since been removed from `main`** (see its section below):
 
 | Step | Owner | Landed as | What it produced |
 | --- | --- | --- | --- |
 | 44 | A | `bc1209d` and `e4fcdc6` (PR #58, merged `f1cf95d`) | `src/compare.py` + `compare_ticker.py`: the levered strategy, the same book unlevered, and the ticker on their overlap window, with the full risk-metric set, relative metrics (correlation, beta, tracking error, up/down capture), a tail block (the strategy on the ticker's worst 5% of days) and crisis windows. New `data.fetch_ticker_prices`. `config.py` gains `COMPARE_MIN_OVERLAP_DAYS`, `COMPARE_MIN_CALENDAR_MATCH`, `COMPARE_CALENDAR_WARN_BELOW`. New `tests/test_compare.py` (**61** checks); `tests/test_data.py` 35 → **49**. |
 
-See "Head-to-head comparison" below for the design choices in it that are easy to undo by accident.
+Removed — see its section below for what was kept out of it and the three rules from it that
+still apply to surviving code.
 
 Read "Where the build is" next — the live-run numbers and the two findings that constrain the
 write-up are there, and they are the part a summary cannot carry.
@@ -241,14 +243,14 @@ Two things the solver work established that stay true downstream:
 To resume in a new session: every numbered step through 44 was built, and **the repo is now being
 cut back to one question** — what allocating equal *risk* buys over allocating equal *capital*
 across a multi-asset book, and what it costs in volatility and return. Phase 6's incremental
-position analysis is already removed (see its section below); the head-to-head-against-a-ticker
-product is next. Nothing in `TASKS.md` Phases 0–5 is affected, and its Phase 7 carries a note
-saying which of its steps the cleanup supersedes.
-The fastest way back into the core engine is
+position analysis and the head-to-head against a ticker are **both removed** (see their sections
+below). `PLAN.md` is now purely the Phases 0–5 design, nothing in `TASKS.md` Phases 0–5 is
+affected, and its Phase 7 carries a note naming the steps the cleanup supersedes.
+What is left to do is the part the cleanup is clearing the way for: the matched-risk
+ERC-against-equal-weight comparison, built on the held `src/riskmetrics.py` and
+`src/headtohead.py`. The fastest way back into the engine is
 `.\.venv\Scripts\python.exe run_backtest.py --no-charts`, which exercises the whole pipeline on
-live data in one command, and
-`.\.venv\Scripts\python.exe compare_ticker.py --ticker AAPL` for the head-to-head comparison
-(a few seconds with prices cached: it re-runs the whole engine each time).
+live data in one command.
 
 Two stand-ins that used to live in `src/benchmarks.py` are **retired as of step 35**, not just
 superseded at the call site. Worth knowing why both had to go, since the reasoning is still what
@@ -299,92 +301,62 @@ the prose that used to be in this section:
   ticker alongside the universe through `data.fetch_prices` on a short window can *shrink* the
   universe's cached history as well as add a column. It is bounded and self-healing —
   `run_backtest.py` always requests `DATA_START_DATE` and checks coverage before trusting the
-  cache — and it is the whole reason `data.fetch_ticker_prices` exists with its own cache file.
-  See the "Head-to-head comparison" section below.
+  cache. `data.fetch_ticker_prices` existed to work around it and has itself been removed, so the
+  hazard is now unguarded — see the "Head-to-head comparison" section below.
 - **`riskparity.ERCSolverError` subclasses `ValueError`**, so a `except ValueError` placed before
   `except DataUnavailableError` silently reports a genuine solver/economic failure as a CLI
   misconfiguration. This bit the removed CLI once and `run_backtest.py` carries the same two
   handlers; keep them ordered most-specific first.
 
-## Head-to-head comparison against a ticker (step 44 — done)
+## Head-to-head comparison against a ticker (step 44, `v1.4`) — REMOVED
 
-`compare_ticker.py --ticker XYZ` runs the real strategy and buys-and-holds any ticker (total return)
-on the dates both exist, in three columns: the strategy (levered to the vol target, **net of
-financing**), **the same equal-risk book unlevered** (the ticker is unlevered, so this is the
-like-for-like risk read) and the ticker. `src/compare.py` is pure functions of return series and
-tests offline; `compare_ticker.py` only fetches, runs the engine and prints, importing `load_data`
-from `run_backtest.py` so the data path is identical to the headline run. Choices that look like
-details and are not:
+`src/compare.py`, `compare_ticker.py`, `tests/test_compare.py` and
+`data.fetch_ticker_prices` are gone from `main`. The tool ran the real strategy against
+buy-and-hold of any ticker on their overlap window, in three columns (levered and financed, the
+same book unlevered, the ticker), with relative metrics, a tail block and crisis windows. Like
+Phase 6 it worked; like Phase 6 it answers a different question than "equal risk against equal
+capital across a multi-asset book."
 
-- **The strategy is run over its whole 2006+ history and cut to the overlap window afterwards.**
-  Running it only on the overlap would make its covariance warm-up, and so its weights, depend on
-  when the ticker happened to list — the ticker's history leaking into the strategy's decisions.
-  The check that it is right: the levered column reproduces `run_backtest.py`'s numbers exactly
-  (−29.10% max drawdown; the unlevered book's 5.10% CAGR and −17.15%).
-- **`data.fetch_ticker_prices` exists because `fetch_prices` cannot do this, and must not be
-  "simplified" back into it.** `fetch_prices([*UNIVERSE, ticker], start=DATA_START_DATE)` fails
-  twice over: `_validate`'s late-start guard rejects any ticker listed after 2006 (right for the
-  sleeves, wrong for a 2019 IPO), and `cache.write_frame` replaces the whole shared price cache, so
-  the candidate rewrites the cached SPY/TLT/DBC/TIP history. The new function fetches one ticker
-  into **its own** file (`data/cache/ticker_<SAFE>.csv`), validates against the ticker's *own* first
-  date, and never reads or writes `prices_close.csv` (a test checks the shared file is byte-for-byte
-  unchanged, and a positive control checks `fetch_prices`' guard rejects the same late-listed series).
-  It is the only ticker fetch left in the repo, and the only data path that cannot shorten the
-  sleeves' cached history as a side effect.
-- **The calendar guard has two tiers, and the second exists because the first missed a real case.**
-  A first version refused only under 95% calendar match (crypto measured 69%). Running Toyota on the
-  Tokyo exchange then passed silently at 96.6%. Measured across live tickers, every foreign weekday
-  exchange sits in a narrow band under a US listing's 100% (Toronto 98.1–98.2%, London 97.8%, Zurich
-  and Hong Kong 97.5%, Frankfurt and Sydney 97.4%, Tokyo 96.6%) while US listings and US-traded ADRs
-  are 100%. Those runs are usable but biased: ~2–3% of days pair a multi-day return with a one-day
-  one, and a market closing at a different time of day reacts to US news on a different date, which
-  pulls correlation, beta, capture and the tail block toward zero. So below
-  `COMPARE_CALENDAR_WARN_BELOW` (0.99, between the two measured populations) it runs and the report
-  prints a `! calendar warning`. It warns rather than refuses because comparing against a foreign
-  stock is legitimate; the failure to avoid is silence. The clean route to a foreign company is its
-  US-traded ADR. Do not raise the 0.95 refusal to 0.99 as a "tightening": that would silently drop
-  every non-US listing.
-- **Crisis windows are measured from the peak close and are `n/a` unless the overlap reaches both
-  ends of the window** — the same peak-exclusive rule `metrics.slice_to_window` applies to a
-  `BacktestResult`, repeated in `compare.crisis_table` because these are bare series. The two series
-  share one index, so the later starter decides; a ticker that listed after a window's peak gets
-  `NaN`, never a partial window that reads like a full one.
-- **The metric rows are shared, not re-derived.** `compare.py` takes
-  `risk_summary` / `realized_risk_table` / `format_metric_table` from **`src/riskmetrics.py`** and
-  the relative, tail and crisis tables from **`src/headtohead.py`**, so any report that prints
-  these rows prints them identically. Both of those modules were carved out of their original
-  callers precisely so a second report could not describe the same metric differently, and the
-  dependency runs one way: a report depends on them, never the reverse.
-- **The relative metrics, the crisis table and both printed forms live in `src/headtohead.py`,
-  not in `compare.py`.** They are pure functions of two return series on one shared index, named
-  for their roles (`strategy` against `benchmark`), so any pairwise comparison can use them —
-  equal-risk against equal-capital, a levered book against its unlevered self, or the engine
-  against a single holding. `compare.py` keeps only what is genuinely about a ticker: aligning a
-  live price series onto the strategy's calendar, the two-tier calendar guard, and the report
-  prose. The pair is deliberately **not** symmetric — capture is measured on the benchmark's up
-  and down days and the tail block on the benchmark's worst days — so passing them the other way
-  round answers a different question. Covered by `tests/test_headtohead.py` (38 checks).
-- **Their definitions are exact and worth keeping:** beta is `cov(s, b) / var(b)`;
-  up/down capture are the strategy's mean return on the days the benchmark rose/fell as a multiple
-  of the benchmark's own mean on them (arithmetic daily means); the tail block is the benchmark's
-  worst `1 − VAR_CONFIDENCE` of days, with the share of them on which the strategy beat it —
-  which correlation and beta average over the whole sample and can hide.
-- **What it found, and how to read it.** Against AAPL (2007-03-01 → 2026-09-18) the strategy was
-  about a third as volatile, drew down −29% against −61%, lost less in every crisis window and beat
-  AAPL on all 246 of its worst days — and earned 7.1% a year against 28.5% with a *lower* Sharpe
-  (0.67 against 0.96). Against SPY it earned 7.1% against 11.1% but with a −29% against −55% max
-  drawdown and a higher Sharpe (0.67 against 0.63) and Calmar (0.24 against 0.20). It is a risk
-  story, not a return story, and the "chosen with hindsight" caveat matters: a ticker someone asks
-  about is usually one that did well.
-- **Verified against live data, not just fixtures:** the printed beta, correlation, total return and
-  tail block matched an independent recomputation to six decimals (AAPL); SPY, GOOGL, MSFT and
-  `^GSPC` run; RDDT (625-day overlap) marks every crisis window `n/a`; a nonexistent ticker exits 1
-  with a clean message. Building it produced three *test-side* mistakes — a "starts after every
-  window" series that began in 2021 and so still covered 2022, a strategy label that defaulted
-  differently from the fixture's, and a collision test that the code's own upper-casing made
-  unreachable — each caught because the expectation was derived by hand instead of assumed.
-- **Not built:** charts, strategy flags (`--target-vol`, `--max-leverage`), caching the strategy run
-  between invocations (a run is a few seconds with prices cached), and multiple tickers per run.
+**Reachable, not destroyed:** tag `v1.4`. `git show v1.4:src/compare.py` and
+`git show v1.4:compare_ticker.py` bring it back, and `git show v1.4:src/data.py` has the ticker
+fetch.
+
+**What was kept:** `src/headtohead.py` (relative metrics, tail block, crisis table, both printed
+forms) and `src/riskmetrics.py`. **Both now have no production caller** — only their own suites,
+`tests/test_headtohead.py` (38 checks) and `tests/test_riskmetrics.py` (50). That is deliberate
+and temporary: they are the building blocks for the matched-risk ERC-against-equal-weight
+comparison this repo is being cut back to, and re-extracting them from a tag later would be
+strictly worse than holding them with their tests green. Do not delete them as "unreferenced"
+without reading this; equally, do not assume a caller exists when changing a signature.
+
+**Three things from it that still matter, so they are not lost with the prose:**
+
+- **The shared price cache can still be shrunk, and the guard against it went with the feature.**
+  `cache.write_frame` replaces its whole file, so `data.fetch_prices([*UNIVERSE, extra])` on a
+  short window rewrites the cached SPY/TLT/DBC/TIP history as a side effect of adding a column.
+  `fetch_ticker_prices` existed precisely to avoid that (its own cache file, validated against the
+  ticker's own first date) and is deleted, so **the hazard is now unguarded**. Anyone widening
+  `UNIVERSE` or adding a second data source should read `data.fetch_prices` and `cache.write_frame`
+  first. It is bounded and self-healing — `run_backtest.py` always requests `DATA_START_DATE` and
+  checks coverage before trusting the cache — but it is a real trap, not a theoretical one.
+- **"Run the whole history, then cut to the comparison window" is the rule, not an optimisation.**
+  The strategy was always run over its full 2006+ history and sliced to the overlap afterwards,
+  because running it only on the overlap would make its covariance warm-up — and therefore its
+  weights — depend on when the other series happened to start. That is the comparison window
+  leaking into the strategy's decisions. **The same rule applies to any ERC-against-equal-weight
+  comparison on a sub-window**, and it is the one that is easy to get wrong while looking right.
+  It is also what `TASKS.md` step 49 relies on.
+- **Crisis windows are measured from the peak close**, with an uncovered window reported as `NaN`
+  and printed `n/a`, never a partial window that reads like a full one. That rule lives in
+  `metrics.slice_to_window` for a `BacktestResult` and is repeated in `headtohead.crisis_table`
+  for bare series; both survive.
+
+**And one measured result worth remembering,** reproducible from `v1.4`: against SPY the strategy
+earned 7.1%/yr against 11.1% but drew down −29% against −55%, with a higher Sharpe (0.67 vs 0.63)
+and Calmar (0.24 vs 0.20). Against AAPL it was about a third as volatile and beat AAPL on every
+one of its worst 5% of days, while earning 7.1% against 28.5% at a *lower* Sharpe. It is a risk
+story, not a return story — and "chosen with hindsight" always applies: a ticker someone asks
+about is usually one that did well.
 
 ## Setup and commands
 
@@ -405,10 +377,8 @@ python3 -m venv .venv
 .venv/bin/python tests/test_lookahead.py      # the <= t guard, incl. removing it to prove the teeth
 .venv/bin/python tests/test_riskmetrics.py    # VaR/CVaR, Sortino, Calmar, drawdown duration, the shared table
 .venv/bin/python tests/test_headtohead.py     # correlation/beta/capture, the tail block, the crisis table
-.venv/bin/python tests/test_compare.py        # step 44: ticker alignment, both calendar tiers, the report
 .venv/bin/python tests/fixtures.py            # print a synthetic BacktestResult summary
 .venv/bin/python run_backtest.py              # full run -> reports/
-.venv/bin/python compare_ticker.py --ticker AAPL     # step 44: strategy vs buy-and-hold of any ticker
 ```
 
 Engine modules also carry a `__main__` self-check, which is where Person A's steps assert their
@@ -424,18 +394,16 @@ Engine modules also carry a `__main__` self-check, which is where Person A's ste
 .venv/bin/python -m src.benchmarks    # capital weight vs risk weight, side by side
 .venv/bin/python -m src.stress        # crisis table + both regime diagnostics, from fixtures
 .venv/bin/python -m src.viz           # the four charts from fixtures, into a temp dir (never reports/)
-.venv/bin/python -m src.compare       # step 44: a full report from fixtures; offline, writes nothing
 ```
 
-Run every suite after any change to `src/`. **All ten test suites and all eight module
+Run every suite after any change to `src/`. **All nine test suites and all seven module
 self-checks run offline, with no exceptions** — verified by patching `socket.connect` /
 `create_connection` / `getaddrinfo` to raise and re-running each one, not by assumption.
 `src/data.py` imports `requests`, so the import graph touches the network stack, but nothing under
 `tests/` opens a connection. There used to be one exception, `src.incremental`'s live-ticker
 demonstration, and it went with that module — so the rule is now absolute and should stay that
-way: live-data checks belong in a live run (`run_backtest.py`, `compare_ticker.py`), not in a
-test, because a suite that needs the network fails for reasons that have nothing to do with the
-code.
+way: live-data checks belong in a live run (`run_backtest.py`), not in a test, because a suite
+that needs the network fails for reasons that have nothing to do with the code.
 
 **Every suite exits 0.** `test_riskparity.py` used to exit 1 by design, on a known bug filed
 against `solve_erc`; that fix has landed and the suite is green. If one exits non-zero now, it is a

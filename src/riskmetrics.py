@@ -9,6 +9,12 @@ this module when a second report needed them; that analysis has since been
 removed and these outlived it, which is the reason they are their own module
 rather than part of any one report.
 
+**Nothing in the shipped code calls these yet** — ``src/headtohead.py`` imports
+:func:`historical_var`, and nothing calls that either. Both modules are held for
+the equal-risk-against-equal-capital comparison the project is being cut back
+to; see AGENTS.md / CLAUDE.md. Read that before deleting either as unreferenced,
+and do not assume a production caller exists when changing a signature.
+
 **Why these live here and not in ``src/metrics.py``.** ``metrics.py`` is a
 deliberate verbatim port from ``abhyudayb-1/sp500-factor-backtester`` and must
 not be rewritten (see CLAUDE.md, "Conventions inherited"). Everything below
