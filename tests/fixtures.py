@@ -1,11 +1,9 @@
 """Synthetic data with the right *shape* -- what lets everything run without an engine.
 
-Built as Person B's unblocking mechanism: benchmarks, metrics, stress tests and
-charts were written against these fixtures through Phases 1-4, while Person A
-was still building the engine that
-will eventually produce the real thing. In Phase 5 the fixture call is swapped
-for a real ``BacktestResult`` and, if the contract in ``src/types.py`` held,
-nothing else changes.
+Benchmarks, metrics, stress tests and charts can all be exercised against these
+fixtures without running the engine or touching the network. Swapping the
+fixture for a real ``BacktestResult`` changes nothing else, because both satisfy
+the contract in ``src/types.py``.
 
 The data is deliberately more than noise:
 
@@ -15,7 +13,7 @@ The data is deliberately more than noise:
   stressed -- elevated volatility and negative drift -- so drawdown tables and
   stress code have something to find;
 * the 2022 window flips the equity/bond correlation **positive**, so the
-  correlation diagnostic (TASKS.md step 25) can be tested before any real data
+  correlation diagnostic can be tested before any real data
   exists.
 
 Everything is seeded. Same seed in, same numbers out.
@@ -93,7 +91,7 @@ _CALM_CORR = {
 # hardest, with leverage on top.
 #
 # The fixture reproduces that subtle version on purpose. A caricature would let
-# step 25's diagnostic pass while being unable to detect the real thing.
+# the regime diagnostic pass while being unable to detect the real thing.
 _FLIPPED_CORR = dict(_CALM_CORR) | {
     (_EQ, _BOND): 0.05, (_EQ, _INFL): 0.30, (_BOND, _INFL): 0.85,
     # Commodities were the one sleeve that worked in 2022, so they decouple.
@@ -206,7 +204,7 @@ def month_end_dates(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """Last available date of each month in ``index``.
 
     Mirrors what ``src/data.py`` will do with the real trading calendar
-    (TASKS.md step 10), so code written against the fixture keeps working.
+   , so code written against the fixture keeps working.
     """
     series = pd.Series(index, index=index)
     return pd.DatetimeIndex(series.groupby([index.year, index.month]).last().to_numpy())
@@ -334,9 +332,9 @@ def make_fake_result(
     # The .shift(1) is the whole ballgame. Without it the weights chosen at
     # rebalance date t earn the return OF day t -- a decision made using day t's
     # close, collecting day t's move. That is precisely the look-ahead bias this
-    # project exists to avoid, and step 28's test is written to catch it. A
+    # project exists to avoid, and tests/test_lookahead.py is written to catch it. A
     # fixture that models it wrong would teach the wrong alignment convention to
-    # every benchmark built against it (step 11 onward).
+    # every benchmark built against it.
     #
     # Decision at t -> realized return over t to t+1.
     aligned_w = weights_df.reindex(daily.index).ffill().shift(1)

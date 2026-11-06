@@ -1,4 +1,4 @@
-"""Covariance estimation: EWMA, shrinkage and PSD repair (TASKS.md steps 14-15).
+"""Covariance estimation: EWMA, shrinkage and PSD repair.
 
 The ERC solver in :mod:`src.riskparity` is only as trustworthy as the matrix it
 is handed, and a covariance estimated from 252 daily observations of four
@@ -10,7 +10,7 @@ that, in this order:
 2. :func:`shrink_to_diagonal` -- pull the off-diagonals toward zero, which is
    where the estimation error concentrates.
 3. :func:`nearest_psd` -- clip negative eigenvalues, so the matrix is a valid
-   covariance even when steps 1-2 left it fractionally indefinite.
+   covariance even when stages 1-2 left it fractionally indefinite.
 
 :func:`estimate_covariance` composes all three and is the function the rest of
 the project calls. It matches ``src.benchmarks.CovEstimator``, so it wires into
@@ -19,10 +19,8 @@ the benchmarks by passing ``cov_estimator=`` rather than by editing anything::
     from src.covariance import estimate_covariance
     equal_weight(returns, cov_estimator=estimate_covariance)
 
-It superseded the private ``_ewma_cov`` stand-in that used to live in
-``src/benchmarks.py`` -- retired at step 35, once this module existed to
-replace it. ``src.benchmarks`` now imports this function directly rather than
-carrying a second copy.
+``src.benchmarks`` imports this function directly, so the benchmarks and the
+engine always see the same covariance.
 
 Look-ahead: nothing in this module slices by date. Callers pass a window that
 ``src.data.asof_slice`` has already truncated to ``<= t``. Keeping the guard in
@@ -66,7 +64,7 @@ class CovarianceError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# Step 14 -- exponentially-weighted covariance
+# Exponentially-weighted covariance
 # ---------------------------------------------------------------------------
 def ewma_weights(n_observations: int, halflife: float = COV_EWMA_HALFLIFE_DAYS) -> np.ndarray:
     """Normalised decay weights, oldest observation first, newest heaviest.
@@ -105,7 +103,7 @@ def ewma_covariance(
         sliced to ``<= t`` by the caller.
     halflife:
         Decay halflife in trading days. ``float("inf")`` gives the unweighted
-        sample covariance -- that limit is step 14's "done when", and it holds
+        sample covariance, and that limit holds
         *exactly*, not approximately, because of the bias correction below.
     periods_per_year:
         Annualisation factor. Daily here; the argument exists so the same
@@ -155,7 +153,7 @@ def ewma_covariance(
 
 
 # ---------------------------------------------------------------------------
-# Step 15 -- shrinkage, PSD repair, conditioning
+# Shrinkage, PSD repair, conditioning
 # ---------------------------------------------------------------------------
 def shrink_to_diagonal(cov: np.ndarray, intensity: float = COV_SHRINKAGE) -> np.ndarray:
     """Shrink toward a diagonal target: ``(1-d)*cov + d*diag(cov)``.
@@ -173,7 +171,7 @@ def shrink_to_diagonal(cov: np.ndarray, intensity: float = COV_SHRINKAGE) -> np.
 
     * It improves conditioning monotonically, which is the practical reason it
       runs before :func:`nearest_psd`.
-    * It biases the diversification ratio (step 25) *upward*, because weaker
+    * It biases the diversification ratio *upward*, because weaker
       correlations mean a smaller portfolio volatility for the same weights. The
       2022 story is told by the ratio's trend, not its level, so a constant
       shrinkage does not distort it -- but the level should not be quoted as if
@@ -204,7 +202,7 @@ def nearest_psd(cov: np.ndarray, min_eigenvalue: float = MIN_EIGENVALUE) -> np.n
     3. Renormalise ``R``'s diagonal back to exactly 1.
     4. Multiply the standard deviations back in.
 
-    Step 3 is a congruence transform by a positive diagonal matrix, so it
+    Stage 3 is a congruence transform by a positive diagonal matrix, so it
     **cannot** reintroduce a negative eigenvalue -- unlike the obvious
     alternative of overwriting the diagonal in place after clipping, which
     silently undoes the repair it just performed. The payoff is that asset
@@ -224,7 +222,7 @@ def nearest_psd(cov: np.ndarray, min_eigenvalue: float = MIN_EIGENVALUE) -> np.n
     variance to a floor would be a fabricated number. An asset that small breaks
     ERC feasibility rather than PSD-ness, and it is
     ``src.riskparity.solve_erc_with_status`` that detects and raises on it (the
-    near-zero-vol degenerate case in TASKS.md step 20).
+    near-zero-vol degenerate case).
     """
     cov = validate_covariance(cov, "cov")
     if min_eigenvalue < 0.0:
@@ -264,7 +262,7 @@ def condition_number(cov: np.ndarray) -> float:
     Reported rather than acted on. A high condition number does not stop the ERC
     solver from converging; it means the answer it converged to is not stable
     against small changes in the input, which is a thing the run summary should
-    say out loud (TASKS.md step 29) rather than something to silently correct.
+    say out loud rather than something to silently correct.
 
     Deliberately reads the raw (signed) eigenvalues, not their magnitudes.
     ``validate_covariance`` checks square/finite/symmetric only -- the spectrum
@@ -287,7 +285,7 @@ def condition_number(cov: np.ndarray) -> float:
 
 @dataclass(frozen=True)
 class CovarianceDiagnostics:
-    """What the estimator did, for ``BacktestResult.meta`` (TASKS.md step 29).
+    """What the estimator did, for ``BacktestResult.meta``.
 
     ``min_eigenvalue_before_repair`` and ``condition_number`` answer two
     different questions and are both kept: the first says whether the matrix had
@@ -493,14 +491,14 @@ if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     rng = np.random.default_rng(20240614)
 
-    # Step 14's "done when": an infinite halflife is the sample covariance.
+    # An infinite halflife is the sample covariance.
     sample_data = rng.normal(0.0, 0.01, size=(400, 4))
     limit = ewma_covariance(sample_data, halflife=float("inf"), periods_per_year=1)
     reference = np.cov(sample_data, rowvar=False, ddof=1)
     print(f"halflife -> inf vs np.cov(ddof=1) : max |diff| = "
           f"{np.abs(limit - reference).max():.3e}")
 
-    # Step 15's "done when": PSD even from a deliberately indefinite input.
+    # PSD even from a deliberately indefinite input.
     broken = np.array(
         [
             [0.0400, 0.0399, 0.0100, 0.0050],
@@ -538,7 +536,7 @@ if __name__ == "__main__":  # pragma: no cover
     print(f"  ill-conditioned   : {diag.is_ill_conditioned}")
 
     # --- the ordering regression --------------------------------------------
-    # Found auditing step 21. The decay weights are POSITIONAL: ewma_weights
+    # The decay weights are POSITIONAL: ewma_weights
     # pairs weight k with row k and nothing here re-reads the index, so a window
     # in the wrong order produces a well-formed covariance built on the wrong
     # weighting -- oldest observations weighted most. No error, just the wrong

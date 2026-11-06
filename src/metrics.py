@@ -48,12 +48,6 @@ def _drawdown_series(returns: pd.Series) -> pd.Series | None:
     return curve / running_peak - 1.0
 
 
-def cumulative_curve(returns: pd.Series, start_value: float = 1.0) -> pd.Series:
-    """Growth of ``start_value`` through a series of periodic returns."""
-    r = returns.fillna(0.0).astype("float64")
-    return start_value * (1.0 + r).cumprod()
-
-
 def total_return(returns: pd.Series) -> float:
     r = returns.dropna().astype("float64")
     if r.empty:
@@ -176,7 +170,7 @@ def summarize(
 #
 # The exclusive lower bound lives in :func:`slice_to_window`, which explains it;
 # :func:`slice_dated` deliberately stays inclusive because it slices *levels* --
-# a price frame, a rolling correlation, step 25's diversification ratio -- where
+# a price frame, a rolling correlation, the diversification ratio -- where
 # the value on the peak date is the peak itself and belongs in the window.
 
 Window = str | tuple[str | pd.Timestamp | None, str | pd.Timestamp | None]
@@ -218,7 +212,7 @@ def slice_dated(data: pd.Series | pd.DataFrame, window: Window):
 
     The building block under :func:`slice_to_window`, and the entry point for
     anything that is not a ``BacktestResult`` -- a rolling correlation series, a
-    price frame, the diversification ratio in step 25.
+    price frame, the diversification ratio.
 
     Raises if the window and the data do not overlap at all. A crisis row built
     from an empty slice is every metric as NaN, which reads as "the strategy was

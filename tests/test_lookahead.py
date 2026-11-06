@@ -1,4 +1,4 @@
-"""Look-ahead: the invariant everything else rests on (TASKS.md step 28).
+"""Look-ahead: the invariant everything else rests on.
 
 Runs standalone, no framework, no network::
 
@@ -28,7 +28,7 @@ Three attacks, in increasing strength:
    leaks the spike test would miss -- a leak through a quantity the spike happens
    not to move.
 3. **Removing the guard** (``test_the_guard_is_what_makes_the_others_pass``).
-   The step's own "done when" is that these tests *fail* if the ``<= t`` guard is
+   These tests must *fail* if the ``<= t`` guard is
    removed, and asserting that requires actually removing it. ``asof_slice`` is
    monkeypatched to a leaky identity in every module that imported it, and the
    checks above are re-run expecting failure. Same for the one-day rule: patch
@@ -167,7 +167,7 @@ def _guard_removed():
     ``src.data.asof_slice`` alone would therefore change nothing at all, and the
     mutation test would pass while proving nothing -- the exact failure mode this
     file exists to catch. So every module holding a reference to the original is
-    found and patched, which also means a module added in step 29 is covered
+    found and patched, which also means a newly added module is covered
     without anyone remembering to update this list.
     """
     original = data.asof_slice
@@ -512,10 +512,10 @@ def test_a_decision_cannot_earn_the_day_it_was_made() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. The step's own "done when": remove the guard, and these tests must fail
+# 7. Remove the guard, and these tests must fail
 # ---------------------------------------------------------------------------
 def test_the_guard_is_what_makes_the_others_pass() -> None:
-    print("removing the guard breaks the tests above (this is the 'done when'):")
+    print("removing the guard breaks the tests above :")
     frame = _returns()
     poisoned, spike = _poison_from(frame)
     clean = _clean_run()

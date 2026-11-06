@@ -151,7 +151,7 @@ def _restrict(frame, start: str, end: str | None):
     Applied to cache hits and fresh downloads alike. Without it the cache
     silently returns whatever span happens to be on disk: ``fetch_prices(
     end="2015-01-01")`` handed back data through today whenever the cache was
-    warm, which would have made step 30's ``--start`` and date flags do nothing
+    warm, which would have made the CLI's ``--start`` and date flags do nothing
     at all on the second run of any session.
     """
     out = frame.loc[frame.index >= pd.Timestamp(start)]

@@ -1,10 +1,10 @@
-"""Crisis decomposition and the regime diagnostics (steps 24-25).
+"""Crisis decomposition and the regime diagnostics.
 
 This module answers the question the whole project is built around: *when the
 diversification stopped working, what does the evidence look like?* It produces
 two things.
 
-**The crisis table** (step 24). Every strategy, every window in
+**The crisis table**. Every strategy, every window in
 ``config.CRISIS_WINDOWS``, one row each: total return, drawdown, Sharpe -- plus a
 **capital-weight-in-bonds** column. That column is not decoration. Every strategy
 in the comparison lost money in 2022, and the ranking between them is very nearly
@@ -13,7 +13,7 @@ a monotone function of how much of the book each one had in TLT while TLT fell
 it with the column states *why*, which is the difference between a backtest and
 an analysis.
 
-**The regime diagnostics** (step 25), and this is where the project corrected
+**The regime diagnostics**, and this is where the project corrected
 itself. The intuitive story is "stocks and bonds started moving together", and it
 is measurably wrong for 2022: across ``2022-01-03 -> 2022-10-12`` the rolling
 63-day SPY/TLT correlation averaged **-0.09** and was positive on only 31% of
@@ -38,8 +38,7 @@ the whole argument in two rows: by the correlation test nothing had happened yet
 and the ratio was already at its lowest level in the sample.
 
 Everything here consumes ``BacktestResult`` and plain return frames, so it runs
-identically against ``tests.fixtures`` and against the live Phase 5 run. Per the
-"Data reality check" in TASKS.md the fixtures are shape-accurate but not
+identically against ``tests.fixtures`` and against a live run. The fixtures are shape-accurate but not
 magnitude-accurate: build against them freely, quote nothing from them.
 
 Run a self-check from the repo root::
@@ -115,7 +114,7 @@ class StressError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# Step 24 -- crisis decomposition and the cross-strategy table
+# Crisis decomposition and the cross-strategy table
 # ---------------------------------------------------------------------------
 def _as_result_mapping(
     results: Mapping[str, BacktestResult] | Sequence[BacktestResult] | BacktestResult,
@@ -319,7 +318,7 @@ def write_crisis_table(
 ) -> Path:
     """Write the decomposition to ``reports/crisis_drawdowns.csv`` and return the path.
 
-    Step 24's "done when". Written with ``index=False`` because the long form's
+    Written with ``index=False`` because the long form's
     identity is the ``(window, strategy)`` pair rather than a row number, and a
     CSV whose first column is an unnamed counter is worse to read in a
     spreadsheet than one without it.
@@ -332,7 +331,7 @@ def write_crisis_table(
 
 
 # ---------------------------------------------------------------------------
-# Step 25 -- the regime diagnostics
+# The regime diagnostics
 # ---------------------------------------------------------------------------
 def rolling_correlation(
     returns: pd.DataFrame,
@@ -379,7 +378,7 @@ def rolling_correlation(
 
 
 def diversification_ratio(weights: np.ndarray, cov: np.ndarray) -> float:
-    """``sum(w_i * sigma_i) / sigma_p`` -- the diagnostic step 25 keys off.
+    """``sum(w_i * sigma_i) / sigma_p`` -- the regime diagnostic this module keys off.
 
     The weighted average of the sleeves' *standalone* volatilities over the
     volatility they actually produce together. It is exactly 1.0 when the sleeves
@@ -511,8 +510,7 @@ def rolling_diversification_ratio(
     that date -- routed through ``src.data.asof_slice``, the project's single
     look-ahead chokepoint, rather than re-deriving the ``<= t`` guard here.
 
-    Verified against live prices with the defaults, which is step 25's "done
-    when". Calendar-year means over 2006-02-03 -> 2026-08-14 come out at **2.111
+    Verified against live prices with the defaults. Calendar-year means over 2006-02-03 -> 2026-08-14 come out at **2.111
     (2008), 2.179 (2012 peak), 1.790 (2020), 1.678 (2021), 1.586 (2022), 1.521
     (2023)**, reproducing the path in ``config.py`` to three decimals. Read the
     2021 -> 2023 run: the ratio falls for three consecutive years, and it is
@@ -677,8 +675,8 @@ def regime_summary(
 ) -> pd.DataFrame:
     """One row per window: what correlation said, and what the ratio said.
 
-    The two diagnostics side by side, which is the comparison step 25 exists to
-    make. In 2008 and 2020 they agree. In 2022 they do not -- the correlation
+    The two diagnostics side by side, which is the comparison this module exists
+    to make. In 2008 and 2020 they agree. In 2022 they do not -- the correlation
     columns look survivable and the ratio is already down -- and that
     disagreement is the finding.
     """
@@ -729,7 +727,7 @@ if __name__ == "__main__":  # pragma: no cover
     decomposition = crisis_decomposition(strategies)
     # Written into a throwaway directory, NOT reports/: write_crisis_table's
     # default destination is the tracked crisis_drawdowns.csv holding the real
-    # Phase 5 result, and a self-check that wrote there replaced it with fixture
+    # live result, and a self-check that wrote there replaced it with fixture
     # numbers. tests/test_stress.py already writes to a temp directory too.
     import tempfile
 
@@ -760,5 +758,5 @@ if __name__ == "__main__":  # pragma: no cover
     print(regime_summary(fake_returns).to_string(float_format=lambda v: f"{v: .3f}"))
     print(
         "\nFixture output -- shape-accurate, not magnitude-accurate. Nothing above is a\n"
-        "finding; the live numbers come from the Phase 5 run (TASKS.md steps 32-34)."
+        "finding; the live numbers come from run_backtest.py."
     )

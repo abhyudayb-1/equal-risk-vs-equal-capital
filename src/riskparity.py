@@ -1,4 +1,4 @@
-"""Risk contributions and the equal-risk-contribution solver (steps 16-17).
+"""Risk contributions and the equal-risk-contribution solver.
 
 This is the mathematical core of the project. Everything else -- the data layer,
 the overlay, the charts -- exists to feed or explain what happens here.
@@ -33,8 +33,8 @@ correlated -- the SPY/TLT case. :func:`solve_erc_with_status` detects this on th
 risk-contribution bar and restarts; the details, and the measurements behind the
 restart budget, are in its Notes.
 
-Person B implements the same portfolio independently in
-``tests/test_riskparity.py`` (step 19) via the convex form
+The same portfolio is derived independently, by a different author, in
+``tests/test_riskparity.py`` via the convex form
 ``min 0.5 w'Cw - (1/N) sum ln(w_i)``, and the two are asserted to agree to
 ``config.ERC_AGREEMENT_TOLERANCE``. That test is written from the maths, not from
 this file -- two independent derivations are the point, and reading this one
@@ -87,7 +87,7 @@ class ERCSolverError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# Step 16 -- the identity
+# The identity
 # ---------------------------------------------------------------------------
 def portfolio_volatility(weights: np.ndarray, cov: np.ndarray) -> float:
     """``sqrt(w' C w)``, in the same units as ``cov`` (annualised, in this project)."""
@@ -107,7 +107,7 @@ def portfolio_volatility(weights: np.ndarray, cov: np.ndarray) -> float:
 def risk_contributions(weights: np.ndarray, cov: np.ndarray) -> np.ndarray:
     """``RC_i = w_i * (C w)_i / sigma_p``, in volatility units.
 
-    Sums to ``sigma_p`` to floating-point precision -- step 16's "done when", and
+    Sums to ``sigma_p`` to floating-point precision, and it is
     the first thing ``tests/test_riskparity.py`` asserts. The identity is exact
     in real arithmetic, so any deviation beyond ~1e-15 is a bug, not tolerance.
 
@@ -149,7 +149,7 @@ def naive_inv_vol(cov: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Step 17 -- the solver
+# The solver
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ERCSolution:
@@ -250,7 +250,7 @@ def solve_erc_with_status(
     raises instead -- see the feasibility check below.
 
     This is deliberately *not* solved by switching to the convex log-barrier
-    form. That form is Person B's independent oracle (TASKS.md step 19), and the
+    form. That form is the independent oracle in the tests, and the
     whole value of that test is that it derives the same portfolio a different
     way. Adopting it here would leave the project with one derivation checked
     against itself.
@@ -281,7 +281,7 @@ def solve_erc_with_status(
     #
     # The bar is relative to the largest variance (see ERC_MIN_EIGENVALUE_RATIO)
     # because an absolute one would mean different things across scales. A
-    # legitimately singular covariance -- rho = 1 exactly, which step 20 requires
+    # legitimately singular covariance -- rho = 1 exactly, which must still
     # solve, and which is the realistic TLT/TIP-in-a-rate-shock limit -- carries a
     # min eigenvalue of a few 1e-16 relative from rounding alone, so the bar has
     # to admit it while still rejecting a genuine violation.
@@ -305,7 +305,7 @@ def solve_erc_with_status(
 
     # A one-asset portfolio is trivially equal-risk. Worth short-circuiting
     # rather than handing SLSQP a problem whose feasible set is a single point
-    # (TASKS.md step 20's single-asset degenerate case).
+    # (the single-asset degenerate case).
     if n == 1:
         return ERCSolution(
             weights=np.ones(1),
@@ -457,8 +457,8 @@ def solve_erc_with_status(
 def solve_erc(cov: np.ndarray, **kwargs) -> np.ndarray:
     """Long-only equal-risk-contribution weights, summing to 1.0.
 
-    ``(cov: np.ndarray, **kwargs) -> np.ndarray`` is the signature Person B's
-    independent oracle in ``tests/test_riskparity.py`` (step 19) asserts
+    ``(cov: np.ndarray, **kwargs) -> np.ndarray`` is the signature the
+    independent oracle in ``tests/test_riskparity.py`` asserts
     against -- the two are checked to agree to ``config.ERC_AGREEMENT_TOLERANCE``.
     Use :func:`solve_erc_with_status` when the convergence diagnostics are
     wanted -- the backtest loop does, so a failed rebalance lands in
@@ -579,12 +579,12 @@ if __name__ == "__main__":  # pragma: no cover
     print(f"analytic vs central-difference gradient : max |diff| = "
           f"{np.abs(analytic - numeric).max():.3e}")
 
-    # --- step 16's "done when" -----------------------------------------------
+    # --- the Euler identity: risk contributions sum to sigma_p --------------
     rc = risk_contributions(w, c)
     print(f"sum(RC) - sigma_p                       : "
           f"{abs(rc.sum() - portfolio_volatility(w, c)):.3e}")
 
-    # --- step 17's "done when": 4x4 random covariances ----------------------
+    # --- 4x4 random covariances ----------------------
     # Adversarial on purpose -- this generator produces |rho| up to ~0.95, well
     # outside anything SPY/TLT/DBC/TIP produce, so it exercises the non-convex
     # local minima the restart ladder exists for.
@@ -639,11 +639,10 @@ if __name__ == "__main__":  # pragma: no cover
           f"{np.ptp(risk_contributions(naive, unequal) / portfolio_volatility(naive, unequal)):.4f})")
 
     # --- regression: degenerate inputs must solve or raise, never grind -----
-    # Found by running TASKS.md step 20's cases against this module early. The
-    # near-zero-vol asset used to burn every restart and return a non-converged
+    # The near-zero-vol asset used to burn every restart and return a non-converged
     # portfolio that looked like a solver failure; it is really an infeasible
     # problem, and the two must not be confused.
-    print("\ndegenerate inputs (TASKS.md step 20, checked early)")
+    print("\ndegenerate inputs")
     vols = np.array([0.15, 0.15, 0.15, 0.15])
     degenerate = {
         "single asset": np.array([[0.04]]),
@@ -669,12 +668,12 @@ if __name__ == "__main__":  # pragma: no cover
         print(f"    {str(exc)[:96]}...")
 
     # --- regression: a non-PSD covariance must be rejected, not solved ------
-    # Found by Person B's step 20 audit. solve_erc used to return [0.6, 0.4] for
+    # solve_erc used to return [0.6, 0.4] for
     # the matrix below -- an implied correlation of 1.67, so no such portfolio
     # exists -- while every field on ERCSolution read healthy. The three cases
     # here are the whole bar: reject a real violation, admit a legitimately
     # singular matrix, and admit whatever nearest_psd hands back.
-    print("\nnon-PSD rejection (regression, Person B step 20 audit)")
+    print("\nnon-PSD rejection (regression)")
     impossible = np.array([[0.04, 0.10], [0.10, 0.09]])
     try:
         solve_erc(impossible)

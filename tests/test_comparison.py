@@ -1,6 +1,6 @@
-"""Self-checks for ``src.comparison`` -- equal risk against equal capital (step 55).
+"""Self-checks for ``src.comparison`` -- equal risk against equal capital.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_comparison.py
 
@@ -17,7 +17,7 @@ test. Nothing fetches anything; ``tests/fixtures.py`` is the only data source.
   sleeve carries all of it, both to float precision rather than approximately.
   And deliberately **not** bounded inside ``[1, N]``: a sleeve that hedges the
   rest carries a *negative* risk share, the shares still sum to 1, and
-  ``sum(RC**2)`` then exceeds 1. Step 54 measured that happening -- 60/40
+  ``sum(RC**2)`` then exceeds 1. This happens on live data -- 60/40
   bottoms at 0.78 effective bets and max Sharpe at 0.88 on the live sample -- so
   a check asserting ``>= 1`` would be asserting something about the *rule*
   rather than about the formula, and would fail on real data while looking
@@ -184,7 +184,7 @@ def test_effective_bets_limiting_cases() -> None:
         _close(effective_bets(halves).iloc[0], 2.0),
     )
 
-    # The named case from step 54. A hedging sleeve's share is negative, the row
+    # The named case: a hedging sleeve's share is negative, the row
     # still sums to 1, and sum(RC**2) = 1.5**2 + 0.5**2 = 2.5 > 1.
     hedged = _shares([1.5, -0.5, 0.0, 0.0])
     check("a hedging sleeve's risk share is negative and the row still sums to 1",

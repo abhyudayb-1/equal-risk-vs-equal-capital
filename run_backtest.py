@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""The end-to-end run: data -> engine -> benchmarks -> stress -> charts (step 30).
+"""The end-to-end run: data -> engine -> benchmarks -> stress -> charts.
 
 Every module in ``src/`` has been buildable and testable on its own; this is the
 one place they are wired together, and it is deliberately the *only* place. It
@@ -23,8 +23,7 @@ be -- anyone who clones the repo can run this command.
 
 1. ``cov_estimator=estimate_covariance`` is passed to all four benchmarks
    explicitly, even though ``src/benchmarks.py`` now defaults to the same
-   estimator itself (the Phase 1 stand-ins it used before ``src/covariance.py``
-   existed are retired -- see CLAUDE.md, "Two stand-ins"). Passing it here too is
+   estimator itself. Passing it here too is
    not redundant: it is what makes it unmistakable, at the one place a reader
    would check, that the benchmarks are judged on **exactly** the covariance the
    engine uses. A strategy comparison where the comparators saw a different
@@ -37,8 +36,8 @@ be -- anyone who clones the repo can run this command.
    deleveraging to nothing in a calm market); the ceiling is, and it is the one
    worth sweeping.
 
-**What this prints is a run summary, not a finding.** Step 29 adds the solver and
-conditioning diagnostics to ``meta`` and ``src.backtest.format_run_summary`` renders
+**What this prints is a run summary, not a finding.** The engine records solver and
+conditioning diagnostics in ``meta`` and ``src.backtest.format_run_summary`` renders
 them into the curated block printed right after the engine runs -- a bad rebalance
 is marked with a leading ``!`` there rather than being one number among twenty.
 ``_print_meta`` below it is the generic, complete dump of the same ``meta`` dict,
@@ -115,7 +114,7 @@ def _iso_date(text: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The CLI surface. Step 30's "done when" is that ``--help`` documents it all."""
+    """The CLI surface; ``--help`` documents every flag."""
     parser = argparse.ArgumentParser(
         prog="run_backtest.py",
         description=(
@@ -217,8 +216,8 @@ def build_benchmarks(returns: pd.DataFrame) -> dict[str, object]:
     module's docstring) even though it is also ``src.benchmarks``' own default
     now. It matters most for ``max_sharpe``: the real estimator repairs a
     non-PSD matrix in *correlation* space and leaves the asset volatilities
-    intact, where the retired stand-in clipped the covariance's eigenvalues
-    directly and quietly shifted them. A tangency portfolio is about as
+    intact, where clipping the covariance's eigenvalues directly would quietly
+    shift them. A tangency portfolio is about as
     sensitive to those volatilities as a portfolio gets.
     """
     return {
@@ -252,7 +251,7 @@ def _summary_frame(results: dict, periods_per_year: int = TRADING_DAYS_PER_YEAR)
 def _print_meta(result) -> None:
     """Whatever the engine chose to surface, printed rather than left in the object.
 
-    Read generically on purpose: step 29 adds fields to ``meta`` and this block
+    Read generically on purpose: if the engine adds fields to ``meta``, this block
     should pick them up without an edit here. A failed rebalance that only exists
     as a key nobody prints is a silent failure with extra steps.
     """
@@ -320,8 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         # Economic, not numerical: no equal-risk portfolio exists above the
         # weight floor (a sleeve's volatility collapsed, or the covariance
         # isn't PSD). backtest.py deliberately lets this propagate rather
-        # than catching it -- see CLAUDE.md's "two solver failures are
-        # different events" -- so this is where it has to stop being a raw
+        # than catching it, so this is where it has to stop being a raw
         # traceback and become a reported error.
         print(f"\nerror: the engine could not solve for equal risk contribution: {exc}",
               file=sys.stderr)

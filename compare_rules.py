@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Equal risk against equal capital, on live data (step 56).
+"""Equal risk against equal capital, on live data.
 
 ``run_backtest.py`` runs *the strategy* and scores it against four unlevered
 benchmarks. This runs *the study*: two construction rules over one multi-asset
@@ -114,7 +114,7 @@ def _iso_date(text: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The CLI surface. Step 56's "done when" is that ``--help`` documents it all."""
+    """The CLI surface; ``--help`` documents every flag."""
     parser = argparse.ArgumentParser(
         prog="compare_rules.py",
         description=(
@@ -303,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         # ERCSolverError subclasses ValueError, so the broader handler placed
         # first would report a genuine economic failure -- a sleeve whose
         # volatility collapsed, i.e. a broken price series -- as if the caller
-        # had mis-configured something. See CLAUDE.md, "two failure modes".
+        # had mis-configured something.
         print(f"\nerror: the engine could not solve for equal risk contribution: {exc}",
               file=sys.stderr)
         return 1
@@ -339,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     if swept is None:
-        # The turnover and cost half of step 58, which needs no extra engine
+        # The turnover and cost half of the sensitivity analysis, which needs no extra engine
         # runs. The knob sweep's own header is inside format_sensitivity_report,
         # so this branch supplies its own.
         print("What each rule trades, and what that would cost")

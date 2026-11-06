@@ -1,4 +1,4 @@
-"""Volatility targeting and financing (TASKS.md steps 21-22).
+"""Volatility targeting and financing.
 
 The ERC solver in :mod:`src.riskparity` decides *how the risk is split*. It says
 nothing about *how much* risk to run, and left alone it runs whatever the sleeves
@@ -26,7 +26,7 @@ defect to be tuned away -- it is one of the project's findings. A trailing
 estimate of volatility cannot rise until the volatility has already been
 realised, so the overlay de-levers **after** the damage rather than before it.
 In 2022 that is visible as a leverage series still elevated well into the
-drawdown (PLAN.md's third artifact). Shortening the halflife moves the lag
+drawdown. Shortening the halflife moves the lag
 around; it does not remove it, because no causal filter can. The honest framing
 is that vol targeting is a risk *control*, not a risk *forecast*.
 
@@ -36,7 +36,7 @@ notional. It binds in both directions and the two mean opposite things, so
 ceiling binds constantly is a run whose target vol is too high for its sleeves,
 which is a different problem from one where the floor binds in a crisis.
 
-**Financing (step 22).** ``r_p = L_t * (r_a - r_f) + r_f``. Borrowing ``L - 1`` of
+**Financing.** ``r_p = L_t * (r_a - r_f) + r_f``. Borrowing ``L - 1`` of
 capital costs ``(L-1) * r_f``, and leaving that leg out is the single most common
 way a risk-parity backtest is oversold -- at ``L = 2`` against a 5% cash rate it
 is worth ~5%/yr, more than the strategy's whole edge. It cuts both ways: below
@@ -63,9 +63,9 @@ through :func:`src.data.asof_slice` and are the entry points that enforce the
 ``<= t`` invariant. :func:`trailing_portfolio_vol` deliberately does **not**
 slice -- it takes a window the caller has already truncated, exactly as
 :func:`src.covariance.ewma_covariance` does, so the guard stays in one attackable
-place (``tests/test_lookahead.py``, step 28).
+place (``tests/test_lookahead.py``).
 
-One boundary worth stating once, because step 23's accrual loop depends on it:
+One boundary worth stating once, because the backtest's accrual loop depends on it:
 the decision returned for date ``t`` is made *at the close of* ``t`` and applies
 to returns from ``t+1`` onward. Applying ``L_t`` to ``r_t`` would earn a levered
 return on information not yet available, which is look-ahead wearing a different
@@ -344,7 +344,7 @@ def leverage_path(
     backward fill would hand a date the allocation chosen after it.
 
     Returns a frame indexed by date with the columns of :class:`LeverageDecision`.
-    Step 23 consumes it, ``viz.py`` plots it, and it is what makes step 21's
+    ``backtest.py`` consumes it, ``viz.py`` plots it, and it is what makes
     "leverage rises in calm regimes, falls in volatile ones" checkable rather
     than merely asserted.
     """
@@ -407,7 +407,7 @@ def leverage_path(
 
 
 # ---------------------------------------------------------------------------
-# Step 22 -- financing. Leverage is borrowed, not free.
+# Financing. Leverage is borrowed, not free.
 # ---------------------------------------------------------------------------
 def unlevered_returns(
     returns: pd.DataFrame,
@@ -499,8 +499,8 @@ def financed_returns(
     is not a pure drag.
 
     **The form actually computed** is the algebraically identical
-    ``L*r_a - (L-1)*r_f``, and the rearrangement is not cosmetic. Step 22's
-    "done when" is that ``L = 1`` reproduces the unlevered return *exactly*, and
+    ``L*r_a - (L-1)*r_f``, and the rearrangement is not cosmetic. The requirement
+    is that ``L = 1`` reproduces the unlevered return *exactly*, and
     the two forms differ on precisely that point: measured over 2,000,000 draws
     at realistic magnitudes, ``L*(r_a - r_f) + r_f`` is bit-identical to ``r_a``
     on only 92.7% of them -- ``(a - b) + b != a`` in floating point -- while
@@ -526,7 +526,7 @@ def financed_returns(
     _validate_rate(rate)
 
     # L*r_a - (L-1)*r_f, not L*(r_a - r_f) + r_f. See the docstring: only this
-    # form is bit-exact at L == 1, which is what the step's "done when" asks for.
+    # form is bit-exact at L == 1, which is what the self-check asserts.
     financed = lev * r_a - (lev - 1.0) * rate
     return pd.Series(financed, index=unlevered.index, name="strategy")
 
@@ -537,7 +537,7 @@ def apply_overlay(
     leverage: pd.Series | float,
     risk_free: pd.Series | float,
 ) -> pd.DataFrame:
-    """Compose steps 21 and 22 into the frame step 23 accrues from.
+    """Compose leverage and financing into the frame the backtest accrues from.
 
     Columns: ``unlevered`` (``w @ r``), ``leverage`` (the multiplier in force),
     ``risk_free`` (the financing rate charged) and ``strategy`` (the financed
@@ -752,8 +752,8 @@ def _decision_values(
     "unconditionally" is the whole point. An earlier draft picked the rule by
     asking whether the series already covered the target index, on the theory
     that a series on the return calendar must be a published quantity rather than
-    a decision. That is false for exactly the input step 23 is most likely to
-    hand it: :func:`leverage_path` with its default daily dates produces a
+    a decision. That is false for exactly the input the backtest is most likely
+    to hand it: :func:`leverage_path` with its default daily dates produces a
     decision for *every* return date, so the shape test classified it as
     published and applied ``L_d`` to ``r_d`` -- reintroducing the one-day
     look-ahead this module is shaped to prevent, in the one code path most likely
@@ -838,7 +838,7 @@ def _log_saturation(path: pd.DataFrame, cap: tuple[float, float]) -> None:
 
     A saturated overlay is not targeting volatility any more, it is holding a
     constant notional -- and that is invisible in the leverage series itself,
-    which just looks flat. It belongs in ``BacktestResult.meta`` (step 29) and in
+    which just looks flat. It belongs in ``BacktestResult.meta`` and in
     the run summary; logging it here means it is never *only* in a chart.
     """
     if path.empty:
@@ -893,7 +893,7 @@ if __name__ == "__main__":  # pragma: no cover
             f"{mine:.12f} vs {theirs:.12f}  (diff {abs(mine - theirs):.3e})"
         )
 
-    # --- step 21's "done when": calm levers up, volatile levers down ---------
+    # --- calm levers up, volatile levers down ---------
     print("\nleverage responds to the regime (equal weights, 4 sleeves)")
     for label, vols in (
         ("calm      (8% sleeves)", np.repeat(0.08, 4)),
@@ -929,8 +929,8 @@ if __name__ == "__main__":  # pragma: no cover
     # --- the lag, which is a finding rather than a bug -----------------------
     # A calm year, then an abrupt tripling of volatility. A trailing estimator
     # cannot see the shock until it has been realised, so the book is still
-    # levered through the first weeks of it. This is PLAN.md's third artifact --
-    # the 2022 leverage series staying elevated into the drawdown -- reproduced
+    # levered through the first weeks of it. This is the
+    # 2022 leverage series staying elevated into the drawdown -- reproduced
     # on synthetic data where the regime change date is known exactly.
     print("\nthe overlay de-levers AFTER the shock, not before (this is the finding)")
     calm = synthetic_returns(400, np.repeat(0.08, 4), rng)
@@ -954,7 +954,7 @@ if __name__ == "__main__":  # pragma: no cover
           f"vol has quadrupled")
 
     # --- time-varying weights, and the alignment regression ------------------
-    # Found while building step 21: aligning a weight frame with
+    # Aligning a weight frame with
     # reindex(returns.index).ffill() SILENTLY DROPS any rebalance date that is not
     # itself a return observation -- a month-end landing on a holiday. Every later
     # date then carries the previous month's weights and nothing reports it. The
@@ -978,7 +978,7 @@ if __name__ == "__main__":  # pragma: no cover
           f"L in [{varying['leverage'].min():.2f}, {varying['leverage'].max():.2f}]")
 
     # --- the ordering regression --------------------------------------------
-    # Found auditing step 21. The EWMA decay weights are POSITIONAL, so a window
+    # The EWMA decay weights are POSITIONAL, so a window
     # whose rows are not oldest-first is not an error anywhere -- it is a
     # different and wrong answer, with the decay landing on the oldest rows. It
     # fails in the flattering direction: on a calm-then-violent window, reversing
@@ -1009,14 +1009,14 @@ if __name__ == "__main__":  # pragma: no cover
             print(f"  {label:24s} : OverlayError, as it must")
 
     # =====================================================================
-    # Step 22 -- financing
+    # Financing
     # =====================================================================
     financing_window = synthetic_returns(300, np.array([0.16, 0.11, 0.19, 0.06]), rng)
     unlev = unlevered_returns(financing_window, equal)
     # 4e-5/day de-compounds to about 1.01%/yr, a plausible cash rate.
     cash = pd.Series(np.full(len(financing_window), 4e-5), index=financing_window.index)
 
-    # --- step 22's "done when": L = 1 is the unlevered return, EXACTLY -------
+    # --- L = 1 is the unlevered return, EXACTLY -------
     # Bit-identical, not merely close. This is why financed_returns computes
     # L*r_a - (L-1)*r_f rather than the spec's L*(r_a - r_f) + r_f: the latter is
     # (a - b) + b, which is not exactly a in floating point. Measured over
@@ -1070,13 +1070,13 @@ if __name__ == "__main__":  # pragma: no cover
               f"naive ffill {naive.loc[day]:.1f}{marker}")
 
     # A DAILY leverage series is still a decision series, and must still be
-    # deferred by a day. Caught while building step 22: an earlier draft picked
+    # deferred by a day. An earlier draft picked
     # the alignment rule by asking whether the series already covered the return
     # index, on the theory that anything on the return calendar must be a
     # published quantity. leverage_path's default output is a decision for every
     # return date, so that test classified it as published and applied L_d to
     # r_d -- the one-day look-ahead this module exists to prevent, in the code
-    # path step 23 is most likely to use. Kind, not shape.
+    # path the backtest is most likely to use. Kind, not shape.
     daily_decisions = pd.Series(
         np.where(np.arange(len(days)) < 5, 1.0, 3.0), index=days
     )

@@ -1,18 +1,17 @@
-"""Self-checks for the Phase 0 contract, the metrics port, and the fixtures.
+"""Self-checks for the result contract, the metrics port, and the fixtures.
 
-Runs standalone with no test framework, matching the house style:
+Runs standalone with no test framework:
 
     .\\.venv\\Scripts\\python.exe tests\\test_contract.py
 
-This is the Phase 0 gate (TASKS.md step 7). It proves three things before
-anyone builds on top of them:
+It proves three things everything else builds on:
 
 1. ``BacktestResult.validate()`` accepts a well-formed result and *rejects*
    malformed ones -- a contract that never rejects anything is not a contract.
 2. The metrics ported from ``sp500-factor-backtester`` kept the two subtleties
    that make them correct (the zero-variance guard and the drawdown peak floor).
 3. The fixtures produce data with real regime structure, including the 2022
-   equity/bond correlation flip that step 25's diagnostic has to detect.
+   equity/bond correlation flip that the regime diagnostic has to detect.
 """
 
 from __future__ import annotations
@@ -186,7 +185,7 @@ def test_metrics_port() -> None:
 
 def test_cache_port() -> None:
     print("cache port:")
-    probe = "_phase0_probe.csv"
+    probe = "_contract_probe.csv"
     frame = make_fake_result().weights.head()
     cache.write_frame(probe, frame)
     restored = cache.read_frame(probe)
@@ -240,7 +239,7 @@ def test_fixture_regimes() -> None:
         set(config.CRISIS_WINDOWS) == set(_CRISIS_PROFILES),
     )
 
-    # The diagnostic step 25 keys off: diversification degrades through 2022
+    # The regime diagnostic: diversification degrades through 2022
     # even though the correlation sign never sustains a flip.
     #
     # Computed from the correlation TABLES, not from a sampled window. The
@@ -279,10 +278,9 @@ def test_fixture_regimes() -> None:
 def test_fixture_alignment() -> None:
     """No look-ahead in the fixture, and the covariance warmup is respected.
 
-    Both of these were wrong in the first cut of Phase 0. They matter because
-    every benchmark written from step 11 onward copies the fixture's
-    alignment convention, and step 28's look-ahead test would then be asserting
-    the opposite of what the fixture does.
+    Both of these were once wrong in the fixture. They matter because every
+    benchmark copies the fixture's alignment convention, and the look-ahead
+    test would then be asserting the opposite of what the fixture does.
     """
     print("fixture alignment:")
     result = make_fake_result()

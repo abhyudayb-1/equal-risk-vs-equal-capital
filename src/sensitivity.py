@@ -1,4 +1,4 @@
-"""How much of ERC's edge survives the covariance being *estimated* (step 58).
+"""How much of ERC's edge survives the covariance being *estimated*.
 
 ``src/comparison.py`` answers the project's question at one setting of the
 estimator. This answers the standard objection to that answer: **1/N needs no
@@ -606,7 +606,7 @@ def format_sensitivity_report(
     traded: pd.DataFrame,
     costs: CostComparison | Sequence[CostComparison],
 ) -> str:
-    """The whole of step 58 as one block of text.
+    """The whole sensitivity analysis as one block of text.
 
     ``costs`` may be one :class:`CostComparison` or several -- the unlevered
     comparison and the matched-risk one answer different halves of the headline

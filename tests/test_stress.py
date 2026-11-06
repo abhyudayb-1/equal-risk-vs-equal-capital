@@ -1,13 +1,12 @@
-"""Self-checks for ``src/stress.py`` and ``src/viz.py`` (TASKS.md steps 24-27).
+"""Self-checks for ``src/stress.py`` and ``src/viz.py``.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_stress.py
 
 What is worth asserting here, and what is not
 ---------------------------------------------
-Per the "Data reality check" in TASKS.md, the fixtures are shape-accurate but not
-magnitude-accurate, and a single simulated path's realised numbers move seed to
+The fixtures are shape-accurate but not magnitude-accurate, and a single simulated path's realised numbers move seed to
 seed. So nothing below asserts that risk parity lost 18% in 2022. What it asserts
 instead is that the *instruments* are correct:
 
@@ -19,7 +18,7 @@ instead is that the *instruments* are correct:
   checking it separates them where a correlation cannot;
 * that every rejection path rejects, since a NaN row in the crisis table reads as
   "the strategy was flat through the GFC";
-* that the charts write real PNG bytes, which is steps 26 and 27's "done when".
+* that the charts write real PNG bytes.
 
 The one place a realised magnitude is checked is the sign-free structural claim
 that a strategy holding more capital in bonds shows more capital in bonds in the
@@ -71,7 +70,7 @@ def two_asset_cov(rho: float, vols: tuple[float, float] = (0.15, 0.15)) -> np.nd
 
 
 # ---------------------------------------------------------------------------
-# Step 25 -- the diagnostic, against closed form
+# The diagnostic, against closed form
 # ---------------------------------------------------------------------------
 def test_diversification_ratio_closed_form() -> None:
     """The ratio's value is a fact about the formula, so it is checkable exactly.
@@ -141,7 +140,7 @@ def test_ratio_sees_what_correlation_cannot() -> None:
     volatility dispersion across the four sleeves. A pairwise correlation is by
     construction the same number in both; the ratio is not, because it aggregates
     the volatilities as well. If this ever fails, the ratio has stopped being an
-    improvement on the correlation and step 25's premise is gone.
+    improvement on the correlation and the regime diagnostic's premise is gone.
     """
     print("\nthe ratio separates what a correlation cannot:")
     corr = np.array(
@@ -227,7 +226,7 @@ def test_rolling_series() -> None:
 def test_rolling_ratio_respects_the_lookahead_guard() -> None:
     """A future spike must not move a point that precedes it.
 
-    The same attack ``tests/test_lookahead.py`` (step 28) makes on the engine,
+    The same attack ``tests/test_lookahead.py`` makes on the engine,
     scoped to this module: the diagnostic slices through ``src.data.asof_slice``,
     so appending an enormous return *after* a date cannot change that date's
     value. If someone reimplements the windowing with a centred ``rolling``, this
@@ -251,7 +250,7 @@ def test_rolling_ratio_respects_the_lookahead_guard() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 24 -- the crisis table
+# The crisis table
 # ---------------------------------------------------------------------------
 def test_crisis_decomposition() -> None:
     print("\ncrisis decomposition:")
@@ -449,7 +448,7 @@ def test_ad_hoc_windows() -> None:
 
 
 def test_regime_summary() -> None:
-    """The two diagnostics side by side -- the comparison step 25 exists to make."""
+    """The two diagnostics side by side -- the comparison stress.py exists to make."""
     print("\nregime summary:")
     returns = make_fake_returns()
     summary = stress.regime_summary(returns)
@@ -478,7 +477,7 @@ def test_regime_summary() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Steps 26-27 -- the charts
+# The charts
 # ---------------------------------------------------------------------------
 def _is_png(path: Path) -> bool:
     """True if the file starts with the PNG magic number.
@@ -513,7 +512,7 @@ def test_charts_render() -> None:
         )
         check("the leverage chart accepts an unlevered result", _is_png(flat))
 
-        # Re-rendering must overwrite in place rather than accumulate: step 30's
+        # Re-rendering must overwrite in place rather than accumulate: the
         # CLI is run repeatedly and reports/ is read by a human.
         again = viz.render_all(result, returns, reports_dir=directory)
         check(

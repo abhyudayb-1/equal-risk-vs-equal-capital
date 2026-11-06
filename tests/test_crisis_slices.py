@@ -1,6 +1,6 @@
-"""Self-checks for the crisis-window helpers in ``src/metrics.py`` (TASKS.md step 13).
+"""Self-checks for the crisis-window helpers in ``src/metrics.py``.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_crisis_slices.py
 
@@ -20,8 +20,7 @@ The third is the drawdown peak floor: crisis windows are sliced peak-to-trough,
 so the first period is usually negative, and that is precisely the case the floor
 in ``_drawdown_series`` was carried over from the sp500 repo to handle.
 
-Per the "Data reality check" in TASKS.md, the fixtures are shape-accurate, not
-magnitude-accurate -- so nothing here asserts on a realized magnitude from a
+The fixtures are shape-accurate, not magnitude-accurate -- so nothing here asserts on a realized magnitude from a
 single simulated path.
 """
 
@@ -203,7 +202,7 @@ def test_summarize_window() -> None:
         "rows are keyed by the window name from config",
         list(table.index) == list(config.CRISIS_WINDOWS),
     )
-    # The four statistics step 13 names, plus the period count behind them.
+    # The four crisis statistics, plus the period count behind them.
     for column in (
         "total_return", "annual_volatility", "max_drawdown", "sharpe_ratio", "n_periods"
     ):
@@ -238,7 +237,7 @@ def test_summarize_window() -> None:
 def test_rows_do_not_collide() -> None:
     """Every window must produce a distinct row label.
 
-    Found by building the step 24 table over ad-hoc date ranges rather than
+    Found by building the crisis table over ad-hoc date ranges rather than
     config keys: unnamed windows all fell back to the strategy name, so
     ``set_index("name")`` collapsed them and rows silently overwrote each other.
     A crisis table that quietly loses two of its rows is worse than one that
@@ -318,7 +317,7 @@ def test_window_excludes_the_peak_days_return() -> None:
     last day of the rally, not the first day of the crisis. Including it measured
     from the close before the peak.
 
-    Found auditing after step 21. On live data the start date is the SPY
+    On live data the start date is the SPY
     local-peak close in all three windows and the return stamped on it is
     positive in all three (+0.94%, +0.48%, +0.58%), which a peak-to-trough
     drawdown cannot contain. Mostly it was worth a few tenths of a point; on TLT
@@ -329,8 +328,7 @@ def test_window_excludes_the_peak_days_return() -> None:
     The identity this pins: compounding a window's returns must equal the price
     move over the window, ``price(end)/price(start) - 1``. Asserted on a
     synthetic price series rather than on live data, so it stays offline and
-    exact -- and on the *identity*, not on a realised magnitude, per the "Data
-    reality check" in TASKS.md.
+    exact -- and on the *identity*, not on a realised magnitude.
     """
     result = make_fake_result()
 
@@ -370,7 +368,7 @@ def test_window_excludes_the_peak_days_return() -> None:
     )
 
     # slice_dated stays INCLUSIVE on purpose: it cuts levels -- a price frame, a
-    # rolling correlation, step 25's diversification ratio -- where the value on
+    # rolling correlation, the diversification ratio -- where the value on
     # the peak date is the peak itself and belongs in the window.
     check(
         "slice_dated remains inclusive, because it slices levels rather than returns",

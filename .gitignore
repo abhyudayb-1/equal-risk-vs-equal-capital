@@ -9,21 +9,7 @@ __pycache__/
 # Regenerable network pulls -- delete a file to force a re-pull
 data/cache/
 
-# Generated report artifacts. Still ignored by default, because anything a local
-# run drops in here may have come from tests/fixtures.py -- shape-accurate,
-# magnitude-meaningless -- and a committed fixture chart is indistinguishable
-# from a real result to anyone browsing the repo.
-#
-# Eight files in here ARE tracked, force-added (`git add -f`) from one live run,
-# because the README cites them and they have to be readable without cloning and
-# running: the four engine charts and crisis_drawdowns.csv from run_backtest.py,
-# and rule_risk_shares.png, return_vol_plane.png, rule_comparison.csv and
-# risk_allocation.csv from compare_rules.py. Tracked files stay tracked and
-# re-render in place.
-#
-# Two rules about them. If you regenerate them from fixtures, do not commit the
-# result. And re-render ALL of them or none: they are one live run on one data
-# date, and refreshing half the directory mixes two dates in one place, which is
-# the failure mode this whole project keeps guarding against.
+# Generated reports. The eight files quoted in README.md are tracked (force-added
+# from one live run); anything else written here stays local.
 reports/
 

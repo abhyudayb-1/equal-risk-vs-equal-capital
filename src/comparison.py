@@ -1,5 +1,5 @@
 """Equal risk against equal capital -- the comparison this project exists to make
-(TASKS.md step 53).
+.
 
 Two construction rules are being compared over one multi-asset book: **equal risk
 contribution (ERC)** and **equal capital (1/N)**. The question is what equalising
@@ -19,16 +19,15 @@ versions are both reported.
 function of return series -- no network, no disk, no argument parsing. It does
 call :func:`src.backtest.run_backtest` a second time for the matched column,
 because that is also a pure function and because ``backtest.py`` owns the overlay
-alignment that a hand-rolled ``leverage = target / vol`` would get wrong (see
-AGENTS.md/CLAUDE.md under ``backtest.py`` and ``overlay.py``). The data fetching
+alignment that a hand-rolled ``leverage = target / vol`` would get wrong (see the
+alignment notes in ``overlay.py``). The data fetching
 and the printing-to-a-terminal belong to ``compare_rules.py``.
 
 Metric rows come from :mod:`src.riskmetrics` and the pairwise blocks from
-:mod:`src.headtohead`, both of which were salvaged out of removed products for
-exactly this; nothing statistical is re-derived here.
+:mod:`src.headtohead`, so nothing statistical is re-derived here.
 
 **Two measurement facts that shape the output, both measured rather than
-assumed** (PLAN.md's Phase 8 section records them):
+assumed**:
 
 1. **The overlay overshoots its target by roughly 12.5%.** A 10% target realised
    11.25%; an 8.355% target realised 9.40%. So the matched column is
@@ -128,8 +127,8 @@ class RuleComparison:
     ``rule_results`` is the ``BacktestResult`` each distinct-weight rule actually
     produced, keyed the same way every table here is. It is carried rather than
     discarded because ``allocation`` and ``concentration`` are *summaries* of it:
-    a chart that wants the risk shares through time (step 57) or a sweep that
-    wants the weights to measure turnover from (step 58) needs the frames, and
+    a chart that wants the risk shares through time or a sweep that
+    wants the weights to measure turnover from needs the frames, and
     re-running five rules to get them back would be both slow and a second
     chance to run them on different inputs.
 
@@ -240,7 +239,7 @@ def build_series(
 
 
 # ---------------------------------------------------------------------------
-# Risk allocation -- where each rule actually puts its risk (step 54)
+# Risk allocation -- where each rule actually puts its risk
 # ---------------------------------------------------------------------------
 # The return table says what each rule earned. This says what each rule was
 # DOING, which is the part a capital-weight pie chart hides: ERC holds equal
@@ -461,7 +460,7 @@ def compare_rules(
         series[ERC_UNLEVERED], series[EQUAL_CAPITAL], periods_per_year=periods_per_year
     )
 
-    # Risk allocation (step 54). ERC's own block comes from the UNLEVERED engine
+    # Risk allocation. ERC's own block comes from the UNLEVERED engine
     # result, because the levered columns hold identical weights -- the matched
     # column is the same book at a different size, not a different allocation.
     allocation_results = {
@@ -509,7 +508,7 @@ def compare_rules(
 # ---------------------------------------------------------------------------
 # The printed report
 # ---------------------------------------------------------------------------
-# Stated on every run, not only in PLAN.md: a reader reads the output.
+# Stated on every run, not only in the README: a reader reads the output.
 _CAVEATS: tuple[str, ...] = (
     "Ratios are return-to-volatility at a zero risk-free rate, not a true Sharpe. The same "
     "convention is applied to every row, so the ranking is fair even though the level is not.",
@@ -680,7 +679,7 @@ if __name__ == "__main__":  # pragma: no cover
           abs(relative_metrics(comparison.series[EQUAL_CAPITAL],
                                comparison.series[EQUAL_CAPITAL])["beta"] - 1.0) < 1e-9)
 
-    # --- step 54: risk allocation ------------------------------------------
+    # --- risk allocation ------------------------------------------
     n = len(UNIVERSE)
     check("the allocation block covers exactly the rules with distinct weights",
           sorted({r for r, _ in comparison.allocation.columns}) == sorted(ALLOCATION_RULES))

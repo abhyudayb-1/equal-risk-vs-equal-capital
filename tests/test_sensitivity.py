@@ -1,6 +1,6 @@
 """Self-checks for ``src.sensitivity`` -- turnover, cost and the estimator sweep.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_sensitivity.py
 

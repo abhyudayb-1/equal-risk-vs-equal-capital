@@ -1,6 +1,6 @@
 """Self-checks for ``src.headtohead`` -- pairwise comparison of two return series.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_headtohead.py
 
@@ -26,10 +26,7 @@ calling the function under test a second way:
   uncovered crisis window renders ``n/a`` in every cell -- never ``0.00%``,
   which would read as "came through it flat" instead of "was not trading yet".
 
-What is *not* here is the ticker wiring that used to surround these functions --
-the live fetch, the trading-calendar guards and the report prose. That went with
-``src/compare.py`` (reachable at tag ``v1.4``). ``src.comparison`` is the
-consumer now, and this suite still covers the printed forms as well as the
+``src.comparison`` is the consumer, and this suite covers the printed forms as well as the
 arithmetic — that report's tables are only as good as these.
 """
 
@@ -213,9 +210,7 @@ def test_crisis_table_by_hand() -> None:
 # ---------------------------------------------------------------------------
 # The printed forms
 # ---------------------------------------------------------------------------
-# These were private helpers inside src/compare.py, tested only through the
-# finished report. They are public and shared now, so they get direct checks --
-# and the one that matters is the "n/a" rendering: an uncovered crisis window
+# The printed forms are shared, so they get direct checks -- and the one that matters is the "n/a" rendering: an uncovered crisis window
 # printed as 0.00% would read as "came through it flat".
 def test_format_relative_table_labels_and_undefined_cells() -> None:
     relative = pd.DataFrame(

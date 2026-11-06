@@ -67,7 +67,7 @@ def risk_contribution_fractions(weights: np.ndarray, cov: np.ndarray) -> np.ndar
     fewer square root, and it sums to exactly 1.0 in floating point rather than
     to within a rounding error of it.
 
-    ``src/riskparity.py`` owns the volatility-unit version (step 16);
+    ``src/riskparity.py`` owns the volatility-unit version;
     this is the normalised form the contract stores, not a competing
     implementation of the solver's objective.
     """
@@ -125,9 +125,8 @@ def fixed_weight(
     Notes
     -----
     Weights are held constant *between* rebalances rather than allowed to drift
-    with returns, matching ``tests.fixtures.make_fake_result``. This is the
-    convention to reconcile with ``src/backtest.py`` in Phase 5 -- see the module
-    docstring of the fixture for why the one-day shift below is not negotiable.
+    with returns, matching ``tests.fixtures.make_fake_result``. ``src/backtest.py``
+    uses the same convention -- see the module docstring of the fixture for why the one-day shift below is not negotiable.
 
     That convention has a consequence worth naming, because it is easy to read
     this function as modelling a monthly-rebalanced book and it does not.
@@ -292,7 +291,7 @@ def sixty_forty(
 
     Second, the ranking is an open question, not a known result. 60/40 was itself
     down roughly 23% over 2022, and which strategy loses by less is exactly what
-    the crisis table in step 24 is built to answer. Stating the outcome in
+    the crisis table is built to answer. Stating the outcome in
     advance is how a backtest ends up confirming it -- so it is not stated here.
 
     The unallocated sleeves are carried as explicit zero columns over
@@ -331,7 +330,7 @@ def naive_risk_parity(
 
     It belongs among the benchmarks rather than in the engine for exactly that
     reason: it is the strategy the project is arguing *against*, and the crisis
-    table (TASKS.md step 24) needs it as a row. Unlevered, like every other
+    table needs it as a row. Unlevered, like every other
     comparator here, so the ERC engine's crisis losses are never being compared
     against a differently-geared book without the ``mean_leverage`` column saying
     so.

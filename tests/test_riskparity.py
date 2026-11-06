@@ -1,25 +1,25 @@
-"""Self-checks for risk contributions and the ERC solver (TASKS.md steps 18-20).
+"""Self-checks for risk contributions and the ERC solver.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_riskparity.py
 
 Three steps live in this one file because they attack one object from three
 angles:
 
-* **Step 18 -- the identity.** ``RC_i = w_i (Sigma w)_i / sigma_p`` sums to
+* **The identity.** ``RC_i = w_i (Sigma w)_i / sigma_p`` sums to
   ``sigma_p`` and the normalised fractions sum to 1. This is not bookkeeping: it
   is what makes the word "contribution" mean anything. The Euler check below
   proves ``RC_i`` really is ``w_i * d(sigma_p)/d(w_i)`` rather than a plausible
   ratio that happens to add up.
-* **Step 19 -- the cross-check.** The equal-risk portfolio is derived here a
+* **The cross-check.** The equal-risk portfolio is derived here a
   second time, independently, from the convex form
   ``min 0.5 w'Sigma w - (1/N) sum ln(w_i)`` and renormalised. Its stationarity
   condition is ``(Sigma w)_i = 1/(N w_i)``, i.e. ``w_i (Sigma w)_i`` is the same
   for every i -- equal risk contributions, with no reference whatsoever to how
-  Person A's SLSQP solver reaches the same point. Two derivations agreeing on 50
+  the SLSQP solver in ``src/riskparity.py`` reaches the same point. Two derivations agreeing on 50
   random covariances is the only evidence either one is right.
-* **Step 20 -- the degenerate cases.** Perfect correlation, near-singularity, a
+* **The degenerate cases.** Perfect correlation, near-singularity, a
   single asset, a near-zero-vol sleeve, and non-PSD input. Each must either solve
   or raise something legible. Silent garbage here would propagate into weights,
   and a wrong weight vector still produces a perfectly plausible equity curve.
@@ -35,12 +35,11 @@ it -- see that test's docstring for the incident and the fix (``361c995``). Kept
 as its own permanent test rather than folded into the general bad-input loop,
 since the bar it checks is a measured, relative one.
 
-**On what is under test.** ``src.riskparity.solve_erc`` (steps 16-17) is what
-every check below runs against, imported directly -- this file no longer carries
-a transitional stand-in for it. ``_oracle_erc`` and ``_risk_contributions`` below
-are a **permanent** independent reimplementation, not a stand-in for missing
-code: step 19's whole point is that they are derived from the maths without
-reference to ``src/riskparity.py``, so agreement between the two is evidence
+**On what is under test.** ``src.riskparity.solve_erc`` is what
+every check below runs against, imported directly. ``_oracle_erc`` and
+``_risk_contributions`` below are an independent reimplementation, written by a
+different author from the solver it checks: the whole point is that they are
+derived from the maths without reference to ``src/riskparity.py``, so agreement between the two is evidence
 neither derivation shares the other's mistake.
 """
 
@@ -168,10 +167,10 @@ def _validate_covariance(cov: np.ndarray) -> np.ndarray:
 def _risk_contributions(weights: np.ndarray, cov: np.ndarray) -> np.ndarray:
     """``RC_i = w_i (Sigma w)_i / sigma_p``, in volatility units, summing to sigma_p.
 
-    Person A's ``riskparity.risk_contributions`` (step 16) is the module version;
-    this is the same three lines of algebra written independently so that step 18
-    is a check rather than a tautology. When A's module is importable the checks
-    below run against *both* and assert they agree.
+    ``riskparity.risk_contributions`` is the module version; this is the same
+    three lines of algebra written independently so that the identity check is a
+    check rather than a tautology. The checks below run against *both* and
+    assert they agree.
     """
     weights = np.asarray(weights, dtype="float64")
     variance = float(weights @ cov @ weights)
@@ -183,7 +182,7 @@ def _risk_contributions(weights: np.ndarray, cov: np.ndarray) -> np.ndarray:
 
 
 def _oracle_erc(cov: np.ndarray, tolerance: float = 1e-14, max_iter: int = 10_000) -> np.ndarray:
-    """**Step 19.** ERC from the convex log-barrier form, written from the math.
+    """ERC from the convex log-barrier form, written from the math.
 
     Minimise ``f(y) = 0.5 y'Sigma y - (1/N) sum ln(y_i)`` over ``y > 0``, then
     renormalise ``w = y / sum(y)``. ``f`` is strictly convex on the positive
@@ -205,7 +204,7 @@ def _oracle_erc(cov: np.ndarray, tolerance: float = 1e-14, max_iter: int = 10_00
     closed form below. Every step is a global minimum along its coordinate, so
     the objective decreases monotonically and the iteration cannot oscillate.
     The positive root is taken via ``2c / (b + sqrt(b^2 + 4ac))`` rather than
-    ``(-b + sqrt(...)) / 2a``: for the near-zero-vol sleeve in step 20 the two
+    ``(-b + sqrt(...)) / 2a``: for the near-zero-vol sleeve the two
     are algebraically identical and the latter is catastrophic cancellation.
     """
     cov = _validate_covariance(cov)
@@ -238,7 +237,7 @@ def _oracle_erc(cov: np.ndarray, tolerance: float = 1e-14, max_iter: int = 10_00
 
 
 # ---------------------------------------------------------------------------
-# Step 18 -- the risk contribution identity
+# The risk contribution identity
 # ---------------------------------------------------------------------------
 def test_rc_identity() -> None:
     """``sum(RC) == sigma_p`` to 1e-10, on arbitrary weights, not just ERC ones."""
@@ -359,7 +358,7 @@ def test_module_risk_contributions_agree() -> None:
         w = rng.dirichlet(np.ones(4))
         theirs = np.asarray(module_risk_contributions(w, cov), dtype="float64")
         mine = _risk_contributions(w, cov)
-        # A returns volatility units per the step 16 spec; accept the normalised
+        # The module returns volatility units; accept the normalised
         # form too rather than failing on a convention difference.
         if np.isclose(theirs.sum(), 1.0) and not np.isclose(mine.sum(), 1.0):
             mine = mine / mine.sum()
@@ -369,7 +368,7 @@ def test_module_risk_contributions_agree() -> None:
 
 
 def test_naive_inv_vol_comparator() -> None:
-    """A's ``naive_inv_vol`` (step 16) is the comparator, so it has to be right.
+    """The module's ``naive_inv_vol`` is the comparator, so it has to be right.
 
     It carries more weight than a helper normally would: it is the warm start for
     the solver, the feasibility screen in front of it, *and* the exhibit the
@@ -404,11 +403,11 @@ def test_naive_inv_vol_comparator() -> None:
 
 
 def test_solver_reports_its_status() -> None:
-    """Step 17's other half: the solver has to say how the solve went.
+    """The solver's other half: it has to say how the solve went.
 
     ``solve_erc`` alone cannot be audited -- a portfolio that missed the bar and
     one that hit it look identical coming out of it. ``solve_erc_with_status``
-    is what step 29 lifts into ``BacktestResult.meta``, so what it reports has to
+    is what the backtest lifts into ``BacktestResult.meta``, so what it reports has to
     be true, not merely present.
     """
     print("the solver reports its own status:")
@@ -440,7 +439,7 @@ def test_non_convex_local_minimum_is_escaped() -> None:
     The least-squares objective A minimises is not convex, and its local minima
     pin one sleeve at the weight floor. They appear when two sleeves are strongly
     negatively correlated -- the SPY/TLT structure, which is the whole project.
-    A's module asserts it escapes; only an independent derivation can say the
+    The module asserts it escapes; only an independent derivation can say the
     escaped answer is the *right* portfolio rather than a second, prettier local
     minimum. That is what the convex form is for: it has exactly one.
     """
@@ -475,7 +474,7 @@ def test_non_convex_local_minimum_is_escaped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 19 -- the independent oracle
+# The independent oracle
 # ---------------------------------------------------------------------------
 def test_oracle_agrees_with_solver() -> None:
     """**The cross-check.** Two derivations, 50 covariances, one answer."""
@@ -505,7 +504,7 @@ def test_oracle_is_erc_by_construction() -> None:
     """The oracle earns the name only if its own risk contributions are equal.
 
     Checked separately from the agreement test: if the oracle were wrong in the
-    same way A's solver is wrong, agreement alone would prove nothing. This is
+    same way the module's solver is wrong, agreement alone would prove nothing. This is
     what makes the cross-check evidence rather than a coincidence.
     """
     print("the oracle is itself ERC:")
@@ -545,7 +544,7 @@ def test_analytic_case() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 20 -- degenerate cases
+# Degenerate cases
 # ---------------------------------------------------------------------------
 def test_erc_is_not_inverse_vol() -> None:
     """**The claim the project rests on.**
@@ -689,8 +688,8 @@ def test_bad_input_raises() -> None:
     A solver that quietly returns weights for a non-PSD covariance is the worst
     failure mode in this project: the run completes, the charts render, and the
     conclusion is wrong. These all go through the oracle, which is the
-    implementation this file owns; A's solver gets the same treatment in step 29
-    when convergence diagnostics land in ``meta``.
+    implementation this file owns; the module's solver gets the same treatment
+    through the convergence diagnostics in ``meta``.
     """
     print("malformed input:")
     expect_raises(
@@ -724,7 +723,7 @@ def test_bad_input_raises() -> None:
         lambda: _risk_contributions(np.zeros(2), np.eye(2) * 0.04),
     )
 
-    # The same matrices through the module's solver. Step 20's bar is "solve or
+    # The same matrices through the module's solver. The bar is "solve or
     # raise a clear error", and it applies to the implementation that ships, not
     # only to the one this file owns.
     #
@@ -752,7 +751,7 @@ def test_infeasible_is_not_reported_as_non_convergence() -> None:
     point in the floor-constrained simplex is an equal-risk portfolio, so no
     amount of solver effort will find one. Reporting that as ``converged=False``
     would file a broken price series under "solver trouble", and those two have
-    to stay distinguishable -- the repo's rule, and the reason A's fix raises.
+    to stay distinguishable -- the repo's rule, and the reason the module raises.
 
     Note the boundary this pins: :func:`test_near_zero_vol_asset` runs a 1e-4 vol
     sleeve through the *same* solver and expects an answer. Infeasibility starts

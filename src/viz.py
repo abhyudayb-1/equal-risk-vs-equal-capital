@@ -1,4 +1,4 @@
-"""The report charts (steps 26-27).
+"""The report charts.
 
 Four figures, and each one exists to make a specific claim visible rather than to
 decorate the README:
@@ -28,7 +28,7 @@ when this is reviewed, reconcile against it rather than keeping two dialects.
 
 Every plotting function takes an explicit ``path`` and returns the ``Path`` it
 wrote, and none of them calls ``plt.show()``: this runs headless from
-``run_backtest.py`` (step 30). Colours are assigned **per ticker**, not per axis
+``run_backtest.py``. Colours are assigned **per ticker**, not per axis
 position, so a sleeve is the same colour in every figure -- a chart set where SPY
 changes colour between panels is actively misleading.
 
@@ -97,7 +97,7 @@ CRISIS_ALPHA = 0.18
 FIGURE_DPI = 150
 DEFAULT_FIGSIZE = (11.0, 5.5)
 
-# The return/volatility plane (step 57). Iso-ratio rays every 0.10 of
+# The return/volatility plane. Iso-ratio rays every 0.10 of
 # return-to-volatility: 0.05 was tried first and drew eleven near-parallel grey
 # lines across a chart with nine points on it, which is texture rather than a
 # reference. Label geometry is in fractions of the axis so it does not have to
@@ -306,7 +306,7 @@ def _mark_crises_over_fill(ax, windows: Mapping[str, tuple[str, str]] | None = N
 
 
 # ---------------------------------------------------------------------------
-# Step 26 -- the risk contribution stacked area
+# The risk contribution stacked area
 # ---------------------------------------------------------------------------
 def plot_risk_contributions(
     result: BacktestResult,
@@ -372,7 +372,7 @@ def plot_risk_contributions(
 
 
 # ---------------------------------------------------------------------------
-# Step 27 -- the remaining three
+# The remaining three
 # ---------------------------------------------------------------------------
 def plot_capital_vs_risk_weights(
     result: BacktestResult,
@@ -570,7 +570,7 @@ def plot_correlation_and_diversification(
 
 
 # ---------------------------------------------------------------------------
-# Step 57 -- the two comparison charts
+# The two comparison charts
 # ---------------------------------------------------------------------------
 # The four charts above all describe ONE strategy. These two describe the
 # comparison: where two rules put their risk, and where every rule lands on the
@@ -924,7 +924,7 @@ def render_all(
 ) -> dict[str, Path]:
     """Render all four charts and return ``{name: path}``.
 
-    What ``run_backtest.py`` (step 30) calls. ``returns`` is the daily asset
+    What ``run_backtest.py`` calls. ``returns`` is the daily asset
     return frame the diagnostics need -- it is not recoverable from a
     ``BacktestResult``, which carries portfolio returns rather than per-sleeve
     ones.

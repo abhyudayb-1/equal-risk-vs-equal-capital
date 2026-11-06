@@ -3,14 +3,12 @@
 Read this first when the pipeline's behaviour looks wrong -- every magic number
 in the project lives here rather than inline at its call site.
 
-This file is **append-only**: add
-constants at the bottom of the relevant block, never reorder or reformat what is
-already here, and name the block you touched in your PR body.
+Each constant carries a comment recording the measurement or reasoning that set
+it, so read the comment before changing a value.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -21,16 +19,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 
-# Appended for the web export. A Vercel function's filesystem is read-only
-# outside /tmp, so the deployment sets RPL_CACHE_DIR and only that directory is
-# created -- DATA_DIR and REPORTS_DIR are never used there. Unset, nothing above
-# changes. A cache directory that cannot be created is an error in both modes:
-# swallowing it would only move the failure to the first cache write.
-_READ_ONLY_DEPLOY = bool(os.environ.get("RPL_CACHE_DIR"))
-if _READ_ONLY_DEPLOY:
-    CACHE_DIR = Path(os.environ["RPL_CACHE_DIR"])
-
-for _directory in ((CACHE_DIR,) if _READ_ONLY_DEPLOY else (DATA_DIR, CACHE_DIR, REPORTS_DIR)):
+for _directory in (DATA_DIR, CACHE_DIR, REPORTS_DIR):
     _directory.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
@@ -95,29 +84,23 @@ MIN_EIGENVALUE: float = 1e-10
 # Log a warning when the covariance condition number exceeds this -- a sign the
 # solver's answer is not trustworthy even if it converges.
 #
-# Set at 1e8 through Phase 4, and measured at that value it could not fire on
-# this project's data: shrinkage maps rho -> 0.9*rho, which caps the shrunk
-# correlation matrix's condition number at 37 for four sleeves even at rho = 1
-# exactly, and reaching 1e8 needs roughly a 1,600:1 volatility ratio between two
-# sleeves. Over 20,000 random covariances built at realistic ETF-like
-# volatilities, the worst observed condition number was 1,183 -- three orders of
-# magnitude below the threshold. A diagnostic that cannot fire on any input this
-# project actually produces is decorative, not a diagnostic, so step 35 (final
-# review) lowers it to 10,000: comfortably above the worst legitimate case
-# measured (1,183, ~8.5x headroom, so a normal run does not start warning on
-# itself) while still three orders of magnitude below the old ceiling, so a
-# genuinely pathological covariance -- a broken price series, a near-duplicate
-# sleeve -- has a threshold it can actually reach.
+# Shrinkage maps rho -> 0.9*rho, which caps the shrunk correlation matrix's
+# condition number at 37 for four sleeves even at rho = 1 exactly. Over 20,000
+# random covariances built at realistic ETF-like volatilities, the worst observed
+# condition number was 1,183. 10,000 sits ~8.5x above that, so a normal run does
+# not warn on itself, while a genuinely pathological covariance -- a broken price
+# series, a near-duplicate sleeve -- still has a threshold it can reach. (A
+# higher value such as 1e8 would need a ~1,600:1 volatility ratio between two
+# sleeves and could never fire on this project's data.)
 MAX_CONDITION_NUMBER: float = 10_000.0
 
 # ---------------------------------------------------------------------------
 # ERC solver
 # ---------------------------------------------------------------------------
 ERC_MAX_ITER: int = 500
-ERC_TOLERANCE: float = 1e-12
 
-# Tolerance at which Person B's independent convex oracle must agree with
-# Person A's SLSQP solver (tests/test_riskparity.py).
+# Tolerance at which the independent convex oracle in tests/test_riskparity.py
+# (derived separately from the solver it checks) must agree with the SLSQP solver.
 ERC_AGREEMENT_TOLERANCE: float = 1e-6
 
 # Long-only floor. A hard zero lets an asset leave the portfolio entirely, which
@@ -127,11 +110,10 @@ MIN_WEIGHT: float = 1e-6
 
 # SLSQP's ftol is an ABSOLUTE threshold on the objective sum_i (RC_i - sigma_p/N)^2,
 # and that objective is already ~1e-12 at the 1e-6 risk-fraction bar above (on the
-# scale-normalised covariance solve_erc actually solves). So ERC_TOLERANCE used as
-# an ftol stops the optimiser exactly AT the bar instead of well inside it.
+# scale-normalised covariance solve_erc actually solves). So an ftol of 1e-12 stops the optimiser exactly AT the bar instead of well inside it.
 # Measured on 200 random 4x4 covariances: ftol 1e-12 misses the bar 35 times,
 # 1e-14 misses it 4 times (and those 4 are the local-minimum case below, not
-# precision). This supersedes ERC_TOLERANCE as the value passed to SLSQP.
+# precision).
 ERC_SLSQP_FTOL: float = 1e-14
 
 # sum_i (RC_i - sigma_p/N)^2 is NOT convex. It has local minima that pin an asset
@@ -150,7 +132,7 @@ ERC_SLSQP_FTOL: float = 1e-14
 # On covariances drawn around the REAL four-sleeve correlation structure the rate
 # is 0 in 2000. The residual is an artefact of adversarial |rho| up to 0.95, well
 # outside anything SPY/TLT/DBC/TIP produce. Anything asserting across many random
-# covariances (step 19's oracle) should assert agreement where both solvers
+# covariances (such as the oracle test) should assert agreement where both solvers
 # converge rather than assuming every draw converges.
 ERC_MAX_RESTARTS: int = 150
 
@@ -165,7 +147,7 @@ ERC_MAX_RESTARTS: int = 150
 # Set from the gap between the two populations, both measured over 2000 draws:
 # genuinely PSD-but-singular matrices (rho = 1 exactly, and random rank-deficient
 # B@B.T) bottom out at -1.0e-15 of the largest variance, which is eigvalsh's own
-# rounding noise; the non-PSD matrix step 20 requires be rejected sits at -0.42.
+# rounding noise; the non-PSD matrix that must be rejected sits at -0.42.
 # 1e-10 sits five orders above the noise and eight below the rejection, so the
 # choice is not delicate -- anything in that range behaves identically.
 ERC_MIN_EIGENVALUE_RATIO: float = 1e-10
@@ -260,7 +242,7 @@ REGIME_SHIFT_WINDOW: tuple[str, str | None] = ("2021-01-01", None)
 # (2020), 1.68 (2021), 1.59 (2022), 1.52 (2023 -- lowest in the sample).
 #
 # A correlation-SIGN alarm fires in 2023, after the damage. This one is already
-# falling while the damage is being done, which is why step 25 keys off it.
+# falling while the damage is being done, which is why the regime diagnostics key off it.
 DIVERSIFICATION_WINDOW_DAYS: int = CORRELATION_WINDOW_DAYS
 
 # The diversification ratio is measured on an UNSHRUNK covariance, unlike every
@@ -279,7 +261,7 @@ DIVERSIFICATION_WINDOW_DAYS: int = CORRELATION_WINDOW_DAYS
 DIVERSIFICATION_SHRINKAGE: float = 0.0
 
 # ---------------------------------------------------------------------------
-# Run summary reporting (step 29)
+# Run summary reporting
 # ---------------------------------------------------------------------------
 # Presentation only. Neither of these changes a single number the engine
 # computes -- they govern how the run summary talks about numbers it was given,

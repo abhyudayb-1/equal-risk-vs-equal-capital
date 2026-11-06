@@ -1,6 +1,6 @@
 """Self-checks for ``src.riskmetrics`` -- realized risk and return metrics.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_riskmetrics.py
 

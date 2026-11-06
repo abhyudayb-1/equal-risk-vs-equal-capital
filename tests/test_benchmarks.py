@@ -1,10 +1,10 @@
-"""Self-checks for the fixed-weight benchmarks (TASKS.md step 11).
+"""Self-checks for the fixed-weight benchmarks.
 
-Runs standalone with no test framework, matching the house style::
+Runs standalone with no test framework::
 
     .venv/bin/python tests/test_benchmarks.py
 
-The bar this file enforces is step 11's "done when": both benchmarks produce a
+The bar this file enforces: both benchmarks produce a
 contract-valid ``BacktestResult`` with ``leverage == 1.0`` everywhere. The
 leverage check is not a formality -- a benchmark that quietly borrowed would
 flatter risk parity by comparison, and the whole 2022 argument rests on the
@@ -44,7 +44,7 @@ def check(label: str, condition: bool) -> None:
 
 
 def check_is_valid_result(result: BacktestResult, returns: pd.DataFrame) -> None:
-    """Every invariant step 11 promises, for one benchmark."""
+    """Every invariant a benchmark promises, for one benchmark."""
     # validate() raises ContractViolation rather than returning a bool, so
     # reaching the next line at all is the assertion.
     result.validate()
@@ -119,7 +119,7 @@ def test_sixty_forty() -> None:
 def test_naive_risk_parity() -> None:
     """The fifth comparator: inverse volatility, and where it is *not* equal risk.
 
-    Added with the crisis table (TASKS.md step 24), which needs it as a row. The
+    Added with the crisis table, which needs it as a row. The
     check that carries weight is the last one: ``1/sigma`` equals a true ERC
     portfolio only when every pairwise correlation is the same, and the fixture's
     correlations are emphatically not -- so its risk contributions must visibly
@@ -184,7 +184,7 @@ def test_max_sharpe() -> None:
 
 
 def test_max_sharpe_on_random_covariances() -> None:
-    """Step 12's stated bar, on covariances the fixtures never produce."""
+    """The max-Sharpe solver's bar, on covariances the fixtures never produce."""
     print("max Sharpe solver, 50 random PSD covariances:")
     rng = np.random.default_rng(0)
     solved = 0

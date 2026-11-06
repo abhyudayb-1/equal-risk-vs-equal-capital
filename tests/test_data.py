@@ -1,4 +1,4 @@
-"""Self-checks for the data layer (TASKS.md steps 8-10).
+"""Self-checks for the data layer.
 
 Runs standalone, no framework, no network:
 
@@ -7,7 +7,7 @@ Runs standalone, no framework, no network:
 Everything here uses synthetic frames on purpose. The point is to prove the
 *machinery* -- windowing, the rebalance calendar, the look-ahead guard -- rather
 than to assert anything about what yfinance returned today. Live-data checks
-belong in the Phase 5 run, not in a suite that has to pass offline.
+belong in a live run (run_backtest.py), not in a suite that has to pass offline.
 
 Three of these exist because the corresponding bug was actually shipped:
 

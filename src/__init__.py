@@ -19,13 +19,12 @@ Pipeline, in order, one module per stage:
     stress.py       crisis decomposition, correlation-regime diagnostics
     viz.py          the report charts
 
-``run_backtest.py`` wires it end to end. See TASKS.md for build order and
-ownership, PLAN.md for the design rationale.
+``run_backtest.py`` wires it end to end.
 
 Four further modules sit beside that pipeline rather than in it:
 
     riskmetrics.py  VaR/CVaR, Sortino, Calmar, drawdown duration, and the
-                    shared metric table -- new code beside the metrics.py port
+                    shared metric table
     headtohead.py   one return series against another: correlation, beta,
                     capture, the tail block, the crisis table
     comparison.py   the study itself: equal risk against equal capital, with
@@ -36,8 +35,7 @@ Four further modules sit beside that pipeline rather than in it:
                     with both rules re-run together, plus reconstructed
                     turnover and the cost at which ERC stops beating 1/N
 
-``comparison.py`` is what riskmetrics and headtohead were salvaged for; it
-consumes both and runs the engine a second time at 1/N's volatility to build its
+``comparison.py`` consumes riskmetrics and headtohead and runs the engine a second time at 1/N's volatility to build its
 matched column. ``compare_rules.py`` is the CLI for both it and sensitivity.py.
 
 The invariant that must never be violated: at rebalance date ``t``, only data

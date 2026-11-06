@@ -1,4 +1,4 @@
-"""The monthly rebalance loop that produces a ``BacktestResult`` (step 23).
+"""The monthly rebalance loop that produces a ``BacktestResult``.
 
 This is the module every other one has been feeding. It owns no maths of its own
 -- covariance, the ERC solve, the vol target and the financing leg all live
@@ -9,7 +9,7 @@ The loop, at each month-end rebalance date ``t``:
 
 1. ``asof_slice(returns, t)`` -- the window, truncated to ``<= t``. This is the
    only place the backtest touches history, and it is the single chokepoint
-   ``tests/test_lookahead.py`` (step 28) attacks.
+   ``tests/test_lookahead.py`` attacks.
 2. ``estimate_covariance_with_diagnostics`` -- annualised, shrunk, PSD-repaired,
    and it reports what it had to do to get there.
 3. ``solve_erc_with_status`` -- the equal-risk weights, *and* whether they really
@@ -44,8 +44,8 @@ events that this repo requires stay distinguishable:
   the offending date attached. Continuing would put a fabricated allocation in
   the middle of the equity curve.
 
-Per-rebalance diagnostics go to ``meta["diagnostics"]`` as a frame, and step 29
-adds three ways the same failure reaches a human without anyone having to go
+Per-rebalance diagnostics go to ``meta["diagnostics"]`` as a frame, and there are
+three ways the same failure reaches a human without anyone having to go
 looking: a warning logged at the moment it happens, one logged at the end of the
 run summarising whether anything went wrong at all, and
 :func:`format_run_summary`, which marks the offending line with a leading ``!``
@@ -334,7 +334,7 @@ def _build_meta(
     information is in ``diagnostics``. Anything a chart might want stays out of
     here by design.
 
-    **The split between ``diagnostics`` and the scalars around it (step 29).**
+    **The split between ``diagnostics`` and the scalars around it.**
     ``diagnostics`` is the machine-readable record: one row per rebalance, every
     field, nothing summarised. Everything else here is for a *reader* -- a human
     or ``run_backtest.py``'s meta dump -- which is why the date fields are short
@@ -373,7 +373,7 @@ def _build_meta(
         "leverage_cap": tuple(float(x) for x in leverage_cap),
         # -- the run at a glance, for a reader rather than a chart -------------
         # run_health is the one field to look at first: "clean", or a phrase
-        # naming everything that went wrong. Step 29's bar is that a failed
+        # naming everything that went wrong. The bar is that a failed
         # rebalance is *visible in the output*, and a count buried among twenty
         # other counts is not visible -- it has to say so in words.
         "run_health": _run_health(failures, repaired, ill_conditioned),
@@ -449,7 +449,7 @@ def _is_zero_rate(risk_free: pd.Series | float) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Step 29 -- the run summary. A failure nobody prints is a silent failure.
+# The run summary. A failure nobody prints is a silent failure.
 # ---------------------------------------------------------------------------
 # Label column width. Local rather than in config.py because it is not a
 # threshold anyone would look for or tune -- it is the width of the longest
@@ -523,12 +523,12 @@ def _run_health(failures: int, repaired: int, ill_conditioned: int) -> str:
 
 
 def format_run_summary(result: BacktestResult) -> str:
-    """The engine's own account of a run, as printable text (TASKS.md step 29).
+    """The engine's own account of a run, as printable text.
 
     Reports what the *machinery* did -- solver, covariance, overlay, financing --
     and lines that describe something going wrong are marked with a leading
     ``!``, so a bad run is visible at a glance rather than being one number among
-    twenty. That marker is the step's "done when" in a single character.
+    twenty.
 
     **No performance metrics here, deliberately.** Sharpe, CAGR and drawdown live
     in ``src.metrics``, which sits *downstream* of this module in the pipeline
@@ -654,8 +654,8 @@ def format_run_summary(result: BacktestResult) -> str:
             )
             warn = False
         else:
-            # Not a defect, but never a headline number: PLAN.md's warning about
-            # how this strategy gets oversold is precisely this run.
+            # Not a defect, but never a headline number: omitting financing is
+            # the most common way this strategy gets oversold.
             text = ("NOT charged -- leverage is free in this run, which overstates "
                     "the strategy and is not a headline number")
             warn = True
@@ -698,7 +698,7 @@ if __name__ == "__main__":  # pragma: no cover
     from .benchmarks import equal_weight, risk_contribution_fractions
 
     # Synthetic four-sleeve data with a realistic correlation structure, so the
-    # self-check runs offline. The live run is Phase 5's job, not a test's.
+    # self-check runs offline. Live data belongs in run_backtest.py, not a test.
     rng = np.random.default_rng(20240621)
     tickers = ["SPY", "TLT", "DBC", "TIP"]
     correlation = np.array(
@@ -732,7 +732,7 @@ if __name__ == "__main__":  # pragma: no cover
           f"(ceiling bound {result.meta['cap_binding_ceiling']}, "
           f"floor {result.meta['cap_binding_floor']})")
 
-    # --- step 23's "done when": the contract holds --------------------------
+    # --- the contract holds --------------------------
     # validate() already ran inside run_backtest; calling it again documents that
     # the result is re-checkable, which is what the test suites rely on.
     result.validate()
@@ -790,7 +790,7 @@ if __name__ == "__main__":  # pragma: no cover
           f"{free.meta['financed']} without")
 
     # --- look-ahead: a future spike must not move a past decision -----------
-    # The real attack is tests/test_lookahead.py (step 28). This is the cheap
+    # The real attack is tests/test_lookahead.py. This is the cheap
     # version that would catch a gross regression in the slicing.
     spike_from = synthetic.index[-200]
     poisoned = synthetic.copy()
@@ -821,7 +821,7 @@ if __name__ == "__main__":  # pragma: no cover
 
     # --- the diagnostics the contract names are all present -----------------
     # src/types.py documents strategy, target_vol, solver_failures and
-    # max_condition_number as the conventional keys. Step 29's run summary reads
+    # max_condition_number as the conventional keys. The run summary reads
     # them, so a missing one is a silent hole in the reporting rather than a
     # crash at the point it was dropped.
     required = ("strategy", "target_vol", "solver_failures", "max_condition_number")
@@ -834,13 +834,13 @@ if __name__ == "__main__":  # pragma: no cover
         sys.exit(1)
 
     # =====================================================================
-    # Step 29 -- diagnostics and the run summary
+    # Diagnostics and the run summary
     # =====================================================================
     print("\n" + "=" * 72)
     print(format_run_summary(result))
     print("=" * 72)
 
-    # --- step 29's "done when": a FAILED rebalance is visible ----------------
+    # --- a FAILED rebalance is visible ----------------
     # A clean run cannot demonstrate this, and none of the 234 real rebalances
     # fails, so the failure is injected: solve_erc_with_status is wrapped to
     # report converged=False on one chosen date. That is the same technique
@@ -849,7 +849,7 @@ if __name__ == "__main__":  # pragma: no cover
     # exercised with something to report. Injecting at the seam also leaves the
     # solver itself untouched: the weights are the real ones, only the status
     # differs, which is exactly the "numerical failure, best iterate used" case.
-    print("\nstep 29: an injected solver failure must reach the output")
+    print("\nan injected solver failure must reach the output")
     real_solver = solve_erc_with_status
     failure_date = result.weights.index[7]
 
@@ -857,7 +857,7 @@ if __name__ == "__main__":  # pragma: no cover
         solution = real_solver(cov, *args, **kwargs)
         if flaky_solver.calls == 7:
             solution = replace(solution, converged=False, max_rc_deviation=3.4e-3,
-                               message="injected failure (step 29 self-check)")
+                               message="injected failure (self-check)")
         flaky_solver.calls += 1
         return solution
 
@@ -931,7 +931,7 @@ if __name__ == "__main__":  # pragma: no cover
     # than trusted.
     def broken_solver(cov, *args, **kwargs):
         if broken_solver.calls == 7:
-            raise ERCSolverError("injected infeasibility (step 29 self-check)")
+            raise ERCSolverError("injected infeasibility (self-check)")
         broken_solver.calls += 1
         return real_solver(cov, *args, **kwargs)
 
@@ -956,7 +956,7 @@ if __name__ == "__main__":  # pragma: no cover
     # `--max-leverage` does. The run is clean -- nothing went wrong -- but the
     # target vol is no longer what produced the returns, and the summary has to
     # say so or a flat leverage series just looks like a calm market.
-    print("\nstep 29: a saturated overlay is visible without being called a failure")
+    print("\na saturated overlay is visible without being called a failure")
     capped = run_backtest(synthetic, risk_free=cash, leverage_cap=(0.5, 1.2))
     capped_summary = format_run_summary(capped)
     overlay_marked = any(line.startswith("! overlay") for line in capped_summary.splitlines())
@@ -977,7 +977,7 @@ if __name__ == "__main__":  # pragma: no cover
     # four-sleeve data -- shrinkage maps rho -> 0.9*rho, which caps the shrunk
     # correlation matrix's condition number at 37 and puts MAX_CONDITION_NUMBER
     # out of reach short of a 1,600:1 volatility ratio (see the note in
-    # _build_meta). The reporting path is still what step 29 is accountable for,
+    # _build_meta). The reporting path still has to work,
     # so it is exercised directly on a doctored meta rather than left unrun until
     # the day a real repair happens.
     doctored = replace(result, meta={
@@ -991,7 +991,7 @@ if __name__ == "__main__":  # pragma: no cover
     doctored_summary = format_run_summary(doctored)
     cov_marked = any(line.startswith("! covariance") for line in doctored_summary.splitlines())
     named = "2008-09-30" in doctored_summary and "not a covariance" in doctored_summary
-    print("\nstep 29: the covariance branches render (doctored meta, not a real repair)")
+    print("\nthe covariance branches render (doctored meta, not a real repair)")
     print(f"  ok   covariance line marked      : {cov_marked}")
     print(f"  ok   dates and reason named      : {named}")
     print(f"  ok   health phrase               : {doctored.meta['run_health']!r}")

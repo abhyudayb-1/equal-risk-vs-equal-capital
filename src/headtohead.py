@@ -4,10 +4,6 @@ Every function takes a ``strategy`` series and a ``benchmark`` series indexed
 by the same dates and answers "how did the first move against the second", so
 this is the module for any pairwise comparison the project wants: an equal-risk
 book against an equal-capital one, a levered book against its unlevered self.
-These were written for the strategy-against-one-ticker comparison that used to
-live in ``src/compare.py`` (reachable at tag ``v1.4``) and were pulled out into
-this module because nothing in them is specific to a ticker; that comparison has
-since been removed and these outlived it.
 
 Consumed by :mod:`src.comparison`, which measures every construction rule
 against 1/N: :func:`relative_metrics` and :func:`tail_block` per rule,
