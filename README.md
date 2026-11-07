@@ -321,6 +321,20 @@ reports/             charts and CSVs from the run quoted above
 data/cache/          downloaded prices and rates (gitignored, created on first run)
 ```
 
+What's in `reports/`:
+
+| File | Written by | Shows |
+|---|---|---|
+| `rule_comparison.csv` | `compare_rules.py` | the performance table for every portfolio |
+| `risk_allocation.csv` | `compare_rules.py` | each asset's share of capital and of risk under each rule |
+| `rule_risk_shares.png` | `compare_rules.py` | the same risk shares as a chart |
+| `return_vol_plane.png` | `compare_rules.py` | return against volatility, unlevered and financed |
+| `risk_contributions.png` | `run_backtest.py` | ERC risk contributions over time (they stay equal) |
+| `capital_vs_risk_weights.png` | `run_backtest.py` | how unequal the capital weights are that equalise risk |
+| `leverage.png` | `run_backtest.py` | the vol-targeting overlay's leverage over time |
+| `correlation_diversification.png` | `run_backtest.py` | stock–bond correlation and the diversification ratio |
+| `crisis_drawdowns.csv` | `run_backtest.py` | return and drawdown of each portfolio in each named crisis |
+
 The pipeline:
 
 ```
