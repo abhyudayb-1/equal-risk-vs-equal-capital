@@ -1,0 +1,15 @@
+# Claude Code machine-local settings
+.claude/settings.local.json
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Regenerable network pulls -- delete a file to force a re-pull
+data/cache/
+
+# Generated reports. The eight files quoted in README.md are tracked (force-added
+# from one live run); anything else written here stays local.
+reports/
+
