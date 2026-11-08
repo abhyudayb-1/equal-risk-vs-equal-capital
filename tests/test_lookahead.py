@@ -421,21 +421,32 @@ def test_a_future_rate_change_cannot_move_a_past_return() -> None:
                        hiked.returns.to_numpy()[earned_before]),
     )
     # The positive control, as an identity rather than a comparison of means.
-    # Weights and leverage are identical between the two runs, so the whole
-    # difference after the hike must be the financing leg and nothing else:
-    # (L-1) * (r_f_hiked - r_f_clean), with L the decision in force that day.
-    # Asserting the exact quantity beats asserting "returns fell", which would
-    # also hold for a bug that scaled the returns.
+    # Weights and leverage DECISIONS are identical between the two runs. The
+    # book is held between rebalances, so within a month the dearer loan also
+    # drifts the hiked run's leverage away from the clean one's; but on the
+    # first return day after each rebalance both books have just been reset to
+    # the same L * w, and the whole difference that day must be the financing
+    # leg and nothing else: (L-1) * (r_f_hiked - r_f_clean). Asserting the exact
+    # quantity beats asserting "returns fell", which would also hold for a bug
+    # that scaled the returns.
     after = clean.returns.index[~earned_before]
-    lev = _leverage_in_force(clean, after)
-    predicted = (lev - 1.0) * (stepped.loc[after] - flat.loc[after])
+    days = clean.returns.index
+    first_held = days[days.searchsorted(clean.leverage.index, side="right")
+                      .clip(max=len(days) - 1)]
+    trade_days = after.intersection(first_held)
+    if len(trade_days) < 2:
+        raise AssertionError("the fixture has too few rebalances after the hike to test")
+    lev = _leverage_in_force(clean, trade_days)
+    predicted = (lev - 1.0) * (stepped.loc[trade_days] - flat.loc[trade_days])
+    observed_on_trades = clean.returns.loc[trade_days] - hiked.returns.loc[trade_days]
+    worst = float((observed_on_trades - predicted).abs().max())
     observed = clean.returns.loc[after] - hiked.returns.loc[after]
-    worst = float((observed - predicted).abs().max())
     # Not exact equality: `observed` is a difference of two ~1e-2 returns, so it
     # carries a few ulps of cancellation error (~2e-18 measured). The bar is set
     # a couple of decades above that and still twelve below the ~2e-4 quantity
     # being predicted, which is what makes it an identity rather than a fit.
-    check(f"the hike costs exactly (L-1)*delta_rate per day ({worst:.1e})", worst < 1e-16)
+    check(f"the hike costs exactly (L-1)*delta_rate on each of the {len(trade_days)} "
+          f"rebalance days after it ({worst:.1e})", worst < 1e-16)
     check("and it is charged on every day after it, not just on average",
           bool((observed.abs() > 0).all()))
 
@@ -462,8 +473,14 @@ def _implied_return(result, frame: pd.DataFrame, rate: pd.Series, *, same_day: b
 
     ``same_day=False`` uses the decision taken at the previous rebalance, which is
     the correct rule; ``same_day=True`` uses the one taken at that day's close,
-    which is the flattering bug. Both are computed the same way otherwise, so the
-    comparison isolates the alignment and nothing else.
+    which is the flattering bug.
+
+    The book is held between rebalances, so the correct rule's book on a
+    rebalance date is the previous decision *drifted* to that day. It is rebuilt
+    here as buy-and-hold arithmetic -- holdings ``L * w`` grown by each sleeve's
+    compounded return, a loan of ``L - 1`` grown at the rate -- written out
+    independently of the overlay's day-by-day loop. The flattering bug resets
+    the book at the close of ``date`` and earns ``date``'s move on the fresh one.
     """
     values = {}
     for date in result.weights.index:
@@ -472,11 +489,25 @@ def _implied_return(result, frame: pd.DataFrame, rate: pd.Series, *, same_day: b
         earlier = result.weights.index[result.weights.index < date]
         if not same_day and len(earlier) == 0:
             continue
-        source = date if same_day else earlier[-1]
+        r_today = frame.loc[date].to_numpy(dtype="float64")
+        rf_today = float(rate.loc[date])
+        if same_day:
+            w = result.weights.loc[date].to_numpy(dtype="float64")
+            lev = float(result.leverage.loc[date])
+            values[date] = lev * float(r_today @ w) - (lev - 1.0) * rf_today
+            continue
+        source = earlier[-1]
         w = result.weights.loc[source].to_numpy(dtype="float64")
         lev = float(result.leverage.loc[source])
-        unlevered = float((frame.loc[date].to_numpy(dtype="float64") * w).sum())
-        values[date] = lev * unlevered - (lev - 1.0) * float(rate.loc[date])
+        held = (frame.index > source) & (frame.index < date)
+        growth = (1.0 + frame.loc[held]).prod().to_numpy(dtype="float64")
+        loan_growth = float((1.0 + rate.loc[held]).prod())
+        holdings = lev * w * growth
+        loan = (lev - 1.0) * loan_growth
+        equity = holdings.sum() - loan
+        values[date] = (
+            (holdings * (1.0 + r_today)).sum() - loan * (1.0 + rf_today)
+        ) / equity - 1.0
     return pd.Series(values)
 
 
@@ -577,19 +608,23 @@ def test_the_guard_is_what_makes_the_others_pass() -> None:
             "and no longer matches the previous one",
             float((actual - previous).abs().median()) > 1e-6,
         )
-        # Where the leak lands, exactly. The two alignments can only disagree on
-        # a date that is itself a rebalance -- everywhere else the last decision
-        # at-or-before and the last one strictly-before are the same decision --
-        # so the set of days that moved must be precisely that set. Deterministic,
-        # and it pins the mechanism rather than its size.
-        moved = hindsight.returns.index[
-            hindsight.returns.to_numpy() != clean.returns.to_numpy()
-        ]
+        # Where the leak lands, exactly. The two alignments can only disagree
+        # about which decision is in force on a date that is itself a rebalance.
+        # The book is held between rebalances, so trading one day early also
+        # shifts the drift for the rest of that month: the leak STARTS on the
+        # first rebalance day and nothing before it can move. Deterministic, and
+        # it pins the mechanism rather than its size.
+        moved_mask = hindsight.returns.to_numpy() != clean.returns.to_numpy()
+        moved = hindsight.returns.index[moved_mask]
         rebalance_days = hindsight.returns.index.intersection(hindsight.weights.index)
         check(
-            f"the leak lands on exactly the {len(rebalance_days)} rebalance days, "
-            f"and no others",
-            moved.equals(rebalance_days),
+            f"the leak starts on the first of the {len(rebalance_days)} rebalance "
+            f"days, and no earlier day moved",
+            len(moved) > 0 and moved[0] == rebalance_days[0],
+        )
+        check(
+            "every rebalance day moved -- each is a decision credited with its own day",
+            rebalance_days.isin(moved).all(),
         )
 
         # NOT asserted: that the hindsight version earns *more*. It is worth

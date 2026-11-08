@@ -458,17 +458,28 @@ def test_matched_column_on_a_case_whose_answer_is_known_in_advance() -> None:
     check("...at every rebalance, not merely on average",
           float((comp.allocation[(ERC_UNLEVERED, "risk")] - 0.5).abs().max()) < 1e-6)
 
-    erc_vol = _annual_vol(comp.series[ERC_UNLEVERED])
     equal_vol = _annual_vol(comp.series[EQUAL_CAPITAL])
-    check(
-        f"1/N's volatility is exactly (1+k)^2/(4k) = {EXPECTED_MATCH_RATIO} times "
-        f"ERC's, on any path -- the hand-derived answer",
-        _close(equal_vol / erc_vol, EXPECTED_MATCH_RATIO, 1e-9),
+    # Both books are HELD between rebalances, so the hand-derived ratio is exact
+    # only where both sit at their targets: the first return day after each
+    # rebalance. There, ERC earns 2K/(1+K)*r and 1/N earns (1+K)/2*r, so 1/N's
+    # return is exactly (1+K)^2/(4K) times ERC's on every such day, whatever r is.
+    days = comp.series.index
+    rebalances = comp.rule_results[ERC_UNLEVERED].weights.index
+    first_held = days[days.searchsorted(rebalances, side="right")
+                      .clip(max=len(days) - 1)].unique()
+    first_held = first_held[first_held > rebalances[0]]
+    on_trade_days = (
+        comp.series.loc[first_held, EQUAL_CAPITAL] / comp.series.loc[first_held, ERC_UNLEVERED]
     )
     check(
-        "...and that is the target the second engine run was actually given",
-        _close(comp.matched_target_vol / erc_vol, EXPECTED_MATCH_RATIO, 1e-9),
+        f"on each of the {len(first_held)} days the books are fresh, 1/N's return is "
+        f"exactly (1+k)^2/(4k) = {EXPECTED_MATCH_RATIO} times ERC's -- the "
+        f"hand-derived answer",
+        float((on_trade_days - EXPECTED_MATCH_RATIO).abs().max()) < 1e-9,
     )
+    # Between rebalances the books drift, so the full-sample volatility ratio is
+    # near 1.125 but not pinned to it; how near is a property of this path and
+    # is deliberately not asserted.
     check("the matched target is 1/N's own realised volatility, not the published target",
           _close(comp.matched_target_vol, equal_vol) and comp.matched_target_vol != TARGET_VOL,
     )
@@ -653,6 +664,12 @@ def test_report_states_what_the_table_cannot_say_for_itself() -> None:
           f"{comp.matched_realized_vol:.2%}" in text)
     check("...next to the overshoot, as a signed percentage",
           "overshoot" in text)
+    check("the matched column is labelled a hindsight diagnostic wherever it appears, "
+          "because its target is 1/N's full-window volatility",
+          "(hindsight)" in ERC_MATCHED_FINANCED and "(hindsight)" in ERC_MATCHED_FREE
+          and "HINDSIGHT diagnostic" in text)
+    check("effective bets is described as concentration, not as independent bets",
+          "not how many independent" in text)
     check("it names both counterfactual rows where a reader meets them",
           "counterfactual" in text
           and ERC_MATCHED_FREE in text and ERC_TARGET_FREE in text)

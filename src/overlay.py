@@ -36,8 +36,17 @@ notional. It binds in both directions and the two mean opposite things, so
 ceiling binds constantly is a run whose target vol is too high for its sleeves,
 which is a different problem from one where the floor binds in a crisis.
 
-**Financing.** ``r_p = L_t * (r_a - r_f) + r_f``. Borrowing ``L - 1`` of
-capital costs ``(L-1) * r_f``, and leaving that leg out is the single most common
+**Holding.** :func:`apply_overlay` trades the book to ``L_t * w_t`` of equity at
+each rebalance and then holds it: the sleeves drift with their returns and the
+loan of ``L_t - 1`` accrues at the bill rate, so both the weights and the
+leverage drift during the month and the next rebalance trades them back. That is
+the monthly book the README describes and the one ``src.sensitivity`` charges
+costs on. (An earlier version re-applied the targets every day, which is a book
+traded daily; its return path and its cost model described different
+strategies.)
+
+**Financing.** ``r_p = L * (r_a - r_f) + r_f`` each day, at the leverage the
+held book has drifted to. Borrowing ``L - 1`` of capital costs ``(L-1) * r_f``, and leaving that leg out is the single most common
 way a risk-parity backtest is oversold -- at ``L = 2`` against a 5% cash rate it
 is worth ~5%/yr, more than the strategy's whole edge. It cuts both ways: below
 ``L = 1`` the un-deployed capital earns the rate instead, so a de-levered book is
@@ -49,8 +58,9 @@ one day, on purpose:
 
 * :func:`leverage_path` sizes the book you are *about to hold*, so it uses the
   weights in force **at or before** the decision date.
-* :func:`unlevered_returns` and :func:`financed_returns` attribute a return
-  *earned on* a date, so they use the decision taken **strictly before** it --
+* :func:`apply_overlay` (and :func:`unlevered_returns`, :func:`financed_returns`)
+  attribute a return *earned on* a date, so they use the decision taken
+  **strictly before** it --
   a choice made at the close of day ``d`` cannot have earned day ``d``'s move,
   and crediting it would be look-ahead of the flattering kind.
 
@@ -337,7 +347,7 @@ def leverage_path(
 ) -> pd.DataFrame:
     """The leverage decision at every date in ``dates``, as a frame.
 
-    ``weights`` may be a single vector (held constant throughout) or a frame of
+    ``weights`` may be a single vector (a constant target throughout) or a frame of
     rebalance-date weights, which is forward-filled onto the return index so that
     the weights in force at each date are the ones set at the most recent
     rebalance at or before it. Forward-fill is the look-ahead-safe direction; a
@@ -407,19 +417,28 @@ def leverage_path(
 
 
 # ---------------------------------------------------------------------------
-# Financing. Leverage is borrowed, not free.
+# Accrual. The book is traded at a rebalance and then HELD until the next one.
 # ---------------------------------------------------------------------------
 def unlevered_returns(
     returns: pd.DataFrame,
     weights: np.ndarray | pd.DataFrame,
 ) -> pd.Series:
-    """The portfolio return series ``w @ r``, before any leverage.
+    """The return of the risky basket, before any leverage, held between rebalances.
 
-    ``weights`` is either a fixed vector or a frame of rebalance-date weights. In
-    the frame case the allocation applied to date ``d`` is the one set at the last
-    rebalance **strictly before** ``d`` -- see :func:`_in_force_before`, and note
-    this is a *different* rule from the one :func:`leverage_path` uses. Both are
-    correct for what they do:
+    ``weights`` is a frame of rebalance-date **targets**, or a single vector. At
+    each rebalance the basket is traded to the target; between rebalances it is
+    left alone and its sleeves drift with their own returns. A vector is one
+    trade before the first return day and no rebalance after it.
+
+    This is the same basket :func:`apply_overlay` levers -- the column
+    ``unlevered`` of its panel -- so it is computed there rather than twice. The
+    basket's drift does not depend on how much of it is held, which is why a
+    leverage of 1.0 and a zero rate give exactly the unlevered book.
+
+    The allocation applied to date ``d`` is the one set at the last rebalance
+    **strictly before** ``d`` -- see :func:`_in_force_before`, and note this is a
+    *different* rule from the one :func:`leverage_path` uses. Both are correct
+    for what they do:
 
     * estimating the vol of the book you are *about to hold* uses the weights at
       or before ``d``, because the allocation just chosen is the one being sized;
@@ -431,33 +450,7 @@ def unlevered_returns(
     kind: the weights chosen at the close of a rebalance date would be credited
     with that date's move, which they were partly chosen *because of*.
     """
-    if not isinstance(returns, pd.DataFrame):
-        raise OverlayError("unlevered_returns needs a DataFrame of asset returns")
-    _require_chronological(returns.index)
-
-    if isinstance(weights, pd.DataFrame):
-        aligned = _in_force_before(weights, returns.index, "weights")
-        if list(aligned.columns) != list(returns.columns):
-            raise OverlayError(
-                f"weight columns {list(aligned.columns)} do not match return columns "
-                f"{list(returns.columns)}"
-            )
-        row_sums = aligned.to_numpy(dtype="float64").sum(axis=1)
-        worst = float(np.max(np.abs(row_sums - 1.0)))
-        if worst > _WEIGHT_SUM_TOLERANCE:
-            raise OverlayError(
-                f"weights must sum to 1.0 on every date; worst deviation {worst:.3e}"
-            )
-        portfolio = (returns.to_numpy(dtype="float64") * aligned.to_numpy(dtype="float64")).sum(
-            axis=1
-        )
-    else:
-        w = _validate_weights(weights, expected=returns.shape[1])
-        portfolio = returns.to_numpy(dtype="float64") @ w
-
-    if not np.all(np.isfinite(portfolio)):
-        raise OverlayError("unlevered portfolio returns are not all finite")
-    return pd.Series(portfolio, index=returns.index, name="unlevered")
+    return apply_overlay(returns, weights, 1.0, 0.0)["unlevered"]
 
 
 def financed_returns(
@@ -465,17 +458,24 @@ def financed_returns(
     leverage: pd.Series | float,
     risk_free: pd.Series | float,
 ) -> pd.Series:
-    """``r_p = L*(r_a - r_f) + r_f`` -- the levered return net of financing.
+    """``r_p = L*(r_a - r_f) + r_f`` for each period, at the leverage in force.
+
+    This is the one-period identity, and it is exact for any book whose leverage
+    really is ``L`` at the start of the period. It does **not** know that a held
+    book's leverage drifts between rebalances: given a rebalance-date decision
+    series it applies the decided ``L`` to every day until the next one, which
+    is a book re-geared back to ``L`` daily. :func:`apply_overlay` is the
+    held-book accrual, and it applies this identity at the *drifted* leverage of
+    each day. Use this function for the identity itself, not for a backtest.
 
     Parameters
     ----------
     unlevered:
         The portfolio's own return series, from :func:`unlevered_returns`.
     leverage:
-        A constant, or a series of rebalance-date decisions. As a series, the
-        leverage applied to date ``d`` is the one set at the last rebalance
-        **strictly before** ``d``, for the same reason as in
-        :func:`unlevered_returns`.
+        A constant, or a series of decisions. As a series, the leverage applied
+        to date ``d`` is the one set **strictly before** ``d``, for the same
+        reason as in :func:`unlevered_returns`.
     risk_free:
         The financing rate **per period, as a decimal** -- what
         ``src.data.fetch_risk_free`` returns, already de-compounded from FRED's
@@ -537,25 +537,200 @@ def apply_overlay(
     leverage: pd.Series | float,
     risk_free: pd.Series | float,
 ) -> pd.DataFrame:
-    """Compose leverage and financing into the frame the backtest accrues from.
+    """Accrue a levered book that is traded at each rebalance and held in between.
 
-    Columns: ``unlevered`` (``w @ r``), ``leverage`` (the multiplier in force),
-    ``risk_free`` (the financing rate charged) and ``strategy`` (the financed
-    return). Keeping all four side by side is deliberate -- the difference between
-    ``unlevered`` and ``strategy`` is the financing leg, and a run that cannot
-    show it is a run that cannot prove it charged for leverage at all.
+    Columns: ``unlevered`` (the risky basket's return), ``leverage`` (the gross
+    exposure per unit of equity at the start of the day), ``risk_free`` (the
+    financing rate charged) and ``strategy`` (the book's return). Keeping all
+    four side by side is deliberate -- the difference between ``unlevered`` and
+    ``strategy`` is the financing leg, and a run that cannot show it is a run
+    that cannot prove it charged for leverage at all.
+
+    **What is held.** At a rebalance the book is set to ``L * w`` of equity in the
+    sleeves and ``L - 1`` of equity borrowed (lent, when ``L < 1``). Until the next
+    rebalance nothing is traded: each sleeve's holding grows with its own return
+    and the loan grows at the bill rate. So *both* the capital weights and the
+    leverage drift away from their targets during the month, and the next
+    rebalance has to trade them back. That is the monthly-rebalanced book the
+    README describes and the one ``src.sensitivity.turnover`` charges costs on.
+    An earlier version held the targets constant every day, which is a book traded
+    back to target daily, and its return path did not match its cost model.
+
+    Each day's return still satisfies ``strategy = L*unlevered - (L-1)*risk_free``
+    exactly, with ``L`` the *drifted* leverage in the ``leverage`` column -- the
+    accounting identity, applied to the book actually held. With every leverage
+    decision ``1.0`` the loan is zero, ``L`` stays exactly ``1.0`` and
+    ``strategy`` is bit-identical to ``unlevered``.
+
+    A rebalance happens on the first return day after any decision: a new row in
+    ``weights``, or a new entry in a ``leverage`` series. A leverage *series* on
+    the daily calendar therefore re-gears every day, which is what deciding a
+    leverage every day means.
     """
-    unlevered = unlevered_returns(returns, weights)
-    strategy = financed_returns(unlevered, leverage, risk_free)
-    return pd.DataFrame(
+    book = _hold_between_rebalances(returns, weights, leverage, risk_free)
+    return book.panel
+
+
+def pre_trade_holdings(
+    returns: pd.DataFrame,
+    weights: pd.DataFrame,
+    leverage: pd.Series | float = 1.0,
+    risk_free: pd.Series | float = 0.0,
+) -> pd.DataFrame:
+    """The book as it stands at the close of each rebalance date, before trading.
+
+    One row per row of ``weights``: the holding in each sleeve per unit of equity,
+    after the previous target has drifted through every return day up to and
+    including this date. A row's sum is the drifted leverage. The first rebalance
+    has no previous book and is all-NaN, as is any rebalance with no return day
+    between it and the one before.
+
+    This is the other half of the accrual in :func:`apply_overlay` -- the same
+    simulation, read at the moment the next trade is made -- so the cost of a
+    rebalance is measured from the book the returns were earned on.
+    """
+    if not isinstance(weights, pd.DataFrame):
+        raise OverlayError("pre_trade_holdings needs a frame of rebalance-date weights")
+    book = _hold_between_rebalances(returns, weights, leverage, risk_free)
+    days = book.panel.index
+    last_day = days.searchsorted(weights.index, side="right") - 1
+    rows = []
+    for k, position in enumerate(last_day):
+        # The day must belong to the PREVIOUS decision's holding period, i.e.
+        # fall strictly after the previous rebalance date.
+        if k == 0 or position < 0 or days[position] <= weights.index[k - 1]:
+            rows.append(np.full(weights.shape[1], np.nan))
+        else:
+            rows.append(book.end_of_day[position])
+    return pd.DataFrame(rows, index=weights.index, columns=weights.columns)
+
+
+@dataclass(frozen=True)
+class _HeldBook:
+    panel: pd.DataFrame
+    # Holdings per unit of equity at the close of each day, after that day's
+    # return and before any trade the next day: shape (days, sleeves).
+    end_of_day: np.ndarray
+
+
+def _hold_between_rebalances(
+    returns: pd.DataFrame,
+    weights: np.ndarray | pd.DataFrame,
+    leverage: pd.Series | float,
+    risk_free: pd.Series | float,
+) -> _HeldBook:
+    """The one simulation every return path in the project accrues through.
+
+    State is kept per unit of equity: ``basket`` (the risky sleeves' weights
+    within the basket, summing to 1) and ``lev`` (gross exposure / equity). Over a
+    day with sleeve returns ``r`` and rate ``rf``::
+
+        r_a     = basket @ r
+        R       = lev * r_a - (lev - 1) * rf      # the book's return
+        basket <- basket * (1 + r) / (1 + r_a)    # drift, still sums to 1
+        lev    <- lev * (1 + r_a) / (1 + R)       # equity moved by R, exposure by r_a
+
+    which is exact bookkeeping for holdings ``lev * basket`` and a loan of
+    ``lev - 1``. The alignment is :func:`_in_force_before`'s and nothing else's,
+    so ``tests/test_lookahead.py``'s mutation of that rule reaches this path.
+    """
+    if not isinstance(returns, pd.DataFrame):
+        raise OverlayError("the overlay needs a DataFrame of asset returns")
+    r = _as_return_matrix(returns)
+    index = returns.index
+    n_days = len(index)
+    if n_days == 0:
+        raise OverlayError("cannot accrue over an empty return frame")
+
+    if isinstance(weights, pd.DataFrame):
+        if list(weights.columns) != list(returns.columns):
+            raise OverlayError(
+                f"weight columns {list(weights.columns)} do not match return columns "
+                f"{list(returns.columns)}"
+            )
+        targets = _in_force_before(weights, index, "weights").to_numpy(dtype="float64")
+        weight_period = _decision_positions(weights.index, index, "weights")
+        row_sums = targets.sum(axis=1)
+        worst = float(np.max(np.abs(row_sums - 1.0)))
+        if worst > _WEIGHT_SUM_TOLERANCE:
+            raise OverlayError(
+                f"weights must sum to 1.0 on every date; worst deviation {worst:.3e}"
+            )
+        if np.any(targets < 0.0):
+            raise OverlayError("the held book is long-only; a target weight is negative")
+    else:
+        w = _validate_weights(weights, expected=returns.shape[1])
+        targets = np.tile(w, (n_days, 1))
+        weight_period = np.zeros(n_days, dtype=np.int64)
+
+    decided = _decision_values(leverage, index, "leverage")
+    if np.any(decided <= 0.0):
+        raise OverlayError(
+            "leverage must be strictly positive; a zero or negative multiplier is "
+            "not a de-levered book, it is a different strategy"
+        )
+    if isinstance(leverage, pd.Series):
+        leverage_period = _decision_positions(leverage.index, index, "leverage")
+    else:
+        leverage_period = np.zeros(n_days, dtype=np.int64)
+
+    rate = _published_values(risk_free, index, "risk_free")
+    _validate_rate(rate)
+
+    trade = np.ones(n_days, dtype=bool)
+    trade[1:] = (weight_period[1:] != weight_period[:-1]) | (
+        leverage_period[1:] != leverage_period[:-1]
+    )
+
+    basket_return = np.empty(n_days)
+    lev_in_force = np.empty(n_days)
+    strategy = np.empty(n_days)
+    end_of_day = np.empty_like(r)
+    basket = targets[0]
+    lev = float(decided[0])
+    for k in range(n_days):
+        if trade[k]:
+            basket = targets[k]
+            lev = float(decided[k])
+        r_a = float(basket @ r[k])
+        # L*r_a - (L-1)*r_f, the form that is bit-exact at L == 1 -- see
+        # financed_returns.
+        book = lev * r_a - (lev - 1.0) * rate[k]
+        if not (1.0 + r_a > 0.0 and 1.0 + book > 0.0):
+            raise OverlayError(
+                f"the held book lost all of its equity on {index[k].date()} "
+                f"(basket {r_a:+.2%}, book {book:+.2%} at {lev:.2f}x); a return "
+                "series this broken cannot be accrued"
+            )
+        basket_return[k], lev_in_force[k], strategy[k] = r_a, lev, book
+        basket = basket * (1.0 + r[k]) / (1.0 + r_a)
+        lev = lev * (1.0 + r_a) / (1.0 + book)
+        end_of_day[k] = lev * basket
+
+    panel = pd.DataFrame(
         {
-            "unlevered": unlevered,
-            "leverage": _decision_values(leverage, unlevered.index, "leverage"),
-            "risk_free": _published_values(risk_free, unlevered.index, "risk_free"),
+            "unlevered": basket_return,
+            "leverage": lev_in_force,
+            "risk_free": rate,
             "strategy": strategy,
         },
-        index=unlevered.index,
+        index=index,
     )
+    return _HeldBook(panel=panel, end_of_day=end_of_day)
+
+
+def _decision_positions(
+    decision_index: pd.DatetimeIndex, target_index: pd.DatetimeIndex, label: str
+) -> np.ndarray:
+    """Which decision is in force on each target date, as a position.
+
+    Computed by running the positions themselves through :func:`_in_force_before`
+    rather than by a second ``searchsorted``, so there is one alignment rule and
+    the look-ahead mutation test changes the trade calendar along with the
+    weights.
+    """
+    positions = pd.Series(np.arange(len(decision_index)), index=decision_index)
+    return _in_force_before(positions, target_index, label).to_numpy(dtype=np.int64)
 
 
 # ---------------------------------------------------------------------------

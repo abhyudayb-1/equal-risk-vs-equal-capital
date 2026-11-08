@@ -337,6 +337,12 @@ def make_fake_result(
     # every benchmark built against it.
     #
     # Decision at t -> realized return over t to t+1.
+    #
+    # This fixture applies its targets every day (a constant mix). The real
+    # engine and benchmarks HOLD their book between rebalances and let it drift
+    # (overlay.apply_overlay). The fixture only has to have the contract's shape
+    # and the one-day alignment, which both conventions share; it is not a
+    # model of the strategy's returns.
     aligned_w = weights_df.reindex(daily.index).ffill().shift(1)
     aligned_l = leverage.reindex(daily.index).ffill().shift(1)
     gross = (aligned_w * daily).sum(axis=1)

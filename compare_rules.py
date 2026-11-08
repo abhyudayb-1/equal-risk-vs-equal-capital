@@ -25,10 +25,13 @@ arguments, hands them over, and writes what comes back.
 1. **Mix data dates.** The window and the date the data ends are printed at the
    top of every run, because the one way to produce a wrong table here is to
    quote two rows measured on two different days.
-2. **Read the matched column as exactly matched.** The target the overlay was
-   given and the volatility it actually realized are printed side by side, with
-   the overshoot between them. A trailing estimator cannot hit a target; saying
-   so is cheaper than being asked.
+2. **Read the matched column as exactly matched, or as tradable.** The target
+   the overlay was given and the volatility it actually realized are printed
+   side by side, with the overshoot between them. A trailing estimator cannot
+   hit a target; saying so is cheaper than being asked. And the target itself is
+   1/N's realized volatility over the whole window, known only in hindsight, so
+   the column is labelled "(hindsight)": a retrospective diagnostic of the two
+   rules at equal realized risk, not a strategy that could have been run.
 3. **Take the financing-omitted rows for results.** They are marked
    counterfactual in the table and again in the caveats. The gap between each
    and its financed twin is the cost of leverage, which is one of the three
@@ -207,22 +210,31 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
-def cost_block(comparison, returns: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+def cost_block(
+    comparison, returns: pd.DataFrame, risk_free: pd.Series
+) -> tuple[pd.DataFrame, list]:
     """Turnover and the cost breakeven, from the results the comparison already built.
 
-    No engine runs: the turnover is reconstructed from the weights frames and
-    the sleeve returns, and the cost sweep is arithmetic on return series. That
-    is why this prints on every run and the estimator sweep does not.
+    No engine runs: the turnover is reconstructed from the weights frames, the
+    sleeve returns and (for the levered book) the leverage path and the rate it
+    was financed at, and the cost sweep is arithmetic on return series. That is
+    why this prints on every run and the estimator sweep does not.
 
-    Both rules are measured on their *allocation*. The matched column's own
-    leverage path is passed to its cost comparison separately, because a book
-    held at 1.5x trades 1.5x the notional to move the same distance.
+    The turnover table is of the two *allocations*. The matched column's trades
+    are measured separately on its held, levered book -- holdings per unit of
+    equity, including re-gearing the leverage that drifted during the month --
+    because that is the book its returns were earned on.
     """
     erc = comparison.rule_results[ERC_UNLEVERED]
     equal = comparison.rule_results[EQUAL_CAPITAL]
     traded = turnover_table({ERC_UNLEVERED: erc, EQUAL_CAPITAL: equal}, returns)
     erc_trades = turnover(erc.weights, returns)["total"]
     equal_trades = turnover(equal.weights, returns)["total"]
+    # The matched run holds the engine's weights (compare_rules asserts it) at
+    # its own leverage path, financed at the same rate.
+    matched_trades = turnover(
+        erc.weights, returns, leverage=comparison.matched_leverage, risk_free=risk_free
+    )["total"]
     costs = [
         cost_comparison(
             comparison.series[ERC_UNLEVERED], erc_trades,
@@ -232,9 +244,9 @@ def cost_block(comparison, returns: pd.DataFrame) -> tuple[pd.DataFrame, list]:
         # column, and charging a cost only to the unlevered one would answer
         # the easier half of the question.
         cost_comparison(
-            comparison.series[ERC_MATCHED_FINANCED], erc_trades,
+            comparison.series[ERC_MATCHED_FINANCED], matched_trades,
             comparison.series[EQUAL_CAPITAL], equal_trades,
-            erc_leverage=comparison.matched_leverage,
+            levered=True,
             erc_label=ERC_MATCHED_FINANCED,
         ),
     ]
@@ -325,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(format_comparison_report(comparison))
 
-    traded, costs = cost_block(comparison, returns)
+    traded, costs = cost_block(comparison, returns, risk_free)
     if args.sensitivities:
         print("\nSweeping the estimator (about fifty engine runs; this is the slow part)...")
         try:

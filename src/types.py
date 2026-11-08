@@ -62,7 +62,10 @@ class BacktestResult:
         **Daily** simple returns of the strategy, net of financing cost on the
         levered portion. This is the series every metric is computed from, so it
         is daily rather than monthly: annualise with
-        ``config.TRADING_DAYS_PER_YEAR``.
+        ``config.TRADING_DAYS_PER_YEAR``. It is the return of the book actually
+        *held*: traded to ``leverage * weights`` at each rebalance and left to
+        drift until the next (``src.overlay.apply_overlay``), so ``weights`` and
+        ``leverage`` are the targets set at each rebalance, not the daily book.
     meta:
         Free-form diagnostics. Conventional keys: ``strategy`` (str, required),
         ``target_vol``, ``solver_failures`` (int), ``max_condition_number``.

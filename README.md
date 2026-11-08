@@ -33,29 +33,36 @@ portfolio, and a classic 60/40 stock/bond mix.
 
 | | Equal risk (ERC) | Equal capital (1/N) |
 |---|---|---|
-| Effective number of independent bets (out of 4) | **4.00** | 2.92 |
-| Return / volatility, unlevered | **0.756** | 0.712 |
-| Worst drawdown, unlevered | **−17.2%** | −28.1% |
-| Annual return, unlevered | 5.10% | **5.76%** |
-| Return / volatility, levered to 1/N's volatility, financing charged | 0.692 | **0.712** |
+| Effective number of risk shares (out of 4) | **4.00** | 2.92 |
+| Return / volatility, unlevered | **0.723** | 0.683 |
+| Worst drawdown, unlevered | **−17.6%** | −29.0% |
+| Annual return, unlevered | 4.83% | **5.43%** |
+| Return / volatility at 1/N's realised volatility (hindsight), financing charged | 0.656 | **0.683** |
 
 Four findings:
 
 1. **Equal risk really does balance the risk.** ERC holds every asset at exactly 25% of portfolio
    risk. Under 1/N, equities' share of risk swings between 9% and 60%, commodities average 42%,
    and TIP barely matters (9%).
-2. **Without leverage, equal risk wins on risk-adjusted return.** It earns 0.756 of return per
-   unit of volatility against 0.712, and its worst loss is nearly half as deep. In exchange it
-   gives up 0.66 percentage points of return a year.
-3. **Once leverage is paid for, it loses.** To compare returns fairly, ERC is levered up to 1/N's
-   volatility. Borrowing at the T-bill rate costs 1.10% a year. That cost wipes out the whole
-   advantage: 0.692 against 0.712. Leave the borrowing cost out and ERC appears to win (0.763),
-   which is how this strategy usually gets oversold.
+2. **Without leverage, equal risk wins on risk-adjusted return.** It earns 0.723 of return per
+   unit of volatility against 0.683, and its worst loss is about 40% shallower. In exchange it
+   gives up 0.60 percentage points of return a year.
+3. **Once leverage is paid for, it loses.** To compare returns at the same risk, ERC is levered
+   toward the volatility 1/N actually realised over the whole sample. That target is only known
+   in hindsight, so this is a diagnostic of history rather than a strategy anyone could have run
+   (see [section 3](#3-volatility-targeting-as-a-measuring-tool)). Borrowing at the T-bill rate
+   costs about 0.7% a year of return, and that wipes out the whole advantage: 0.656 against
+   0.683. Leave the borrowing cost out and ERC appears to win (0.725), which is how this strategy
+   usually gets oversold.
 4. **Most of the benefit doesn't need an optimizer.** Simply weighting each asset by 1/volatility
-   scores 0.745, close to ERC's 0.756. Modelling the correlations between assets adds only about
+   scores 0.715, close to ERC's 0.723. Modelling the correlations between assets adds less than
    one point.
 
-Plain 60/40 beat all of them on risk-adjusted return over this period (0.779).
+Plain 60/40 beat all of them on risk-adjusted return over this period (0.750).
+
+Every portfolio is **rebalanced monthly**: traded to its target at each month end and then held,
+drifting with prices, until the next one. The returns and the trading costs below are both
+computed on that same held book.
 
 ---
 
@@ -132,29 +139,49 @@ Each month, the covariance is estimated from past data only:
 
 ### 3. Volatility targeting, as a measuring tool
 
-An unlevered ERC portfolio is bond-heavy, so it runs at lower volatility (6.9%) than 1/N (8.4%).
+An unlevered ERC portfolio is bond-heavy, so it runs at lower volatility (6.85%) than 1/N (8.25%).
 Returns at different risk levels aren't comparable. So an overlay scales the whole ERC portfolio:
 
 ```
 leverage_t = target_vol / estimated_vol_t,    clipped to [0.5x, 3.0x]
 ```
 
-Borrowed money is charged at the 3-month T-bill rate:
+Borrowed money is charged at the 3-month T-bill rate. On each day, at the leverage `L` the book
+is carrying that day:
 
 ```
 r_portfolio = L · (r_assets − r_f) + r_f
 ```
 
-Two properties matter here:
+Three properties matter here:
 
-- **The overlay overshoots its target by about 12.5%.** It uses trailing volatility, which is
-  always a step behind, so a 10% target realises about 11.25%. Every report prints the realised
+- **The overlay overshoots its target by about 13%.** It uses trailing volatility, which is
+  always a step behind, so a 10% target realises 11.3%. Every report prints the realised
   volatility next to the target, and the "matched" comparison is described as approximately
   matched.
+- **The matched comparison uses hindsight.** Its target is 1/N's realised volatility over the
+  *whole* sample, which nobody knew in 2007. Each month's leverage still uses only past data, but
+  the level it aims at was chosen after the fact. Read it as "at the same realised risk as 1/N,
+  which rule earned more?", not as a tradable strategy. It is labelled "(hindsight)" everywhere
+  it appears. A target set from a calibration period before the sample would be tradable, but it
+  would not match 1/N's risk.
 - **The volatility target never changes the ERC weights.** It only scales the position size. This
   is checked on every run.
 
-### 4. No look-ahead
+### 4. Monthly rebalancing, for returns and costs alike
+
+At each month end, every portfolio is traded to its target: `L × w` of equity in the assets, and
+`L − 1` borrowed (or lent, when `L < 1`). It is then **held** until the next month end. Each
+holding grows with its own asset's return and the loan grows at the T-bill rate, so both the
+weights and the leverage drift away from target during the month. 1/N therefore has to trade
+back to 25% each month too.
+
+The trading-cost analysis charges for exactly those trades, from the drifted book to the new
+target, read from the same simulation the returns come from. An earlier version re-applied the
+targets every day, which is arithmetically a book traded back to target daily. That return path
+and the monthly cost model described two different strategies.
+
+### 5. No look-ahead
 
 At each rebalance date `t`, only data dated on or before `t` is used. A decision made at the close
 of `t` earns returns from `t+1` onwards. All data access goes through one function,
@@ -166,8 +193,9 @@ proves the test can actually fail.
 
 ## Results in detail
 
-All figures come from one run of `compare_rules.py --sensitivities` on data through
-**2026-11-02**: 237 monthly rebalances from 2007-03-01, 4,951 daily returns, 0 solver failures.
+All figures come from one run of `compare_rules.py --sensitivities` and `run_backtest.py` on data
+through **2026-11-06**: 237 monthly rebalances from 2007-02-28, 4,955 daily returns, 0 solver
+failures.
 The first year of data is used to warm up the covariance estimate. Charts referenced below are
 committed in `reports/`.
 
@@ -190,32 +218,41 @@ Averages hide how much 1/N moves around from month to month:
 
 | | ERC | 1/N | Naive 1/σ | 60/40 | Max Sharpe |
 |---|---|---|---|---|---|
-| Effective bets, average | **4.00** | **2.92** | 3.75 | 1.41 | 1.78 |
-| Effective bets, range | 4.00 – 4.00 | 1.84 – 3.85 | 2.84 – 3.97 | 0.78 – 2.00 | 0.88 – 3.41 |
+| Effective risk shares, average | **4.00** | **2.92** | 3.75 | 1.41 | 1.78 |
+| Effective risk shares, range | 4.00 – 4.00 | 1.84 – 3.85 | 2.84 – 3.97 | 0.78 – 2.00 | 0.88 – 3.41 |
 | Largest single-asset risk share | 25.0% | **66.5%** | 41.7% | 112.9% | 106.6% |
 | SPY's risk share, low – high | 25.0% – 25.0% | **8.9% – 60.3%** | −1.6% – 28.2% | 50.0% – 112.9% | −4.7% – 106.6% |
-| Months with a negative risk share | 0 | 12 | 3 | 37 | 35 |
+| Months with a negative risk share | 0 | 12 | 3 | 37 | 39 |
 
-"Effective bets" is `1 / Σ(risk share)²`. It equals 4 when risk is spread evenly over four assets
-and 1 when one asset carries it all. It can fall below 1 when a hedging asset has a negative risk
-share, as happens with 60/40 and max Sharpe.
+"Effective risk shares" (often called "effective bets") is `1 / Σ(risk share)²`, the reciprocal
+Herfindahl index of the estimated risk shares. It equals 4 when risk is spread evenly over four
+assets and 1 when one asset carries it all. It can fall below 1 when a hedging asset has a
+negative risk share, as happens with 60/40 and max Sharpe.
+
+It measures how **evenly the estimated risk is split**, not how many *independent* bets the
+portfolio holds. ERC's 4.00 says each asset carries a quarter of the estimated variance. It does
+not say those four quarters are independent: the assets are still correlated, and counting
+independent bets would need the covariance's factor structure, which this statistic does not use.
 
 ### Performance
 
 | | Annual return | Volatility | Return/vol | Max drawdown | Avg leverage |
 |---|---|---|---|---|---|
-| **ERC, unlevered** | 5.10% | 6.90% | **0.756** | −17.15% | 1.00x |
-| Naive 1/σ | 4.84% | 6.64% | 0.745 | −16.69% | 1.00x |
-| **1/N (equal capital)** | 5.76% | 8.36% | **0.712** | −28.09% | 1.00x |
-| Max Sharpe | 6.66% | 10.49% | 0.667 | −26.59% | 1.00x |
-| 60/40 | 8.61% | 11.44% | **0.779** | −29.92% | 1.00x |
-| ERC @ 10% vol target, financed | 7.09% | 11.25% | 0.665 | −29.10% | 1.76x |
-| ERC @ 10% vol target, *no financing cost* | 8.27% | 11.25% | 0.763 | −29.05% | 1.76x |
-| **ERC @ 1/N's volatility, financed** | 6.24% | 9.40% | **0.692** | −24.85% | 1.47x |
-| ERC @ 1/N's volatility, *no financing cost* | 6.96% | 9.40% | 0.763 | −24.81% | 1.47x |
+| **ERC, unlevered** | 4.83% | 6.85% | **0.723** | −17.63% | 1.00x |
+| Naive 1/σ | 4.61% | 6.61% | 0.715 | −17.12% | 1.00x |
+| **1/N (equal capital)** | 5.43% | 8.25% | **0.683** | −28.98% | 1.00x |
+| Max Sharpe | 6.37% | 10.48% | 0.641 | −26.59% | 1.00x |
+| 60/40 | 8.07% | 11.19% | **0.750** | −31.40% | 1.00x |
+| ERC @ 10% vol target, financed | 6.65% | 11.34% | 0.625 | −31.01% | 1.76x |
+| ERC @ 10% vol target, *no financing cost* | 7.82% | 11.33% | 0.722 | −30.95% | 1.76x |
+| **ERC @ 1/N's realised volatility (hindsight), financed** | 5.83% | 9.30% | **0.656** | −25.82% | 1.46x |
+| ERC @ 1/N's realised volatility (hindsight), *no financing cost* | 6.51% | 9.30% | 0.725 | −25.77% | 1.46x |
 
 *The "no financing cost" rows are hypothetical, since nobody borrows for free. They are included
-to show how much the borrowing costs. See `reports/return_vol_plane.png`.*
+to show how much the borrowing costs. The "(hindsight)" rows aim at a volatility known only at
+the end of the sample; see [section 3](#3-volatility-targeting-as-a-measuring-tool). Average
+leverage is the mean of the month-end decisions; the held book drifts around it during each
+month. See `reports/return_vol_plane.png`.*
 
 ### Is the result robust to the estimator settings?
 
@@ -225,16 +262,20 @@ and a rebalance frequency. The `--sensitivities` sweep changes one setting at a 
 
 | Setting | Range tested (default) | ERC's unlevered lead over 1/N |
 |---|---|---|
-| Covariance halflife | 20 – 250 days (60) | +0.038 to +0.060 |
-| Shrinkage | 0.00 – 0.50 (0.10) | +0.036 to +0.047 |
-| Warm-up | 126 – 504 days (252) | +0.043 to +0.045 |
-| Rebalance frequency | 1 – 12 months (1) | **−0.029** to +0.043 |
+| Covariance halflife | 20 – 250 days (60) | +0.035 to +0.054 |
+| Shrinkage | 0.00 – 0.50 (0.10) | +0.034 to +0.043 |
+| Warm-up | 126 – 504 days (252) | +0.040 to +0.042 |
+| Rebalance frequency | 1 – 12 months (1) | **−0.029** to +0.040 |
 
 - **Unlevered, ERC beats 1/N at 16 of 17 settings.** The exception is rebalancing once a year
-  (0.683 against 0.712). At six-monthly the lead is already down to +0.003. Equal risk needs to be
+  (0.693 against 0.722). At six-monthly the lead is already down to +0.001. Equal risk needs to be
   re-solved at least quarterly, because the covariance keeps changing.
-- **Levered to 1/N's volatility, ERC loses at all 17 settings** (by −0.010 to −0.071). The gap
-  comes from the cost of financing, not from how the covariance is estimated.
+- **Rebalance frequency moves 1/N as well.** A held 1/N book drifts further between less
+  frequent rebalances, and its own ratio rises from 0.683 (monthly) to 0.722 (yearly). Part of
+  ERC's lost lead at long intervals is 1/N getting better, not only ERC getting worse.
+- **Levered to 1/N's realised volatility (hindsight), ERC loses at all 17 settings** (by −0.018
+  to −0.080). The gap comes from the cost of financing, not from how the covariance is
+  estimated.
 
 ### What about trading costs?
 
@@ -249,9 +290,15 @@ from drifted weights to new target weights:
 | Largest single rebalance | 14.09% | 4.60% |
 
 ERC trades about 1.5 times as much, not ten times as much. Charging both rules the same cost per
-dollar traded, ERC's unlevered lead survives until costs reach **2.91% per unit traded**. These
-four ETFs cost far less than that to trade. At a pessimistic 0.25%, the lead shrinks from +0.043
-to +0.040.
+dollar traded, ERC's unlevered lead survives until costs reach **2.68% per unit traded**. These
+four ETFs cost far less than that to trade. At a pessimistic 0.25%, the lead shrinks from +0.040
+to +0.036.
+
+These are the trades the return path actually makes: each portfolio is held through the month,
+and its trade is measured from where it drifted to. For the levered hindsight-matched book, the
+trade is measured on its levered holdings, including bringing the drifted leverage back to
+target. That book is already behind 1/N before any cost (0.656 against 0.683), so costs only
+widen the gap.
 
 ### Crises
 
@@ -259,29 +306,30 @@ Unlevered, measured from each crisis's market peak:
 
 | Window | ERC return | ERC max DD | 1/N return | 1/N max DD |
 |---|---|---|---|---|
-| GFC (2008) | −5.15% | **−16.91%** | −16.16% | −28.09% |
-| COVID (2020) | −8.91% | **−14.18%** | −12.63% | −16.53% |
-| **Rate shock (2022)** | **−14.28%** | **−16.82%** | −12.25% | −16.33% |
+| GFC (2008) | −6.28% | **−16.76%** | −17.39% | −28.98% |
+| COVID (2020) | −8.84% | **−14.50%** | −12.54% | −16.94% |
+| **Rate shock (2022)** | **−14.64%** | **−17.32%** | −12.64% | −16.84% |
 
 ERC protects well in 2008 and 2020 and **loses to 1/N in 2022**.
 
 **Leverage made COVID the worst drawdown in the sample.** The ERC portfolio levered to a 10%
-volatility target fell **−29.10%** in COVID, against −14.18% unlevered. It went into the crash at
-**2.33x leverage, its highest pre-crisis level of the whole run**, because 2019 had been calm and a
-trailing volatility estimate cannot see a shock coming. It cut leverage only at the 2020-03-31
+volatility target fell **−31.01%** in COVID, against −14.50% unlevered. It went into the crash at
+**2.33x leverage, more than it carried into either of the other crises** (1.83x before 2008,
+1.74x before 2022), because 2019 had been calm and a trailing volatility estimate cannot see a
+shock coming. It cut leverage only at the 2020-03-31
 rebalance, after the market bottom. Volatility targeting *controls* risk; it cannot *forecast* it.
 See `reports/leverage.png`.
 
 | Crisis | ERC @ 10% target | Equal weight | 60/40 | Naive 1/σ | Max Sharpe |
 |---|---|---|---|---|---|
-| GFC (2008) | −25.43% | −28.09% | −29.92% | −16.11% | −20.08% |
-| **COVID (2020)** | **−29.10%** | −16.53% | −17.76% | −13.52% | −12.55% |
-| Rate shock (2022) | −17.72% | −16.33% | −25.83% | −16.34% | −23.19% |
+| GFC (2008) | −25.55% | −28.98% | −31.40% | −16.51% | −19.92% |
+| **COVID (2020)** | **−31.01%** | −16.94% | −18.50% | −13.80% | −12.87% |
+| Rate shock (2022) | −18.23% | −16.84% | −26.31% | −16.79% | −23.19% |
 
 ### What went wrong in 2022
 
 **Commodities were the only asset that made money, and ERC held the least of them.** DBC returned
-+21.4% over the drawdown. 1/N held it at 25% of capital. ERC held only about 16%, because
++21.4% over the drawdown. 1/N held it at 25% of capital. ERC held only about 18%, because
 commodities are the most volatile asset and equal risk therefore means less money there. The
 asset that equal risk underweights by design is the high-volatility one, and sometimes that is
 where the return is.
@@ -299,8 +347,9 @@ ERC is bond-heavy by construction (about 23% in TLT and 39% in TIP in 2022), so 
 full weight of the bond selloff.
 
 **The warning sign that worked was the diversification ratio** (`Σwᵢσᵢ / σ_p`, which measures how
-much diversification is reducing risk; 1.0 means none). It fell for three years in a row and hit
-its lowest level of the sample *during* 2022, while the correlation still looked reassuring:
+much diversification is reducing risk; 1.0 means none). It fell for three years in a row and was
+already near its sample low *during* 2022 (1.313 in December 2022; the low was 1.307, in October
+2023), while the correlation still looked reassuring:
 
 | 2008 | 2012 | 2020 | 2021 | **2022** | 2023 |
 |---|---|---|---|---|---|
@@ -353,7 +402,7 @@ data → covariance → riskparity → overlay → backtest → BacktestResult
 | `types.py` | `BacktestResult`, the common output of every strategy: weights, risk contributions, leverage, daily returns and diagnostics. Validated on creation. |
 | `covariance.py` | Exponentially-weighted covariance, shrinkage, and PSD repair. |
 | `riskparity.py` | Risk contributions and the ERC solver. |
-| `overlay.py` | Volatility targeting, the leverage cap, and financing. |
+| `overlay.py` | Volatility targeting, the leverage cap, financing, and the held-book accrual every strategy's returns come from. |
 | `backtest.py` | The monthly rebalance loop and the run-health summary. |
 | `benchmarks.py` | Equal weight, 60/40, naive 1/σ and max Sharpe. |
 | `metrics.py`, `riskmetrics.py` | Return, volatility, Sharpe, drawdown, VaR/CVaR, Sortino, Calmar, crisis-window slicing. |
@@ -400,12 +449,13 @@ Most modules in `src/` also include a quick self-check on synthetic data. For ex
 - **Prices** are total-return (dividends and coupons reinvested). This matters for TLT and TIP,
   which earn most of their return as income.
 - **Risk-free rate:** the 3-month T-bill (FRED `DTB3`).
-- **Rebalancing:** monthly, at month end.
+- **Rebalancing:** monthly, at month end. Between rebalances each portfolio is held and drifts
+  with prices; returns and trading costs are both computed on that held book.
 - **Not modelled:** transaction costs, bid-ask spreads, and any borrowing spread above the T-bill
   rate, so every level reported here is somewhat optimistic. The trading-cost section above
   measures how large costs would need to be to change the ranking.
 - **Only four assets.** A larger universe with more spread in volatility would make the difference
   between equal risk and equal capital bigger.
-- **One sample period.** The numbers above come from a single run on data through 2026-11-02.
+- **One sample period.** The numbers above come from a single run on data through 2026-11-06.
   Re-running on a later date moves the ratios slightly (by about 0.01 a few days later), but not
   the ranking.

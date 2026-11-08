@@ -57,6 +57,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 from src import sensitivity  # noqa: E402
 from src.backtest import run_backtest  # noqa: E402
 from src.benchmarks import equal_weight  # noqa: E402
+from src.overlay import pre_trade_holdings  # noqa: E402
 from src.config import (  # noqa: E402
     COV_EWMA_HALFLIFE_DAYS,
     COV_SHRINKAGE,
@@ -198,6 +199,81 @@ def test_drift_and_turnover_by_hand() -> None:
           _close(drifted_weights(weights, on_the_new_date).iloc[1]["AAA"], expected_aaa))
 
 
+def test_levered_turnover_by_hand() -> None:
+    # The same month as above, held at 2x with a free loan. Holdings per unit of
+    # equity start at 1.0 / 1.0 against a loan of 1.0. AAA's +10% day lifts the
+    # holdings to 1.1 / 1.0 and the equity to 1.1, so per unit of equity the
+    # book is 1.0 / (1/1.1) and its leverage has drifted to 2.1/1.1 = 1.909x.
+    # Trading back to 2x at 50/50 means buying 1 - 1/1.1 of BBB: one-way, half
+    # of that. The OLD rule -- the unlevered trade scaled by 2 -- gives
+    # 2 * (0.55/1.05 - 0.5) instead, and misses the re-gearing entirely.
+    index = pd.bdate_range("2020-01-01", periods=44, name="date")
+    rebalances = pd.DatetimeIndex([index[0], index[22]])
+    weights = pd.DataFrame(
+        [[0.5, 0.5], [0.5, 0.5]], index=rebalances, columns=["AAA", "BBB"]
+    )
+    sleeves = pd.DataFrame(0.0, index=index, columns=["AAA", "BBB"])
+    sleeves.loc[index[10], "AAA"] = 0.10
+    leverage = pd.Series(2.0, index=rebalances, name="leverage")
+
+    traded = turnover(weights, sleeves, leverage=leverage, risk_free=0.0)
+    expected = 0.5 * (1.0 - 1.0 / 1.1)
+    scaled = 2.0 * (0.55 / 1.05 - 0.5)
+    check(f"a 2x book trades {expected:.4%} of equity to get back to target, "
+          f"re-gearing included",
+          _close(traded["total"].iloc[1], expected))
+    check(f"...which is not the unlevered trade scaled by 2 ({scaled:.4%})",
+          not _close(traded["total"].iloc[1], scaled, 1e-6))
+    check("the first rebalance is still NaN -- there is no previous book",
+          bool(traded.iloc[0].isna().all()))
+
+    # A dearer loan drifts the leverage further, so it costs more to re-gear.
+    dear = turnover(weights, sleeves, leverage=leverage,
+                    risk_free=pd.Series(0.001, index=index))
+    check("financing that accrues during the month is part of the drift",
+          float(dear["total"].iloc[1]) != float(traded["total"].iloc[1]))
+
+    expect_raises(
+        "a leverage path on a different calendar from the weights raises",
+        SensitivityError,
+        lambda: turnover(weights, sleeves, leverage=leverage.iloc[:1]),
+    )
+
+
+def test_costs_and_returns_describe_one_book() -> None:
+    # The regression for the convention bug: the return path held targets
+    # constant every day (a book traded daily) while the costs were charged on
+    # a book that drifted all month. Now both come from one held book, so the
+    # drifted weights the cost model trades back from must be EXACTLY the book
+    # the overlay was holding at each rebalance's close.
+    returns, risk_free = small_universe()
+    erc, one_n = small_results()
+    for name, result in (("ERC", erc), ("1/N", one_n)):
+        held = returns.loc[returns.index > result.weights.index[0]]
+        from_returns = pre_trade_holdings(held, result.weights)
+        from_costs = drifted_weights(result.weights, returns)
+        worst = float((from_returns - from_costs).abs().max().max())
+        check(f"{name}: the book the costs trade back from is the book the returns "
+              f"were earned on ({worst:.1e})",
+              worst < 1e-12)
+
+    # And the levered engine: its turnover at the leverage it actually held
+    # equals the unlevered turnover only where leverage did not move, and the
+    # simulation behind it is the one that produced its returns.
+    lev_one = pd.Series(1.0, index=erc.weights.index)
+    worst = float((turnover(erc.weights, returns, leverage=lev_one)
+                   - turnover(erc.weights, returns)).abs().max().max())
+    check(f"at a leverage of 1.0 the levered turnover IS the unlevered one ({worst:.1e})",
+          worst < 1e-12)
+
+    # Mutation: the old return path, re-weighted to target every day. The check
+    # above must be able to tell it apart from the held book, or it proves nothing.
+    daily = (one_n.weights.reindex(returns.index).ffill().shift(1) * returns).sum(axis=1)
+    daily = daily.loc[one_n.returns.index]
+    check("the held 1/N book is NOT the old daily-rebalanced one",
+          float((daily - one_n.returns).abs().max()) > 1e-6)
+
+
 def test_turnover_rejects_what_it_cannot_measure() -> None:
     index = pd.bdate_range("2020-01-01", periods=10)
     weights = pd.DataFrame([[0.5, 0.5]], index=index[:1], columns=["AAA", "BBB"])
@@ -294,9 +370,12 @@ def test_costs_land_on_the_right_day_and_only_subtract() -> None:
     check("and it subtracts rate * traded fraction, exactly",
           _close(returns.iloc[9] - charged.iloc[9], 0.25 * 0.004))
 
-    levered = charge_costs(returns, traded, 0.004, leverage=pd.Series(2.0, index=traded.index))
-    check("leverage scales the charge: a 2x book trades twice the notional",
-          _close(returns.iloc[9] - levered.iloc[9], 2.0 * 0.25 * 0.004))
+    expect_raises(
+        "charge_costs no longer scales by leverage -- a levered book's trade is "
+        "measured by turnover(leverage=...), on the book its returns came from",
+        TypeError,
+        lambda: charge_costs(returns, traded, 0.004, leverage=pd.Series(2.0, index=traded.index)),
+    )
 
     # A rebalance date between two return days charges the next one; a rebalance
     # after the last return day has nothing to charge and is dropped.
@@ -504,6 +583,8 @@ def test_the_shipped_knob_table_matches_the_engine() -> None:
 
 if __name__ == "__main__":
     test_drift_and_turnover_by_hand()
+    test_levered_turnover_by_hand()
+    test_costs_and_returns_describe_one_book()
     test_turnover_rejects_what_it_cannot_measure()
     test_turnover_on_the_real_rules()
 

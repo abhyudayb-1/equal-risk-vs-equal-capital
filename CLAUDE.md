@@ -30,18 +30,29 @@ preamble. **No test or self-check may touch the network**; live data belongs in 
   `.validate()` before returning. If it changes, change every call site in the same commit.
 - **Financing is always charged** on leverage (`r_p = L·(r_a − r_f) + r_f`). Omitting it is the
   classic way this strategy gets oversold.
+- **One held book for returns and costs.** Every strategy's returns accrue through
+  `overlay.apply_overlay`: traded to `L·w` at each month end, then held and left to drift (sleeves
+  with their returns, the loan at the bill rate) until the next. `sensitivity.turnover` charges
+  costs on trades from that same drifted book (`overlay.pre_trade_holdings` for levered ones).
+  Never re-apply targets daily in a return path; that is a book traded daily, and its returns
+  would no longer match the cost model.
 - **Failures are surfaced, never swallowed.** A solver that didn't converge (logged, counted in
   `meta`) is a different event from `ERCSolverError` (no feasible portfolio; it raises). Keep them
   distinct. `ERCSolverError` subclasses `ValueError`, so catch it *before* any `ValueError` handler.
 - **Every constant lives in `src/config.py`**, with a comment recording how its value was chosen.
-- **The overlay's lag and its ~12.5% volatility overshoot are findings, not bugs.** Don't tune them
+- **The overlay's lag and its ~13% volatility overshoot are findings, not bugs.** Don't tune them
   away, and never describe the matched column as exactly matched.
+- **The matched column is a hindsight diagnostic.** Its target is 1/N's realised volatility over
+  the whole window, so it keeps the "(hindsight)" label everywhere and is never presented as a
+  tradable strategy.
+- **Effective bets measures concentration, not independence.** `1 / Σ RC²` says how evenly the
+  estimated risk is split; never describe it as a count of independent bets.
 - **The oracle in `tests/test_riskparity.py` was written independently of the solver it checks.**
   Keep it independent: don't refactor it to share code with `src/riskparity.py`.
 
 ## Reports and the single data date
 
-`README.md` quotes one live run on one data date (2026-11-02). Eight files in `reports/` are
+`README.md` quotes one live run on one data date (2026-11-06). Eight files in `reports/` are
 tracked from that run. If you refresh numbers, re-run **both** CLIs and update every figure in the
 README together. Mixing two data dates produces a comparison that cannot be right. Module
 self-checks write to a temp directory, never to `reports/`. If `git status` shows `reports/`

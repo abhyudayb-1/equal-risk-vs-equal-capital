@@ -18,18 +18,22 @@ The loop, at each month-end rebalance date ``t``:
    clipped to ``LEVERAGE_CAP``.
 
 Then the accrual, once, over the whole daily calendar:
-``overlay.apply_overlay`` applies the weights and leverage in force to each day's
-returns and charges financing on the borrowed part.
+``overlay.apply_overlay`` trades the book to ``L_t * w_t`` at each rebalance,
+**holds** it until the next one -- the sleeves drift with their returns and the
+loan accrues at the bill rate -- and charges financing on the borrowed part. The
+weights frame records the targets; the book actually held drifts away from them
+during the month, and the next rebalance's trade is what
+``src.sensitivity.turnover`` charges for.
 
 **The one-day rule, which is the only way this module can be silently wrong.**
 A decision taken at the close of ``t`` earns returns from ``t+1`` onward, never
 ``t`` itself. ``apply_overlay`` enforces it through
 ``overlay._in_force_before``; this module's contribution is simply not to undo
 it, which is why the daily accrual is a single call rather than a hand-rolled
-alignment. The equivalent in ``benchmarks._unlevered_result`` is
-``.ffill().shift(1)``, and the two agree -- the self-check asserts it, because
-two alignment conventions that drift apart would make the engine and its own
-benchmarks incomparable while both looked fine.
+alignment. ``benchmarks._unlevered_result`` accrues through the same function,
+so the engine and its benchmarks cannot drift onto two conventions; the
+self-check rebuilds the unlevered path from buy-and-hold values independently,
+because one shared function agreeing with itself would prove nothing.
 
 **Failures are surfaced, never swallowed.** Two of them, and they are different
 events that this repo requires stay distinguishable:
@@ -755,16 +759,24 @@ if __name__ == "__main__":  # pragma: no cover
     print(f"  median capital weights: "
           f"{result.weights.median().round(4).to_dict()}")
 
-    # --- the two alignment conventions agree --------------------------------
-    # benchmarks._unlevered_result uses .ffill().shift(1); overlay uses
-    # _in_force_before. They must be the same rule or the engine and its own
-    # benchmarks are not comparable. Reproduced here on the unlevered leg.
-    applied = result.weights.reindex(synthetic.index).ffill().shift(1)
-    expected = (applied * synthetic).sum(axis=1).loc[applied.dropna(how="any").index]
+    # --- the held book is a buy-and-hold book between rebalances -----------
+    # Rebuilt independently of overlay._hold_between_rebalances: within each
+    # holding period, the value of the book is sum_i w_i * prod(1 + r_i) over the
+    # days so far, and the daily return is the ratio of consecutive values. A
+    # book re-weighted to target every day (the old convention) fails this.
     unlevered = run_backtest(synthetic, risk_free=0.0, leverage_cap=(1.0, 1.0))
     reference = unlevered.returns
+    rebalances = unlevered.weights.index
+    pieces = []
+    for start, end in zip(rebalances, list(rebalances[1:]) + [synthetic.index[-1]]):
+        window = synthetic.loc[(synthetic.index > start) & (synthetic.index <= end)]
+        if window.empty:
+            continue
+        value = ((1.0 + window).cumprod() * unlevered.weights.loc[start]).sum(axis=1)
+        pieces.append(value / value.shift(1).fillna(1.0) - 1.0)
+    expected = pd.concat(pieces)
     common = expected.index.intersection(reference.index)
-    print(f"\noverlay alignment vs benchmarks' ffill().shift(1): max |diff| "
+    print(f"\nheld book vs an independent buy-and-hold rebuild: max |diff| "
           f"{float((expected.loc[common] - reference.loc[common]).abs().max()):.3e} "
           f"over {len(common)} days")
 

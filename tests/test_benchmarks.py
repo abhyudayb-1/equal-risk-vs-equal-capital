@@ -87,6 +87,55 @@ def test_equal_weight() -> None:
     )
 
 
+def _buy_and_hold(result, returns: pd.DataFrame) -> pd.Series:
+    """Daily returns of a book bought at each rebalance and left alone until the next.
+
+    Written out as values, not as a day-by-day loop, so it shares nothing with
+    ``overlay._hold_between_rebalances``: within a holding period the book is
+    worth ``sum_i w_i * prod(1 + r_i)``, and each day's return is the ratio of
+    consecutive values.
+    """
+    dates = result.weights.index
+    ends = list(dates[1:]) + [returns.index[-1]]
+    pieces = []
+    for start, end in zip(dates, ends):
+        window = returns.loc[(returns.index > start) & (returns.index <= end)]
+        if window.empty:
+            continue
+        value = ((1.0 + window).cumprod() * result.weights.loc[start]).sum(axis=1)
+        pieces.append(value / value.shift(1).fillna(1.0) - 1.0)
+    return pd.concat(pieces)
+
+
+def test_benchmarks_are_held_between_rebalances() -> None:
+    # Regression: fixed_weight used to hold its targets constant every day, which
+    # is a book traded back to target daily, while the cost model charged for a
+    # book that drifted all month. The return path must be the monthly book.
+    print("benchmarks hold their book between rebalances:")
+    returns = make_fake_returns()
+    for name, result in (("1/N", equal_weight(returns)), ("60/40", sixty_forty(returns))):
+        expected = _buy_and_hold(result, returns)
+        worst = float((expected.loc[result.returns.index] - result.returns).abs().max())
+        check(f"{name}'s returns are a buy-and-hold book between month-ends ({worst:.1e})",
+              worst < 1e-12)
+
+    # Mutation: the old daily-reweighted path. The rebuild above must be able to
+    # tell it apart, or the check proves nothing.
+    one_n = equal_weight(returns)
+    daily = (one_n.weights.reindex(returns.index).ffill().shift(1) * returns).sum(axis=1)
+    daily = daily.loc[one_n.returns.index]
+    gap = float((_buy_and_hold(one_n, returns).loc[daily.index] - daily).abs().max())
+    check(f"...and the rebuild rejects the old daily-rebalanced path ({gap:.1e})",
+          gap > 1e-6)
+
+    # With drift, the rebalance frequency reaches 1/N's RETURNS, not only its
+    # risk-contribution rows: a book left alone for a quarter is a different book.
+    quarterly = equal_weight(returns, rebalance_months=3)
+    common = one_n.returns.index.intersection(quarterly.returns.index)
+    check("rebalancing 1/N quarterly changes its returns, because the book drifts longer",
+          not np.allclose(one_n.returns.loc[common], quarterly.returns.loc[common]))
+
+
 def test_sixty_forty() -> None:
     print("60/40:")
     returns = make_fake_returns()
@@ -237,6 +286,7 @@ def test_benchmarks_are_comparable() -> None:
 
 if __name__ == "__main__":
     test_equal_weight()
+    test_benchmarks_are_held_between_rebalances()
     test_sixty_forty()
     test_naive_risk_parity()
     test_max_sharpe()
