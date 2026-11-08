@@ -23,18 +23,16 @@ Two separate things are measured here, and they fail in opposite directions:
    which ERC's advantage over 1/N disappears. That number is a property of the
    two rules' turnover and does not require anyone to agree about spreads.
 
-**The turnover subtlety, which is the one worth reading before trusting a number
-in here.** ``benchmarks.fixed_weight`` and ``backtest.run_backtest`` both hold
-their weights *constant* between rebalances, which is arithmetically a book
-traded back to target every single day. The convention is applied identically to
-both rules, so the return comparison is fair -- but it means **neither rule's
-trading is described by its weights frame**. Read turnover straight off 1/N's
-weights and you get exactly 0.0%, which would say equal capital is free to run,
-which is false: a real 1/N book drifts away from 25% between rebalances and has
-to be traded back.
-
-So turnover here is reconstructed rather than read. At each rebalance the
-previous target is carried forward by the sleeves' realised returns, and the
+**The turnover convention, which is the one worth reading before trusting a number
+in here.** Every strategy's weights frame holds its *targets*, and every return
+path -- ``backtest.run_backtest`` and ``benchmarks.fixed_weight`` alike -- accrues
+through ``overlay.apply_overlay``, which trades to those targets at a month-end
+and then **holds** the book until the next one. So 1/N's weights frame is
+constant, but its book is not: it drifts off 25% during the month and has to be
+traded back. Turnover therefore cannot be read off the weights frame (that would
+report exactly 0.0% for 1/N and say equal capital is free to run); it is
+reconstructed from the same drift the returns were earned on. At each rebalance
+the previous target is carried forward by the sleeves' realised returns, and the
 turnover is the distance from *that* to the new target::
 
     w_drifted = w_prev * (1 + R) / sum(w_prev * (1 + R))
@@ -44,6 +42,16 @@ which is the fraction of the book that changes hands -- the one-way convention,
 so a cost per unit traded multiplies it directly. It is reported in two parts,
 because the split is the whole argument: the **drift-back** component both rules
 pay, and the **re-optimisation** component that is ERC's alone.
+
+A levered book is measured the same way on its holdings per unit of equity,
+read from ``overlay.pre_trade_holdings`` -- the very simulation that produced its
+returns -- so the trade that re-gears a leverage which drifted during the month
+is charged too.
+
+An earlier version held the targets constant every day in the return path, which
+is a book traded back to target *daily*, while charging costs on a book that
+drifted for a month. The return path and the cost model described two different
+strategies; they now describe one.
 
 Run a self-check from the repo root (offline, fixtures only, writes nothing)::
 
@@ -86,7 +94,7 @@ from .config import (
 )
 from .covariance import estimate_covariance
 from .metrics import summarize
-from .overlay import unlevered_returns
+from .overlay import pre_trade_holdings, unlevered_returns
 
 log = logging.getLogger(__name__)
 
@@ -155,8 +163,22 @@ def drifted_weights(
     return pd.DataFrame(rows, index=weights.index, columns=weights.columns)
 
 
-def turnover(weights: pd.DataFrame, sleeve_returns: pd.DataFrame) -> pd.DataFrame:
+def turnover(
+    weights: pd.DataFrame,
+    sleeve_returns: pd.DataFrame,
+    leverage: pd.Series | None = None,
+    risk_free: pd.Series | float = 0.0,
+) -> pd.DataFrame:
     """Per-rebalance turnover, split into the part each rule cannot avoid and ERC's own.
+
+    Without ``leverage`` this is the unlevered allocation's turnover, from
+    :func:`drifted_weights`. With it, the book is the levered one the overlay
+    holds -- ``leverage[t] * weights[t]`` of equity in the sleeves -- and every
+    column is measured on those holdings per unit of equity, drifted by the
+    sleeves *and* by the loan accruing at ``risk_free`` (which must then be the
+    same rate the returns were financed at). The trade that brings a drifted
+    leverage back to its new decision is part of ``total``; it is not scaled on
+    afterwards.
 
     Three columns, all as a fraction of the book, one-way (``0.5 * sum|dw|``), so
     a cost per unit traded multiplies them directly:
@@ -178,7 +200,19 @@ def turnover(weights: pd.DataFrame, sleeve_returns: pd.DataFrame) -> pd.DataFram
 
     The first rebalance is NaN in every column; see :func:`drifted_weights`.
     """
-    drifted = drifted_weights(weights, sleeve_returns)
+    if leverage is None:
+        drifted = drifted_weights(weights, sleeve_returns)
+    else:
+        if not leverage.index.equals(weights.index):
+            raise SensitivityError(
+                "leverage must be decided on the weights' rebalance dates; a "
+                "different calendar is a different book"
+            )
+        held = sleeve_returns.loc[
+            sleeve_returns.index > weights.index[0], list(weights.columns)
+        ]
+        drifted = pre_trade_holdings(held, weights, leverage, risk_free)
+        weights = weights.mul(leverage.astype("float64"), axis=0)
     previous = weights.shift(1)
     half_abs = lambda frame: 0.5 * frame.abs().sum(axis=1, skipna=False)  # noqa: E731
     return pd.DataFrame(
@@ -194,7 +228,6 @@ def charge_costs(
     returns: pd.Series,
     traded: pd.Series,
     cost_rate: float,
-    leverage: pd.Series | None = None,
 ) -> pd.Series:
     """``returns`` with ``cost_rate`` charged on each rebalance's traded fraction.
 
@@ -203,12 +236,10 @@ def charge_costs(
     engine accrues on. A rebalance after the last return day is dropped rather
     than charged against nothing.
 
-    ``leverage`` scales the traded fraction, because a book held at 1.5x trades
-    1.5x the notional to move its weights the same distance. It is an
-    approximation in one respect and the docstring says so rather than the
-    output pretending otherwise: it ignores the trading caused by the leverage
-    *itself* changing between rebalances, which would make the levered rows'
-    costs somewhat higher still.
+    ``traded`` is per unit of equity. For a levered book pass
+    ``turnover(..., leverage=...)``, which already measures the trade on the
+    levered holdings -- including re-gearing a leverage that drifted -- so
+    nothing is scaled here.
     """
     if cost_rate < 0:
         raise SensitivityError(f"cost_rate must be non-negative, got {cost_rate}")
@@ -216,8 +247,6 @@ def charge_costs(
         return returns.copy()
 
     charge = traded.astype("float64").fillna(0.0) * float(cost_rate)
-    if leverage is not None:
-        charge = charge * leverage.reindex(charge.index).astype("float64")
 
     index = returns.index
     positions = index.searchsorted(charge.index, side="left")
@@ -245,8 +274,8 @@ def turnover_table(
     not folded in here: a rule's weights are one thing and the size the overlay
     chooses to hold them at is another, and a table that multiplied them would
     report a levered ERC book as trading more than ERC *as an allocation* does.
-    :func:`charge_costs` is where leverage scales a trade, and the caller passes
-    it there explicitly.
+    ``turnover(..., leverage=...)`` is where a levered book's trades are
+    measured, and the caller asks for it explicitly.
     """
     rows = []
     for name, result in rule_results.items():
@@ -298,7 +327,7 @@ def cost_comparison(
     benchmark_traded: pd.Series,
     cost_rates_bps: tuple[float, ...] = COST_RATES_BPS,
     periods_per_year: int = TRADING_DAYS_PER_YEAR,
-    erc_leverage: pd.Series | None = None,
+    levered: bool = False,
     erc_label: str = ERC_UNLEVERED,
     benchmark_label: str = EQUAL_CAPITAL,
 ) -> CostComparison:
@@ -307,14 +336,17 @@ def cost_comparison(
     Both rules are charged the **same** rate. That is the point: the question is
     not what trading costs but whether ERC's advantage is large enough to pay for
     the extra trading it does, and that is answered by one number -- the rate at
-    which the two ratios cross -- which nobody has to agree about spreads to read.
+    which the two ratios cross --     which nobody has to agree about spreads to read.
+
+    ``levered`` records that ``erc_traded`` is a levered book's turnover, so the
+    report prints the caveat that goes with it. It changes no arithmetic.
     """
     if not len(cost_rates_bps):
         raise SensitivityError("cost_rates_bps is empty; there is nothing to sweep")
 
     def ratios(rate: float) -> tuple[float, float]:
         return (
-            _ratio(charge_costs(erc_returns, erc_traded, rate, erc_leverage), periods_per_year),
+            _ratio(charge_costs(erc_returns, erc_traded, rate), periods_per_year),
             _ratio(charge_costs(benchmark_returns, benchmark_traded, rate), periods_per_year),
         )
 
@@ -359,7 +391,7 @@ def cost_comparison(
         breakeven_cost=breakeven,
         erc_label=erc_label,
         benchmark_label=benchmark_label,
-        levered=erc_leverage is not None,
+        levered=bool(levered),
     )
 
 
@@ -510,19 +542,19 @@ def losing_settings(swept: pd.DataFrame, column: str = "gap") -> pd.DataFrame:
 # The printed forms
 # ---------------------------------------------------------------------------
 _COST_CAVEATS: tuple[str, ...] = (
-    "Turnover is RECONSTRUCTED, not read off the weights. Both rules are "
-    "modelled as holding constant weights between rebalances, which is "
-    "arithmetically a book traded back to target every day, so 1/N's weights "
-    "frame shows 0.0% turnover and a real 1/N book is not free to run. Each "
-    "rebalance's trade is measured from the previous target drifted by realised "
-    "returns to the new target.",
+    "Turnover is RECONSTRUCTED, not read off the weights. Each rule's weights "
+    "frame holds its targets, so 1/N's shows 0.0% turnover; but both books are "
+    "held between month-ends and drift with returns, in the return path as well "
+    "as here. Each rebalance's trade is measured from the previous target drifted "
+    "by realised returns to the new target -- the same drift the returns were "
+    "earned on.",
     "One-way, as a fraction of the book, so a cost per unit traded multiplies it "
     "directly. 'total' is not drift-back plus re-optimisation: the two partly "
     "cancel, because ERC drifts toward its next solution about as often as away "
     "from it.",
-    "The levered rows' costs scale with leverage but ignore the trading caused "
-    "by the leverage itself moving between rebalances, so they are if anything "
-    "understated.",
+    "The levered rows' trades are measured on the held book's holdings per unit "
+    "of equity, so they include re-gearing a leverage that drifted during the "
+    "month as well as moving the weights.",
     "The breakeven is the number to quote. It is a property of the two rules' "
     "turnover and their ratios, and reading it needs no agreement about what a "
     "spread costs.",
@@ -697,7 +729,7 @@ def format_sensitivity_report(
     caveats = [
         caveat
         for caveat in _COST_CAVEATS
-        if "scale with leverage" not in caveat
+        if "levered rows" not in caveat
         or any(comparison.levered for comparison in comparisons)
     ]
     for i, caveat in enumerate(caveats, start=1):
@@ -738,14 +770,17 @@ if __name__ == "__main__":  # pragma: no cover
     traded = turnover_table({ERC_UNLEVERED: erc, EQUAL_CAPITAL: one_n}, fake_returns)
     erc_trades = turnover(erc.weights, fake_returns)["total"]
     one_n_trades = turnover(one_n.weights, fake_returns)["total"]
+    erc_levered_trades = turnover(
+        erc.weights, fake_returns, leverage=erc.leverage, risk_free=fake_rf
+    )["total"]
     costs = [
         cost_comparison(erc_unlevered, erc_trades, one_n.returns, one_n_trades),
         # The levered row too: the headline conclusion is about the matched
         # column, and charging a cost only to the unlevered one would answer
         # the easier half of the question.
         cost_comparison(
-            erc.returns, erc_trades, one_n.returns, one_n_trades,
-            erc_leverage=erc.leverage,
+            erc.returns, erc_levered_trades, one_n.returns, one_n_trades,
+            levered=True,
             erc_label="ERC @ 10% target, financed",
         ),
     ]

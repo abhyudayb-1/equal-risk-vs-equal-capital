@@ -47,6 +47,7 @@ from .config import (
 )
 from .covariance import estimate_covariance, nearest_psd
 from .data import asof_slice, month_end_rebalance_dates
+from .overlay import apply_overlay
 from .riskparity import naive_inv_vol
 from .types import BacktestResult
 
@@ -116,28 +117,25 @@ def fixed_weight(
         rebalance frequency has to move *both* rules, or it is comparing two
         different windows as well as two different frequencies.
 
-        Note what it does and does not change here. The capital weights are
-        constant, so thinning the calendar leaves this benchmark's **returns**
-        unchanged -- only the risk-contribution rows, which are estimated per
-        rebalance, thin out with it. That is not a hole in the argument; see the
-        note on this convention below.
+        Thinning the calendar changes this benchmark's returns as well as its
+        risk-contribution rows: the target is constant, but the book drifts
+        further from it between less frequent trades. See the notes below.
 
     Notes
     -----
-    Weights are held constant *between* rebalances rather than allowed to drift
-    with returns, matching ``tests.fixtures.make_fake_result``. ``src/backtest.py``
-    uses the same convention -- see the module docstring of the fixture for why the one-day shift below is not negotiable.
+    The weights frame holds the *targets*. Between rebalances the book is held,
+    not re-weighted: each sleeve drifts with its own return until the next
+    month-end trades it back, through the same held-book accrual the engine uses
+    (``src.overlay.apply_overlay``). So the return path is the monthly-rebalanced
+    book it says it is, and ``src/sensitivity.py`` charges costs on the trades
+    that this path really makes: from the drifted book back to target.
 
-    That convention has a consequence worth naming, because it is easy to read
-    this function as modelling a monthly-rebalanced book and it does not.
-    Holding the weights constant between rebalances is arithmetically a book
-    traded back to target *every day*. ``src/backtest.py`` does the same with
-    its own weights, so the comparison stays fair -- both rules get identical
-    treatment -- but neither rule's **trading** is described by its weights
-    frame, and the turnover either would really incur has to be reconstructed
-    from the drift the frame does not show. ``src/sensitivity.py`` does exactly
-    that, and says so, rather than reading 0.0% turnover off 1/N's constant
-    weights and concluding that equal capital is free to run.
+    A consequence worth naming: with drift, ``rebalance_months`` now changes this
+    benchmark's **returns** as well as its risk-contribution rows, because a 1/N
+    book left alone for a quarter is not the book rebalanced monthly. An earlier
+    version held the targets constant every day -- arithmetically a book traded
+    back to target daily -- so 1/N's returns ignored the rebalance frequency and
+    its return path did not describe the trades its costs were charged on.
     """
     if returns.empty:
         raise ValueError("cannot backtest an empty return frame")
@@ -210,19 +208,21 @@ def _unlevered_result(
     strategy: str,
     meta: dict,
 ) -> BacktestResult:
-    """Accrue daily returns for an unlevered allocation and seal the contract.
+    """Accrue daily returns for an unlevered, held allocation and seal the contract.
 
-    Shared by every benchmark in this module so the one-day alignment below is
-    written once. It is the subtle part: getting it wrong is a look-ahead bug
-    that still produces a plausible equity curve.
+    Shared by every benchmark in this module. The accrual is the engine's own
+    (``overlay.apply_overlay`` at a leverage of 1.0 and no loan), so the one-day
+    alignment and the drift between rebalances are written once for every
+    strategy in the project. Getting the alignment wrong is a look-ahead bug that
+    still produces a plausible equity curve.
     """
     leverage = pd.Series(1.0, index=weights.index, name="leverage")
 
-    # Decision at t earns the return from t to t+1. Dropping the shift would let
-    # the allocation collect the move of the very day it was chosen on.
-    applied = weights.reindex(returns.index).ffill().shift(1)
-    daily = (applied * returns[weights.columns]).sum(axis=1)
-    daily = daily.loc[applied.dropna(how="any").index].rename("returns")
+    # Decision at t earns the return from t+1. The held-book accrual applies the
+    # strictly-before rule itself; this only trims the days before the first
+    # decision, which have no allocation to attribute them to.
+    live = returns.loc[returns.index > weights.index[0], list(weights.columns)]
+    daily = apply_overlay(live, weights, 1.0, 0.0)["strategy"].rename("returns")
 
     result = BacktestResult(
         weights=weights,
@@ -442,7 +442,7 @@ def max_sharpe(
     The most demanding benchmark in the set, and the most flattering to itself:
     it optimises Sharpe directly on the trailing window, so it is the comparator
     that shows how much of an in-sample optimum survives out of sample. It is
-    also the one that most needs the one-day shift in :func:`_unlevered_result`,
+    also the one that most needs the one-day rule in :func:`_unlevered_result`,
     because an optimiser fed today's close and paid today's return would look
     extraordinary.
 

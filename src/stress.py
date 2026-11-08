@@ -581,11 +581,16 @@ def _align_weights(
 ) -> pd.DataFrame | None:
     """Put a weight specification onto the daily return index, or return ``None``.
 
-    A rebalance-indexed frame is forward-filled and shifted one day, matching
-    ``src.benchmarks._unlevered_result``: the allocation chosen at ``t`` is the
-    one in force *from* ``t+1``, so measuring day ``t``'s ratio against the
-    weights decided that same evening would be the same one-day look-ahead the
-    whole project is arranged to avoid.
+    A rebalance-indexed frame is forward-filled and shifted one day: the
+    allocation chosen at ``t`` is the one in force *from* ``t+1``, so measuring
+    day ``t``'s ratio against the weights decided that same evening would be the
+    same one-day look-ahead the whole project is arranged to avoid.
+
+    These are the **target** weights in force, as ``risk_contributions`` are.
+    The book actually held drifts away from its target during the month (see
+    ``overlay.apply_overlay``); this diagnostic describes the allocation each
+    rule chose, not the drifted book, and the difference within one month is
+    small next to the regime changes it is used to show.
     """
     if weights is None:
         return None

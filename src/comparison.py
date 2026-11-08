@@ -6,7 +6,7 @@ contribution (ERC)** and **equal capital (1/N)**. The question is what equalisin
 risk buys, and what it costs in volatility and return.
 
 **Why a volatility-matched column is not optional.** ERC run unlevered is a
-lower-volatility book than 1/N -- 6.9% against 8.4% on the live sample -- so
+lower-volatility book than 1/N -- 6.85% against 8.25% on the live sample -- so
 their *returns* are not comparable and a table that puts them side by side on
 CAGR is comparing two different amounts of risk. The vol-targeting overlay is
 what fixes that: re-run the engine with ``target_vol`` set to 1/N's own realised
@@ -14,6 +14,16 @@ volatility and the two books are (approximately, see below) the same size, so th
 return difference means something. The financing that levering costs is then part
 of the answer rather than a detail, which is why the financed and financing-free
 versions are both reported.
+
+**The matched column is a retrospective diagnostic, not a strategy anyone could
+have run.** Its target is 1/N's realised volatility over the *whole* evaluation
+window, a number known only at the end of it. Nothing inside the engine looks
+ahead -- each month's leverage still uses only trailing data -- but the single
+constant it aims at was chosen with hindsight. It answers "at the same realised
+risk as 1/N, which rule earned more?", which is a fair question to ask of history
+and not a forecast. The labels say "(hindsight)" so that no table can present it
+as a tradable rule. A target chosen from a calibration period before the window
+would make it tradable, at the cost of not matching 1/N's risk.
 
 **What this module does and does not own.** Every function here is a pure
 function of return series -- no network, no disk, no argument parsing. It does
@@ -29,8 +39,9 @@ Metric rows come from :mod:`src.riskmetrics` and the pairwise blocks from
 **Two measurement facts that shape the output, both measured rather than
 assumed**:
 
-1. **The overlay overshoots its target by roughly 12.5%.** A 10% target realised
-   11.25%; an 8.355% target realised 9.40%. So the matched column is
+1. **The overlay overshoots its target by roughly 13%.** On the live sample
+   (data through 2026-11-06) a 10% target realised 11.34% and an 8.25% target
+   realised 9.30%. So the matched column is
    *approximately* matched, and :class:`RuleComparison` carries ``target_vol``
    and ``realized_vol`` side by side so a report can print both. Describing it
    as exactly matched would be wrong.
@@ -68,7 +79,7 @@ from .config import (
 from .covariance import estimate_covariance
 from .headtohead import crisis_table, format_crisis_table, format_relative_table, relative_metrics, tail_block
 from .metrics import summarize
-from .overlay import financed_returns, unlevered_returns
+from .overlay import apply_overlay, unlevered_returns
 from .riskmetrics import format_metric_table, realized_risk_table
 
 log = logging.getLogger(__name__)
@@ -84,8 +95,8 @@ SIXTY_FORTY = "60/40"
 MAX_SHARPE = "Max Sharpe"
 ERC_TARGET_FINANCED = "ERC @ target, financed"
 ERC_TARGET_FREE = "ERC @ target, financing omitted"
-ERC_MATCHED_FINANCED = "ERC @ 1/N vol, financed"
-ERC_MATCHED_FREE = "ERC @ 1/N vol, financing omitted"
+ERC_MATCHED_FINANCED = "ERC @ 1/N vol (hindsight), financed"
+ERC_MATCHED_FREE = "ERC @ 1/N vol (hindsight), financing omitted"
 
 COLUMN_ORDER: tuple[str, ...] = (
     ERC_UNLEVERED,
@@ -120,7 +131,7 @@ class RuleComparison:
     of ``series``.
 
     ``target_vol`` is what the matched column *asked* the overlay for and
-    ``realized_vol`` is what it actually delivered; they differ by roughly 12.5%
+    ``realized_vol`` is what it actually delivered; they differ by roughly 13%
     because a trailing estimator cannot hit a target exactly. Both are carried
     so a report can print the gap rather than imply there isn't one.
 
@@ -172,9 +183,13 @@ def matched_target_vol(
 ) -> float:
     """The volatility an ERC book must be levered to in order to match ``benchmark_returns``.
 
-    Just that series' own realised annualised volatility. It is a separate
-    function because the number is reported next to the result and because a
-    test needs to be able to ask for it without building a whole comparison.
+    Just that series' own realised annualised volatility -- over every date it
+    is given, so when it is given the whole evaluation window the result is
+    known only in hindsight. That is the matched column's design, not an
+    accident: see the module docstring, and never present the column built from
+    it as a strategy that could have been run. It is a separate function because
+    the number is reported next to the result and because a test needs to be
+    able to ask for it without building a whole comparison.
     """
     if not isinstance(benchmark_returns, pd.Series):
         raise ComparisonError("benchmark_returns must be a pandas Series of daily returns")
@@ -221,8 +236,13 @@ def build_series(
 
     # The unlevered ERC book: the engine's own weights with no overlay at all.
     unlevered = unlevered_returns(sleeves, engine.weights)
-    matched_unlevered = unlevered_returns(sleeves, matched.weights)
-    zero = pd.Series(0.0, index=index)
+
+    # The financing-free counterfactuals are re-accrued as held books at a zero
+    # rate, not derived from the financed series by the one-period identity: in
+    # a held book the loan's interest also moves the leverage between
+    # rebalances, so "the same book, borrowing free" has its own leverage path.
+    def financing_free(result) -> pd.Series:
+        return apply_overlay(sleeves, result.weights, result.leverage, 0.0)["strategy"]
 
     columns = {
         ERC_UNLEVERED: unlevered,
@@ -231,9 +251,9 @@ def build_series(
         MAX_SHARPE: benchmarks[MAX_SHARPE].returns,
         SIXTY_FORTY: benchmarks[SIXTY_FORTY].returns,
         ERC_TARGET_FINANCED: engine.returns,
-        ERC_TARGET_FREE: financed_returns(unlevered, engine.leverage, zero),
+        ERC_TARGET_FREE: financing_free(engine),
         ERC_MATCHED_FINANCED: matched.returns,
-        ERC_MATCHED_FREE: financed_returns(matched_unlevered, matched.leverage, zero),
+        ERC_MATCHED_FREE: financing_free(matched),
     }
     return pd.DataFrame({name: columns[name] for name in COLUMN_ORDER}, index=index)
 
@@ -254,11 +274,21 @@ ALLOCATION_RULES: tuple[str, ...] = (ERC_UNLEVERED, EQUAL_CAPITAL, NAIVE_INV_VOL
 
 
 def effective_bets(risk_contributions: pd.DataFrame) -> pd.Series:
-    """Effective number of independent bets per rebalance: ``1 / sum(RC_i**2)``.
+    """Effective number of risk shares per rebalance: ``1 / sum(RC_i**2)``.
 
-    The reciprocal Herfindahl index of the risk shares. ``N`` when every sleeve
-    carries ``1/N`` of the risk, ``1`` when one sleeve carries all of it, so it
-    reads directly as "how many sleeves is this book really betting on".
+    The reciprocal Herfindahl index of the estimated risk shares. ``N`` when every
+    sleeve carries ``1/N`` of the risk, ``1`` when one sleeve carries all of it.
+    It measures how *evenly the estimated risk is split* across sleeves, and
+    nothing more.
+
+    **It is not a count of independent bets.** The risk shares already fold the
+    correlations in -- each is ``w_i * (cov @ w)_i`` -- but an even split of
+    variance among correlated sleeves is still a split among correlated sleeves:
+    four equal shares from four assets that move together are not four
+    independent sources of return. Counting independent bets needs the
+    covariance's factor structure (e.g. the dispersion of risk across principal
+    components), which this statistic does not look at. The name is the
+    literature's; the reading is "how concentrated", not "how many independent".
 
     **The usual ``[1, N]`` bound holds only while every share is non-negative,
     and 1/N does not guarantee that.** A sleeve that hedges the rest can carry a
@@ -513,8 +543,12 @@ _CAVEATS: tuple[str, ...] = (
     "Ratios are return-to-volatility at a zero risk-free rate, not a true Sharpe. The same "
     "convention is applied to every row, so the ranking is fair even though the level is not.",
     "The matched column is APPROXIMATELY matched. A trailing volatility estimator cannot hit a "
-    "target exactly, and this overlay overshoots by roughly 12.5%, so the realised volatility "
+    "target exactly, and this overlay overshoots by roughly 13%, so the realised volatility "
     "printed above the table is the one to read -- not the target.",
+    "The matched column is a HINDSIGHT diagnostic, not a strategy anyone could have run. Its "
+    "target is 1/N's realised volatility over the whole window, known only at the end. Each "
+    "month's leverage uses trailing data only, but the level it aims at was chosen after the "
+    "fact. Read it as 'at 1/N's realised risk, which rule earned more', not as a forecast.",
     "Two rows are counterfactual and are marked: the financing-omitted ones. Nobody can borrow "
     "at zero. They are reported only because the difference from their financed twin IS the cost "
     "of leverage, which is one of the three findings.",
@@ -616,6 +650,12 @@ def format_comparison_report(comp: RuleComparison) -> str:
         lines.append(
             "    longer bounded below by 1.00, so read it as a measure rather than a count."
         )
+    lines.append(
+        "  It measures how evenly the ESTIMATED risk is split, not how many independent"
+    )
+    lines.append(
+        "  bets the book holds: equal shares among correlated sleeves are still correlated."
+    )
     lines.append(f"\nRelative to {EQUAL_CAPITAL} (daily returns)")
     lines.append(textwrap.indent(format_relative_table(comp.relative, "1/N"), "  "))
     lines.append("  Down capture below 100% = lost less than 1/N on 1/N's down days.")
