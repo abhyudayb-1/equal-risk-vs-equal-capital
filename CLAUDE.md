@@ -52,9 +52,9 @@ preamble. **No test or self-check may touch the network**; live data belongs in 
 
 ## Reports and the single data date
 
-`README.md` quotes one live run on one data date (2026-11-06). Eight files in `reports/` are
-tracked from that run. If you refresh numbers, re-run **both** CLIs and update every figure in the
-README together. Mixing two data dates produces a comparison that cannot be right. Module
+`README.md` quotes one live run on one data date (2026-11-06). Ten files in `reports/` are
+tracked from that run, the sweep CSV included. If you refresh numbers, re-run **both** CLIs
+and update every figure in the README together. Mixing two data dates produces a comparison that cannot be right. Module
 self-checks write to a temp directory, never to `reports/`. If `git status` shows `reports/`
 changed after a self-check, restore it with `git checkout -- reports/`.
 

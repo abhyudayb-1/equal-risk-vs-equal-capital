@@ -28,8 +28,8 @@ portfolio, and a classic 60/40 stock/bond mix.
 ## The short answer
 
 > **Equal risk is a better way to spread risk than equal capital, and it wins on risk-adjusted
-> return when neither book uses leverage. Once you pay for the leverage needed to compare the two
-> at the same volatility, it loses.**
+> return when neither book uses leverage. Lever it toward 1/N's volatility and pay for the
+> borrowing, and it loses.**
 
 | | Equal risk (ERC) | Equal capital (1/N) |
 |---|---|---|
@@ -37,7 +37,7 @@ portfolio, and a classic 60/40 stock/bond mix.
 | Return / volatility, unlevered | **0.723** | 0.683 |
 | Worst drawdown, unlevered | **−17.6%** | −29.0% |
 | Annual return, unlevered | 4.83% | **5.43%** |
-| Return / volatility at 1/N's realised volatility (hindsight), financing charged | 0.656 | **0.683** |
+| Return / volatility, ERC levered toward 1/N's full-window volatility (hindsight), financing charged | 0.656 | **0.683** |
 
 Four findings:
 
@@ -47,9 +47,10 @@ Four findings:
 2. **Without leverage, equal risk wins on risk-adjusted return.** It earns 0.723 of return per
    unit of volatility against 0.683, and its worst loss is about 40% shallower. In exchange it
    gives up 0.60 percentage points of return a year.
-3. **Once leverage is paid for, it loses.** To compare returns at the same risk, ERC is levered
-   toward the volatility 1/N actually realised over the whole sample. That target is only known
-   in hindsight, so this is a diagnostic of history rather than a strategy anyone could have run
+3. **Once leverage is paid for, it loses.** To compare returns at similar risk, ERC is levered
+   toward the volatility 1/N actually realised over the whole sample (8.25%). It overshoots and
+   realises 9.30%, so the risk is close but not equal. That target is only known in hindsight,
+   so this is a diagnostic of history rather than a strategy anyone could have run
    (see [section 3](#3-volatility-targeting-as-a-measuring-tool)). Borrowing at the T-bill rate
    costs about 0.7% a year of return, and that wipes out the whole advantage: 0.656 against
    0.683. Leave the borrowing cost out and ERC appears to win (0.725), which is how this strategy
@@ -161,8 +162,9 @@ Three properties matter here:
   matched.
 - **The matched comparison uses hindsight.** Its target is 1/N's realised volatility over the
   *whole* sample, which nobody knew in 2007. Each month's leverage still uses only past data, but
-  the level it aims at was chosen after the fact. Read it as "at the same realised risk as 1/N,
-  which rule earned more?", not as a tradable strategy. It is labelled "(hindsight)" everywhere
+  the level it aims at was chosen after the fact. Read it as "aiming at 1/N's realised risk,
+  which rule earned more?", not as a tradable strategy. Because of the overshoot it does not land
+  on 1/N's risk: it realises 9.30% against 1/N's 8.25%. It is labelled "(hindsight)" everywhere
   it appears. A target set from a calibration period before the sample would be tradable, but it
   would not match 1/N's risk.
 - **The volatility target never changes the ERC weights.** It only scales the position size. This
@@ -245,8 +247,8 @@ independent bets would need the covariance's factor structure, which this statis
 | 60/40 | 8.07% | 11.19% | **0.750** | −31.40% | 1.00x |
 | ERC @ 10% vol target, financed | 6.65% | 11.34% | 0.625 | −31.01% | 1.76x |
 | ERC @ 10% vol target, *no financing cost* | 7.82% | 11.33% | 0.722 | −30.95% | 1.76x |
-| **ERC @ 1/N's realised volatility (hindsight), financed** | 5.83% | 9.30% | **0.656** | −25.82% | 1.46x |
-| ERC @ 1/N's realised volatility (hindsight), *no financing cost* | 6.51% | 9.30% | 0.725 | −25.77% | 1.46x |
+| **ERC targeting 1/N's full-window volatility (hindsight), financed** | 5.83% | 9.30% | **0.656** | −25.82% | 1.46x |
+| ERC targeting 1/N's full-window volatility (hindsight), *no financing cost* | 6.51% | 9.30% | 0.725 | −25.77% | 1.46x |
 
 *The "no financing cost" rows are hypothetical, since nobody borrows for free. They are included
 to show how much the borrowing costs. The "(hindsight)" rows aim at a volatility known only at
@@ -268,13 +270,15 @@ and a rebalance frequency. The `--sensitivities` sweep changes one setting at a 
 | Rebalance frequency | 1 – 12 months (1) | **−0.029** to +0.040 |
 
 - **Unlevered, ERC beats 1/N at 16 of 17 settings.** The exception is rebalancing once a year
-  (0.693 against 0.722). At six-monthly the lead is already down to +0.001. Equal risk needs to be
-  re-solved at least quarterly, because the covariance keeps changing.
+  (0.693 against 0.722). The lead narrows as rebalancing gets less frequent: +0.040 monthly,
+  +0.028 quarterly, and only +0.001 at six-monthly, a very small lead in this sample. It is
+  still positive at six months, so the sweep does not show that quarterly rebalancing is needed
+  to keep any lead.
 - **Rebalance frequency moves 1/N as well.** A held 1/N book drifts further between less
   frequent rebalances, and its own ratio rises from 0.683 (monthly) to 0.722 (yearly). Part of
   ERC's lost lead at long intervals is 1/N getting better, not only ERC getting worse.
-- **Levered to 1/N's realised volatility (hindsight), ERC loses at all 17 settings** (by −0.018
-  to −0.080). The gap comes from the cost of financing, not from how the covariance is
+- **Levered toward 1/N's full-window volatility (hindsight), ERC loses at all 17 settings**
+  (by −0.018 to −0.080). The gap comes from the cost of financing, not from how the covariance is
   estimated.
 
 ### What about trading costs?
@@ -295,7 +299,7 @@ four ETFs cost far less than that to trade. At a pessimistic 0.25%, the lead shr
 to +0.036.
 
 These are the trades the return path actually makes: each portfolio is held through the month,
-and its trade is measured from where it drifted to. For the levered hindsight-matched book, the
+and its trade is measured from where it drifted to. For the levered hindsight-targeted book, the
 trade is measured on its levered holdings, including bringing the drifted leverage back to
 target. That book is already behind 1/N before any cost (0.656 against 0.683), so costs only
 widen the gap.
@@ -375,6 +379,7 @@ What's in `reports/`:
 | File | Written by | Shows |
 |---|---|---|
 | `rule_comparison.csv` | `compare_rules.py` | the performance table for every portfolio |
+| `sensitivity_sweep.csv` | `compare_rules.py --sensitivities` | both rules re-run at each of the 17 estimator settings |
 | `risk_allocation.csv` | `compare_rules.py` | each asset's share of capital and of risk under each rule |
 | `rule_risk_shares.png` | `compare_rules.py` | the same risk shares as a chart |
 | `return_vol_plane.png` | `compare_rules.py` | return against volatility, unlevered and financed |
