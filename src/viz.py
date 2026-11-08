@@ -779,13 +779,13 @@ def plot_return_vol_plane(
     # ratio * volatility == mean(excess) * periods_per_year, i.e. the annualized
     # arithmetic return, recovered rather than recomputed so the two cannot drift.
     ratios = summary["sharpe_ratio"].astype("float64")
-    cagrs = ratios * vols
+    means = ratios * vols
 
     figure, ax = _new_figure(figsize=(9.8, 6.6))
 
     x_max = float(max(vols.max(), match_vol or 0.0)) * 1.24
-    y_min = min(0.0, float(cagrs.min()) * 1.25)
-    y_max = float(cagrs.max()) * 1.25
+    y_min = min(0.0, float(means.min()) * 1.25)
+    y_max = float(means.max()) * 1.25
 
     # Iso-ratio rays through the origin, at round ratios bracketing the data,
     # each labelled where it leaves the axes rather than in a legend -- a legend
@@ -823,7 +823,7 @@ def plot_return_vol_plane(
         if start in summary.index and end in summary.index:
             ax.annotate(
                 "",
-                xy=(vols[end], cagrs[end]), xytext=(vols[start], cagrs[start]),
+                xy=(vols[end], means[end]), xytext=(vols[start], means[start]),
                 arrowprops={"arrowstyle": "-|>", "color": PALETTE[1],
                             "linewidth": 1.3, "shrinkA": 7, "shrinkB": 7,
                             "linestyle": "--"},
@@ -832,13 +832,13 @@ def plot_return_vol_plane(
     for name in summary.index:
         hollow = name in counterfactual
         ax.scatter(
-            vols[name], cagrs[name], s=74, zorder=3,
+            vols[name], means[name], s=74, zorder=3,
             facecolor="white" if hollow else PALETTE[0],
             edgecolor=PALETTE[1] if hollow else PALETTE[0],
             linewidth=1.5 if hollow else 0.8,
         )
 
-    _style_axes(ax, ylabel="Annualized return", xlabel="Annualized volatility")
+    _style_axes(ax, ylabel="Annualized mean return (arithmetic)", xlabel="Annualized volatility")
     ax.set_xlim(0.0, x_max)
     ax.set_ylim(y_min, y_max)
 
@@ -849,13 +849,13 @@ def plot_return_vol_plane(
     # a free vertical slot and joined to its marker by a hairline, which keeps
     # the marker where the data puts it and moves only the text.
     placements = _spread_labels(
-        ax, [(float(vols[n]), float(cagrs[n])) for n in summary.index],
+        ax, [(float(vols[n]), float(means[n])) for n in summary.index],
         (0.0, x_max), (y_min, y_max),
     )
     for name, (label_x, label_y, align) in zip(summary.index, placements):
         ax.annotate(
             f"{name}  {ratios[name]:.3f}",
-            xy=(vols[name], cagrs[name]), xytext=(label_x, label_y), xycoords="data",
+            xy=(vols[name], means[name]), xytext=(label_x, label_y), xycoords="data",
             textcoords="data", color=INK, fontsize=8.5, va="center", ha=align,
             zorder=4,
             arrowprops={"arrowstyle": "-", "color": MUTED, "linewidth": 0.6,
@@ -866,7 +866,7 @@ def plot_return_vol_plane(
     _title(
         ax,
         title or "Return against volatility - every construction rule",
-        "Dashed rays are constant return-to-volatility; a point sits on its own. "
+        "Dashed rays are constant mean-return-to-volatility; a point sits on its own. "
         "Hollow markers are not runnable.",
     )
     return _save(figure, path or REPORTS_DIR / "return_vol_plane.png")
