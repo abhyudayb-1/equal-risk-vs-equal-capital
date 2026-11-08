@@ -34,19 +34,19 @@ portfolio, and a classic 60/40 stock/bond mix.
 | | Equal risk (ERC) | Equal capital (1/N) |
 |---|---|---|
 | Effective number of risk shares (out of 4) | **4.00** | 2.92 |
-| Return / volatility, unlevered | **0.723** | 0.683 |
+| Mean return ÷ volatility, unlevered | **0.723** | 0.683 |
 | Worst drawdown, unlevered | **−17.6%** | −29.0% |
-| Annual return, unlevered | 4.83% | **5.43%** |
-| Return / volatility, ERC levered toward 1/N's full-window volatility (hindsight), financing charged | 0.656 | **0.683** |
+| Annual return (CAGR), unlevered | 4.83% | **5.43%** |
+| Mean return ÷ volatility, ERC levered toward 1/N's full-window volatility (hindsight), financing charged | 0.656 | **0.683** |
 
 Four findings:
 
 1. **Equal risk really does balance the risk.** ERC holds every asset at exactly 25% of portfolio
    risk. Under 1/N, equities' share of risk swings between 9% and 60%, commodities average 42%,
    and TIP barely matters (9%).
-2. **Without leverage, equal risk wins on risk-adjusted return.** It earns 0.723 of return per
-   unit of volatility against 0.683, and its worst loss is about 40% shallower. In exchange it
-   gives up 0.60 percentage points of return a year.
+2. **Without leverage, equal risk wins on risk-adjusted return.** It earns 0.723 of mean return
+   per unit of volatility against 0.683, and its worst loss is about 40% shallower. In exchange
+   it gives up 0.60 percentage points of compound return (CAGR) a year.
 3. **Once leverage is paid for, it loses.** To compare returns at similar risk, ERC is levered
    toward the volatility 1/N actually realised over the whole sample (8.25%). It overshoots and
    realises 9.30%, so the risk is close but not equal. That target is only known in hindsight,
@@ -201,9 +201,12 @@ failures.
 The first year of data is used to warm up the covariance estimate. Charts referenced below are
 committed in `reports/`.
 
-Ratios are return ÷ volatility (a Sharpe ratio with a zero risk-free rate). The same ratio is used
-for every portfolio, so the ranking is fair even though the absolute level differs from a true
-Sharpe ratio.
+Ratios are the **arithmetic** mean daily return, annualised (×252), divided by annualised
+volatility: a Sharpe ratio with a zero risk-free rate. They are not CAGR ÷ volatility. CAGR is
+lower than the arithmetic mean, so dividing the CAGR column by volatility gives smaller numbers
+(0.705 for unlevered ERC and 0.658 for 1/N, against 0.723 and 0.683). The ranking is the same
+on either measure. The same ratio is used for every portfolio, so the comparison is fair, but
+its level differs from a true Sharpe ratio, which would subtract the bill rate.
 
 ### Where each rule puts its risk
 
@@ -238,19 +241,21 @@ independent bets would need the covariance's factor structure, which this statis
 
 ### Performance
 
-| | Annual return | Volatility | Return/vol | Max drawdown | Avg leverage |
-|---|---|---|---|---|---|
-| **ERC, unlevered** | 4.83% | 6.85% | **0.723** | −17.63% | 1.00x |
-| Naive 1/σ | 4.61% | 6.61% | 0.715 | −17.12% | 1.00x |
-| **1/N (equal capital)** | 5.43% | 8.25% | **0.683** | −28.98% | 1.00x |
-| Max Sharpe | 6.37% | 10.48% | 0.641 | −26.59% | 1.00x |
-| 60/40 | 8.07% | 11.19% | **0.750** | −31.40% | 1.00x |
-| ERC @ 10% vol target, financed | 6.65% | 11.34% | 0.625 | −31.01% | 1.76x |
-| ERC @ 10% vol target, *no financing cost* | 7.82% | 11.33% | 0.722 | −30.95% | 1.76x |
-| **ERC targeting 1/N's full-window volatility (hindsight), financed** | 5.83% | 9.30% | **0.656** | −25.82% | 1.46x |
-| ERC targeting 1/N's full-window volatility (hindsight), *no financing cost* | 6.51% | 9.30% | 0.725 | −25.77% | 1.46x |
+| | CAGR | Mean return | Volatility | Mean ÷ vol | Max drawdown | Avg leverage |
+|---|---|---|---|---|---|---|
+| **ERC, unlevered** | 4.83% | 4.95% | 6.85% | **0.723** | −17.63% | 1.00x |
+| Naive 1/σ | 4.61% | 4.73% | 6.61% | 0.715 | −17.12% | 1.00x |
+| **1/N (equal capital)** | 5.43% | 5.63% | 8.25% | **0.683** | −28.98% | 1.00x |
+| Max Sharpe | 6.37% | 6.72% | 10.48% | 0.641 | −26.59% | 1.00x |
+| 60/40 | 8.07% | 8.39% | 11.19% | **0.750** | −31.40% | 1.00x |
+| ERC @ 10% vol target, financed | 6.65% | 7.08% | 11.34% | 0.625 | −31.01% | 1.76x |
+| ERC @ 10% vol target, *no financing cost* | 7.82% | 8.18% | 11.33% | 0.722 | −30.95% | 1.76x |
+| **ERC targeting 1/N's full-window volatility (hindsight), financed** | 5.83% | 6.10% | 9.30% | **0.656** | −25.82% | 1.46x |
+| ERC targeting 1/N's full-window volatility (hindsight), *no financing cost* | 6.51% | 6.74% | 9.30% | 0.725 | −25.77% | 1.46x |
 
-*The "no financing cost" rows are hypothetical, since nobody borrows for free. They are included
+*Mean return is the arithmetic mean daily return × 252, and Mean ÷ vol is that divided by
+volatility, so the division checks. CAGR is the compounded growth rate, which is lower. The
+"no financing cost" rows are hypothetical, since nobody borrows for free. They are included
 to show how much the borrowing costs. The "(hindsight)" rows aim at a volatility known only at
 the end of the sample; see [section 3](#3-volatility-targeting-as-a-measuring-tool). Average
 leverage is the mean of the month-end decisions; the held book drifts around it during each

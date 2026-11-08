@@ -540,8 +540,9 @@ def compare_rules(
 # ---------------------------------------------------------------------------
 # Stated on every run, not only in the README: a reader reads the output.
 _CAVEATS: tuple[str, ...] = (
-    "Ratios are return-to-volatility at a zero risk-free rate, not a true Sharpe. The same "
-    "convention is applied to every row, so the ranking is fair even though the level is not.",
+    "Ratios are the annualised ARITHMETIC mean return over volatility at a zero risk-free "
+    "rate: not CAGR / volatility (CAGR is lower) and not a true Sharpe. The same convention "
+    "is applied to every row, so the ranking is fair even though the level is not.",
     "The matched column is APPROXIMATELY matched. A trailing volatility estimator cannot hit a "
     "target exactly, and this overlay overshoots by roughly 13%, so the realised volatility "
     "printed above the table is the one to read -- not the target.",
