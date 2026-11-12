@@ -9,7 +9,7 @@ __pycache__/
 # Regenerable network pulls -- delete a file to force a re-pull
 data/cache/
 
-# Generated reports. The ten files listed in README.md are tracked (force-added
+# Generated reports. The eleven files listed in README.md are tracked (force-added
 # from one live run); anything else written here stays local.
 reports/
 

@@ -21,12 +21,15 @@ Pipeline, in order, one module per stage:
 
 ``run_backtest.py`` wires it end to end.
 
-Four further modules sit beside that pipeline rather than in it:
+Five further modules sit beside that pipeline rather than in it:
 
     riskmetrics.py  VaR/CVaR, Sortino, Calmar, drawdown duration, and the
                     shared metric table
     headtohead.py   one return series against another: correlation, beta,
                     capture, the tail block, the crisis table
+    significance.py whether a gap between two ratios is distinguishable from
+                    noise: a paired block-bootstrap interval on the difference,
+                    with the closed-form Sharpe-difference test beside it
     comparison.py   the study itself: equal risk against equal capital, with
                     ERC also levered to 1/N's own volatility so the returns are
                     comparable and the financing is counted
@@ -35,7 +38,7 @@ Four further modules sit beside that pipeline rather than in it:
                     with both rules re-run together, plus reconstructed
                     turnover and the cost at which ERC stops beating 1/N
 
-``comparison.py`` consumes riskmetrics and headtohead and runs the engine a second time at 1/N's volatility to build its
+``comparison.py`` consumes riskmetrics, headtohead and significance and runs the engine a second time at 1/N's volatility to build its
 matched column. ``compare_rules.py`` is the CLI for both it and sensitivity.py.
 
 The invariant that must never be violated: at rebalance date ``t``, only data

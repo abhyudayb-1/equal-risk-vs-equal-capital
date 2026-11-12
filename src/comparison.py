@@ -33,8 +33,16 @@ alignment that a hand-rolled ``leverage = target / vol`` would get wrong (see th
 alignment notes in ``overlay.py``). The data fetching
 and the printing-to-a-terminal belong to ``compare_rules.py``.
 
-Metric rows come from :mod:`src.riskmetrics` and the pairwise blocks from
-:mod:`src.headtohead`, so nothing statistical is re-derived here.
+Metric rows come from :mod:`src.riskmetrics`, the pairwise blocks from
+:mod:`src.headtohead` and the interval on each ratio gap from
+:mod:`src.significance`, so nothing statistical is re-derived here.
+
+**No ratio gap is reported without its interval.** The comparison's headline is
+a difference of two return-to-volatility ratios, and on the live sample every
+such difference against 1/N has a 95% interval that spans zero -- ERC's +0.040
+included. The ranking in the table is what this history produced; the interval
+says this history cannot tell it from no difference. Both are printed, in that
+order, and neither is the whole finding without the other.
 
 **Two measurement facts that shape the output, both measured rather than
 assumed**:
@@ -81,6 +89,7 @@ from .headtohead import crisis_table, format_crisis_table, format_relative_table
 from .metrics import summarize
 from .overlay import apply_overlay, unlevered_returns
 from .riskmetrics import format_metric_table, realized_risk_table
+from .significance import format_ratio_difference_table, ratio_difference_table
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +152,12 @@ class RuleComparison:
     re-running five rules to get them back would be both slow and a second
     chance to run them on different inputs.
 
+    ``ratio_difference`` is :func:`src.significance.ratio_difference_table`'s
+    frame: every rule's ratio against 1/N's, with a block-bootstrap interval on
+    the gap. It is a field rather than something a report computes on demand so
+    that the point estimates and their intervals cannot be printed from two
+    different runs.
+
     ``matched_leverage`` is the matched run's own leverage path, carried because
     it is not recoverable from anything else here -- the ``rule_results`` entry
     for ERC is the *published-target* run, which holds the same weights at a
@@ -168,6 +183,7 @@ class RuleComparison:
     series: pd.DataFrame
     summary: pd.DataFrame
     relative: pd.DataFrame
+    ratio_difference: pd.DataFrame
     tail: pd.DataFrame
     crisis: pd.DataFrame
     allocation: pd.DataFrame
@@ -504,6 +520,15 @@ def compare_rules(
             for name in others
         }
     )
+    # The interval on each ratio gap. Same series, same benchmark and the same
+    # ratio convention as the summary above, so `difference` here is exactly the
+    # difference of two `sharpe_ratio` cells there.
+    ratio_difference = ratio_difference_table(
+        series,
+        EQUAL_CAPITAL,
+        periods_per_year=periods_per_year,
+        annual_risk_free_rate=annual_risk_free_rate,
+    )
     tail = pd.DataFrame(
         {name: tail_block(series[name], series[EQUAL_CAPITAL]) for name in others}
     ).T
@@ -542,6 +567,7 @@ def compare_rules(
         series=series,
         summary=summary,
         relative=relative,
+        ratio_difference=ratio_difference,
         tail=tail,
         crisis=crisis,
         allocation=allocation,
@@ -574,6 +600,11 @@ _CAVEATS: tuple[str, ...] = (
     "Two rows are counterfactual and are marked: the financing-omitted ones. Nobody can borrow "
     "at zero. They are reported only because the difference from their financed twin IS the cost "
     "of leverage, which is one of the three findings.",
+    "A ratio gap is an ESTIMATE. The interval beside each one is a paired block bootstrap of "
+    "the difference in ratios over this one history; where it spans zero, this sample cannot "
+    "tell the two rules apart on that measure, whichever way the point estimate leans. It says "
+    "nothing about risk balance or drawdown, which are different measures, and it does not "
+    "adjust for reading eight comparisons off one table.",
     "No transaction costs, bid-ask spread or borrow spread over the bill rate, on any row, so "
     "every level here is optimistic. src/sensitivity.py measures what that is worth, and the "
     "obvious version of the objection is wrong: ERC re-optimises every month, but a 1/N book "
@@ -644,6 +675,40 @@ def format_comparison_report(comp: RuleComparison) -> str:
     counterfactual = [c for c in comp.summary.index if c in COUNTERFACTUAL]
     if counterfactual:
         lines.append(f"  ! counterfactual, not runnable: {', '.join(counterfactual)}")
+
+    lines.append(
+        f"\nIs each ratio's gap to {EQUAL_CAPITAL} distinguishable from noise?"
+    )
+    lines.append(textwrap.indent(format_ratio_difference_table(comp.ratio_difference, "1/N"), "  "))
+    _first = comp.ratio_difference.iloc[0]
+    lines.append(
+        f"  Paired stationary block bootstrap: {int(_first['n_draws']):,} resamples, mean block "
+        f"{_first['mean_block_days']:g} days,"
+    )
+    lines.append(
+        f"  {int(_first['n_observations']):,} daily returns. Memmel is the closed-form "
+        "Jobson-Korkie test, which assumes i.i.d."
+    )
+    _spanning = comp.ratio_difference[
+        (comp.ratio_difference["ci_low"] <= 0.0) & (comp.ratio_difference["ci_high"] >= 0.0)
+    ]
+    if len(_spanning) == len(comp.ratio_difference):
+        lines.append(
+            "  ! EVERY interval spans zero: on this sample no rule's ratio is distinguishable "
+            "from 1/N's."
+        )
+        lines.append(
+            "    The ranking above is what this history produced, not a difference it can "
+            "establish."
+        )
+    elif len(_spanning):
+        lines.append(
+            f"  ! {len(_spanning)} of {len(comp.ratio_difference)} intervals span zero; those "
+            "gaps are not distinguishable from"
+        )
+        lines.append("    no difference on this sample.")
+    else:
+        lines.append("  No interval spans zero.")
 
     lines.append("\nWhere each rule puts its risk -- mean capital weight beside mean risk share")
     lines.append(textwrap.indent(format_allocation_table(comp.allocation), "  "))

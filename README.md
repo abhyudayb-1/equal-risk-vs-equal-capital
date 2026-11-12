@@ -27,9 +27,10 @@ portfolio, and a classic 60/40 stock/bond mix.
 
 ## The short answer
 
-> **Equal risk is a better way to spread risk than equal capital, and it wins on risk-adjusted
-> return when neither book uses leverage. Lever it toward 1/N's volatility and pay for the
-> borrowing, and it loses.**
+> **Equal risk is a better way to spread risk than equal capital. On risk-adjusted return it
+> scores higher when neither book uses leverage, and lower once it is levered toward 1/N's
+> volatility and pays for the borrowing. Neither of those two gaps is statistically
+> distinguishable from zero over this 20-year sample.**
 
 | | Equal risk (ERC) | Equal capital (1/N) |
 |---|---|---|
@@ -39,27 +40,41 @@ portfolio, and a classic 60/40 stock/bond mix.
 | Annual return (CAGR), unlevered | 4.83% | **5.43%** |
 | Mean return ÷ volatility, ERC levered toward 1/N's full-window volatility (hindsight), financing charged | 0.656 | **0.683** |
 
+How sure is each ratio gap? A block bootstrap puts a 95% interval on the difference:
+
+| ERC minus 1/N, mean return ÷ volatility | Gap | 95% interval | p-value |
+|---|---|---|---|
+| Unlevered | +0.040 | −0.119 to +0.211 | 0.68 |
+| Levered toward 1/N's volatility (hindsight), financing charged | −0.026 | −0.246 to +0.196 | 0.79 |
+
+Both intervals comfortably include zero. The ordering above is what this history produced; the
+sample is not long enough to establish that either rule has the better ratio
+(see [Is the gap distinguishable from noise?](#is-the-gap-distinguishable-from-noise)). The risk
+balance and the drawdowns are different measures, and this test says nothing about them.
+
 Four findings:
 
 1. **Equal risk really does balance the risk.** ERC holds every asset at exactly 25% of portfolio
    risk. Under 1/N, equities' share of risk swings between 9% and 60%, commodities average 42%,
    and TIP barely matters (9%).
-2. **Without leverage, equal risk wins on risk-adjusted return.** It earns 0.723 of mean return
-   per unit of volatility against 0.683, and its worst loss is about 40% shallower. In exchange
-   it gives up 0.60 percentage points of compound return (CAGR) a year.
-3. **Once leverage is paid for, it loses.** To compare returns at similar risk, ERC is levered
+2. **Without leverage, equal risk scores higher on risk-adjusted return, but not by a margin
+   the sample can confirm.** It earns 0.723 of mean return per unit of volatility against 0.683,
+   a gap of +0.040 with a 95% interval of −0.119 to +0.211. Its worst loss is about 40%
+   shallower. In exchange it gives up 0.60 percentage points of compound return (CAGR) a year.
+3. **Once leverage is paid for, the lead is gone.** To compare returns at similar risk, ERC is levered
    toward the volatility 1/N actually realised over the whole sample (8.25%). It overshoots and
    realises 9.30%, so the risk is close but not equal. That target is only known in hindsight,
    so this is a diagnostic of history rather than a strategy anyone could have run
    (see [section 3](#3-volatility-targeting-as-a-measuring-tool)). Borrowing at the T-bill rate
-   costs about 0.7% a year of return, and that wipes out the whole advantage: 0.656 against
-   0.683. Leave the borrowing cost out and ERC appears to win (0.725), which is how this strategy
-   usually gets oversold.
+   costs about 0.7% a year of return, and that turns the point estimate around: 0.656 against
+   0.683, a gap of −0.026 with a 95% interval of −0.246 to +0.196. Leave the borrowing cost out
+   and ERC appears to win (0.725), which is how this strategy usually gets oversold.
 4. **Most of the benefit doesn't need an optimizer.** Simply weighting each asset by 1/volatility
    scores 0.715, close to ERC's 0.723. Modelling the correlations between assets adds less than
    one point.
 
-Plain 60/40 beat all of them on risk-adjusted return over this period (0.750).
+Plain 60/40 had the highest risk-adjusted return over this period (0.750). Its lead over 1/N,
++0.067, has a 95% interval of −0.245 to +0.372, so that is not established either.
 
 Every portfolio is **rebalanced monthly**: traded to its target at each month end and then held,
 drifting with prices, until the next one. The returns and the trading costs below are both
@@ -86,8 +101,8 @@ On Windows, use `python -m venv .venv` and `.\.venv\Scripts\python.exe` in place
 **Run the study:**
 
 ```bash
-.venv/bin/python compare_rules.py                     # the comparison (about 6s once data is cached)
-.venv/bin/python compare_rules.py --sensitivities     # adds the robustness sweep (about 25s)
+.venv/bin/python compare_rules.py                     # the comparison (about 9s once data is cached)
+.venv/bin/python compare_rules.py --sensitivities     # adds the robustness sweep (about 30s)
 ```
 
 **Run the engine on its own** (levered ERC against four unlevered benchmarks, with crisis
@@ -261,6 +276,49 @@ the end of the sample; see [section 3](#3-volatility-targeting-as-a-measuring-to
 leverage is the mean of the month-end decisions; the held book drifts around it during each
 month. See `reports/return_vol_plane.png`.*
 
+### Is the gap distinguishable from noise?
+
+A ratio measured over 20 years of daily returns is an estimate, and the headline is a difference
+of two of them. Every row's gap to 1/N is therefore reported with an interval:
+
+| | Mean ÷ vol | Gap to 1/N | 95% interval | p (bootstrap) | p (Memmel) |
+|---|---|---|---|---|---|
+| **ERC, unlevered** | 0.723 | **+0.040** | **−0.119 to +0.211** | 0.68 | 0.61 |
+| Naive 1/σ | 0.715 | +0.032 | −0.132 to +0.200 | 0.75 | 0.71 |
+| Max Sharpe | 0.641 | −0.041 | −0.473 to +0.406 | 0.88 | 0.85 |
+| 60/40 | 0.750 | +0.067 | −0.245 to +0.372 | 0.63 | 0.63 |
+| ERC @ 10% vol target, financed | 0.625 | −0.058 | −0.276 to +0.166 | 0.60 | 0.59 |
+| ERC @ 10% vol target, *no financing cost* | 0.722 | +0.039 | −0.177 to +0.262 | 0.75 | 0.71 |
+| **ERC targeting 1/N's full-window volatility (hindsight), financed** | 0.656 | **−0.026** | **−0.246 to +0.196** | 0.79 | 0.80 |
+| ERC targeting 1/N's full-window volatility (hindsight), *no financing cost* | 0.725 | +0.042 | −0.174 to +0.264 | 0.73 | 0.69 |
+
+*See `reports/ratio_difference.csv`.*
+
+**Every interval spans zero.** On this sample no portfolio's ratio can be told apart from
+1/N's, in either direction. ERC's unlevered lead of +0.040 has a standard error of about 0.086,
+roughly twice the lead itself. The table of ratios is still the best estimate of the ordering;
+it is not evidence that the ordering would repeat.
+
+How the interval is built:
+
+- **Paired stationary block bootstrap** (Politis and Romano), 10,000 resamples. Each resample
+  draws the *same dates* for both portfolios, which keeps their correlation. That matters: ERC
+  and 1/N hold the same four assets and are 0.94 correlated, so most of the noise in one ratio
+  is also in the other and cancels in the difference.
+- **Blocks, not single days.** Dates are drawn in runs averaging 63 trading days, so volatility
+  clustering survives into each resample. Daily returns here are barely autocorrelated (0.04 and
+  0.00 at one day), but their absolute size is (about 0.25 at one day and still 0.10 a quarter
+  later). The standard error rises from 0.080 with single-day draws to a plateau of about 0.085
+  from 42 days on; the interval spans zero at every block length tried, from 1 day to 252.
+- **A closed-form cross-check.** The Jobson-Korkie test with Memmel's correction is the standard
+  test for a difference of two Sharpe ratios. It assumes independent, normal returns, which
+  daily returns are not, so it is shown beside the bootstrap rather than instead of it. The two
+  agree closely here (standard error 0.079 against 0.086 for the unlevered gap).
+
+Two limits on what this says. The intervals describe sampling noise within this one history,
+not whether the next 20 years will resemble it. And they are not adjusted for reading eight
+comparisons off one table, which would only make them wider.
+
 ### Is the result robust to the estimator settings?
 
 1/N needs no estimates; ERC depends on a covariance halflife, a shrinkage amount, a warm-up length
@@ -273,6 +331,10 @@ and a rebalance frequency. The `--sensitivities` sweep changes one setting at a 
 | Shrinkage | 0.00 – 0.50 (0.10) | +0.034 to +0.043 |
 | Warm-up | 126 – 504 days (252) | +0.040 to +0.042 |
 | Rebalance frequency | 1 – 12 months (1) | **−0.029** to +0.040 |
+
+These are point estimates. Every lead in the table is small next to the sampling interval at
+the default setting (+0.040, 95% interval −0.119 to +0.211), so the sweep shows that the *sign*
+of the estimate does not depend on one choice of settings, not that the lead is established.
 
 - **Unlevered, ERC beats 1/N at 16 of 17 settings.** The exception is rebalancing once a year
   (0.693 against 0.722). The lead narrows as rebalancing gets less frequent: +0.040 monthly,
@@ -384,6 +446,7 @@ What's in `reports/`:
 | File | Written by | Shows |
 |---|---|---|
 | `rule_comparison.csv` | `compare_rules.py` | the performance table for every portfolio |
+| `ratio_difference.csv` | `compare_rules.py` | each portfolio's ratio gap to 1/N with its bootstrap interval |
 | `sensitivity_sweep.csv` | `compare_rules.py --sensitivities` | both rules re-run at each of the 17 estimator settings |
 | `risk_allocation.csv` | `compare_rules.py` | each asset's share of capital and of risk under each rule |
 | `rule_risk_shares.png` | `compare_rules.py` | the same risk shares as a chart |
@@ -399,7 +462,7 @@ The pipeline:
 ```
 data → covariance → riskparity → overlay → backtest → BacktestResult
                                                           ↓
-                         metrics / benchmarks / stress / viz / riskmetrics / headtohead
+                  metrics / benchmarks / stress / viz / riskmetrics / headtohead / significance
                                                           ↓
                                               comparison → sensitivity
 ```
@@ -417,6 +480,7 @@ data → covariance → riskparity → overlay → backtest → BacktestResult
 | `benchmarks.py` | Equal weight, 60/40, naive 1/σ and max Sharpe. |
 | `metrics.py`, `riskmetrics.py` | Return, volatility, Sharpe, drawdown, VaR/CVaR, Sortino, Calmar, crisis-window slicing. |
 | `headtohead.py` | One return series against another: correlation, beta, capture ratios, tail behaviour. |
+| `significance.py` | Whether a gap between two ratios is distinguishable from noise: a paired block-bootstrap interval, with the Jobson-Korkie-Memmel test as a cross-check. |
 | `stress.py` | Crisis breakdowns and the correlation and diversification-ratio diagnostics. |
 | `comparison.py` | The study itself: the nine-row comparison and the risk-allocation tables. |
 | `sensitivity.py` | The estimator sweep, turnover, and the trading-cost breakeven. |
@@ -444,6 +508,7 @@ for t in tests/test_*.py; do .venv/bin/python "$t"; done
 | `test_stress.py` | Crisis table, diversification ratio, charts |
 | `test_riskmetrics.py` | VaR/CVaR, Sortino, Calmar, drawdown duration |
 | `test_headtohead.py` | Correlation, beta, capture ratios, tail block |
+| `test_significance.py` | The block bootstrap and the closed-form test: exact identities, hand arithmetic, and a check that unpaired resampling fails |
 | `test_comparison.py` | The comparison, including a known two-asset case with an exact answer |
 | `test_sensitivity.py` | Turnover, trading costs, the breakeven, the sweep |
 
@@ -468,4 +533,6 @@ Most modules in `src/` also include a quick self-check on synthetic data. For ex
   between equal risk and equal capital bigger.
 - **One sample period.** The numbers above come from a single run on data through 2026-11-06.
   Re-running on a later date moves the ratios slightly (by about 0.01 a few days later), but not
-  the ranking.
+  the ranking. The ranking itself is an estimate: no ratio gap to 1/N is statistically
+  distinguishable from zero on this sample (see
+  [Is the gap distinguishable from noise?](#is-the-gap-distinguishable-from-noise)).
