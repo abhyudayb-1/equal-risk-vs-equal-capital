@@ -367,3 +367,53 @@ COST_RATES_BPS: tuple[float, ...] = (0.0, 1.0, 5.0, 10.0, 25.0, 50.0)
 # than a number if it gets there, because an extrapolated breakeven is not a
 # measurement.
 MAX_BREAKEVEN_COST: float = 0.05
+
+# ---------------------------------------------------------------------------
+# Is a ratio gap distinguishable from noise -- src/significance.py
+# ---------------------------------------------------------------------------
+# Confidence level of the interval printed beside every ratio gap. 95% because
+# it is the level a reader assumes when none is stated, and the same level as
+# VAR_CONFIDENCE, so the report carries one notion of "the tail" rather than
+# two. The level is printed in the table's own column header regardless.
+RATIO_TEST_CONFIDENCE: float = 0.95
+
+# Mean block length of the stationary bootstrap, in trading days. The blocks
+# exist to carry serial dependence into each resample, and what these returns
+# have is volatility clustering rather than autocorrelation in the returns
+# themselves: on the live sample (data through 2026-11-06) the lag-1
+# autocorrelation of ERC's daily return is 0.04 and of 1/N's 0.00, while for
+# the ABSOLUTE return it is 0.26 / 0.24 at lag 1 and still 0.10 / 0.11 at lag
+# 63.
+#
+# Measured, and this is what set the constant -- the standard error of the
+# ERC-minus-1/N ratio gap (point estimate +0.040) by mean block length, 10,000
+# draws each:
+#
+#     1 day (i.i.d.)  0.080        42 days   0.084
+#     5 days          0.075        63 days   0.086
+#     10 days         0.077        126 days  0.084
+#     21 days         0.081        252 days  0.084
+#
+# It rises to a plateau by about 42 days and is flat from there, so 63 -- one
+# quarter, and the same length as CORRELATION_WINDOW_DAYS -- sits on the
+# plateau and happens to be its widest point. That is the conservative choice
+# and it is not a delicate one: the interval spans zero at every length in the
+# list, and the closed-form Memmel standard error, which assumes no dependence
+# at all, is 0.079. With ~4,950 observations a 63-day mean still leaves ~80
+# blocks per resample.
+BOOTSTRAP_MEAN_BLOCK_DAYS: float = 63.0
+
+# Resamples per interval. Set by the Monte Carlo noise in the interval's own
+# endpoints, measured as their standard deviation across 8 seeds on the live
+# sample: 0.007 / 0.007 (lower / upper) at 1,000 draws, 0.003 / 0.006 at 5,000,
+# 0.002 / 0.004 at 10,000. The endpoints are printed to three decimals and sit
+# ~0.16 either side of the estimate, so at 10,000 the simulation moves the
+# third decimal and nothing a reader would act on. It costs about 2.3s for the
+# nine-column table; doubling it again would buy a third decimal that the
+# sampling error (0.086) makes meaningless.
+BOOTSTRAP_DRAWS: int = 10_000
+
+# Seed for the resampling. The value is arbitrary; what matters is that it is
+# fixed, so two runs on the same data print the same interval and a number in
+# the README can be reproduced rather than approximately recovered.
+BOOTSTRAP_SEED: int = 20261106

@@ -20,19 +20,23 @@ is, and the first symptom would be two tables in the README that cannot both be
 right. Everything printed comes out of ``src.comparison``; this file parses
 arguments, hands them over, and writes what comes back.
 
-**Three things it will not let you do quietly:**
+**Four things it will not let you do quietly:**
 
 1. **Mix data dates.** The window and the date the data ends are printed at the
    top of every run, because the one way to produce a wrong table here is to
    quote two rows measured on two different days.
-2. **Read the matched column as exactly matched, or as tradable.** The target
+2. **Read a ratio gap as a finding on its own.** Every gap to 1/N is printed
+   with a block-bootstrap interval, and the report says in words when that
+   interval spans zero. A ranking this history cannot distinguish from a tie is
+   still worth printing; printing it without saying so is not.
+3. **Read the matched column as exactly matched, or as tradable.** The target
    the overlay was given and the volatility it actually realized are printed
    side by side, with the overshoot between them. A trailing estimator cannot
    hit a target; saying so is cheaper than being asked. And the target itself is
    1/N's realized volatility over the whole window, known only in hindsight, so
    the column is labelled "(hindsight)": a retrospective diagnostic of the two
    rules at equal realized risk, not a strategy that could have been run.
-3. **Take the financing-omitted rows for results.** They are marked
+4. **Take the financing-omitted rows for results.** They are marked
    counterfactual in the table and again in the caveats. The gap between each
    and its financed twin is the cost of leverage, which is one of the three
    findings -- but it is not a strategy anyone can run.
@@ -92,6 +96,7 @@ log = logging.getLogger("compare_rules")
 
 SUMMARY_CSV = "rule_comparison.csv"
 ALLOCATION_CSV = "risk_allocation.csv"
+RATIO_DIFFERENCE_CSV = "ratio_difference.csv"
 SWEEP_CSV = "sensitivity_sweep.csv"
 
 
@@ -265,9 +270,13 @@ def write_tables(
     reports_dir.mkdir(parents=True, exist_ok=True)
     summary = reports_dir / SUMMARY_CSV
     allocation = reports_dir / ALLOCATION_CSV
+    ratio_difference = reports_dir / RATIO_DIFFERENCE_CSV
     comparison.summary.to_csv(summary)
     comparison.allocation.to_csv(allocation)
-    written = [summary, allocation]
+    # The interval on every ratio gap, beside the table of point estimates it
+    # qualifies -- a gap quoted from one file can be checked against the other.
+    comparison.ratio_difference.to_csv(ratio_difference)
+    written = [summary, allocation, ratio_difference]
     if swept is not None:
         sweep_path = reports_dir / SWEEP_CSV
         swept.to_csv(sweep_path, index=False)

@@ -688,6 +688,56 @@ def test_a_non_default_warmup_moves_every_rule_together() -> None:
         comparison.sixty_forty = real
 
 
+def test_every_ratio_gap_carries_its_interval() -> None:
+    # The headline is a difference of two ratios. The comparison must carry an
+    # interval on every such difference, computed on the same series as the
+    # table of point estimates, and the report must print the two together.
+    print("ratio gaps and their intervals:")
+    comp = fixture_comparison()
+    gaps = comp.ratio_difference
+
+    check("one row per rule other than 1/N, in the report's order",
+          list(gaps.index) == [c for c in COLUMN_ORDER if c != EQUAL_CAPITAL])
+    one_n = comp.summary.at[EQUAL_CAPITAL, "sharpe_ratio"]
+    check("each gap is exactly the difference of two cells of the summary table",
+          all(abs(gaps.at[name, "difference"]
+                  - (comp.summary.at[name, "sharpe_ratio"] - one_n)) < TOLERANCE
+              for name in gaps.index))
+    check("every interval contains its own point estimate's neighbourhood: low < high",
+          bool((gaps["ci_low"] < gaps["ci_high"]).all()))
+    check("the interval was measured on the comparison's own window",
+          bool((gaps["n_observations"] == comp.n_observations).all()))
+
+    text = format_comparison_report(comp)
+    row = gaps.loc[ERC_UNLEVERED]
+    interval = f"{row['ci_low']:+.3f} to {row['ci_high']:+.3f}"
+    check("the report prints ERC's interval beside its gap to 1/N",
+          interval in text and f"{row['difference']:+.3f}" in text)
+    check("...says how it was made", "block bootstrap" in text and "resamples" in text)
+
+    spanning = int(((gaps["ci_low"] <= 0.0) & (gaps["ci_high"] >= 0.0)).sum())
+    said = (
+        "EVERY interval spans zero" if spanning == len(gaps)
+        else "No interval spans zero" if spanning == 0
+        else f"{spanning} of {len(gaps)} intervals span zero"
+    )
+    check(f"...and states in words how many intervals span zero ({spanning} of {len(gaps)})",
+          said in text)
+
+    # The words must follow the numbers. Push every interval clear of zero and
+    # the sentence has to change with it.
+    cleared = gaps.copy()
+    cleared["ci_low"], cleared["ci_high"] = 0.01, 0.02
+    check("with every interval clear of zero the report says so instead",
+          "No interval spans zero" in format_comparison_report(
+              dataclasses.replace(comp, ratio_difference=cleared)))
+    straddling = gaps.copy()
+    straddling["ci_low"], straddling["ci_high"] = -0.1, 0.1
+    check("with every interval across zero it warns that no ratio is distinguishable",
+          "EVERY interval spans zero" in format_comparison_report(
+              dataclasses.replace(comp, ratio_difference=straddling)))
+
+
 # ---------------------------------------------------------------------------
 # The printed report -- what a reader actually sees
 # ---------------------------------------------------------------------------
@@ -742,6 +792,7 @@ if __name__ == "__main__":
     test_build_series_rejects_inputs_that_cannot_be_compared()
     test_compare_rules_rejects_bad_inputs()
     test_a_non_default_warmup_moves_every_rule_together()
+    test_every_ratio_gap_carries_its_interval()
 
     test_report_states_what_the_table_cannot_say_for_itself()
 

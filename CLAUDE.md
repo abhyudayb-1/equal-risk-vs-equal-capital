@@ -9,8 +9,8 @@ Always use the venv (system Python has no numpy). On Windows the interpreter is
 `.\.venv\Scripts\python.exe`; elsewhere it is `.venv/bin/python`.
 
 ```bash
-python compare_rules.py --no-charts                  # the study, ~6s
-python compare_rules.py --no-charts --sensitivities  # + the 17-setting sweep, ~25s
+python compare_rules.py --no-charts                  # the study, ~9s
+python compare_rules.py --no-charts --sensitivities  # + the 17-setting sweep, ~30s
 python run_backtest.py --no-charts                   # the engine alone
 for t in tests/test_*.py; do python "$t"; done       # all suites; each prints "N checks passed"
 python -m src.<module>                               # per-module self-check on synthetic data
@@ -45,6 +45,10 @@ preamble. **No test or self-check may touch the network**; live data belongs in 
 - **The matched column is a hindsight diagnostic.** Its target is 1/N's realised volatility over
   the whole window, so it keeps the "(hindsight)" label everywhere and is never presented as a
   tradable strategy.
+- **A ratio gap is never quoted without its interval.** Every gap to 1/N carries a paired
+  block-bootstrap interval from `src/significance.py`, and on the live sample every one spans
+  zero. Say "scores higher", not "beats", unless the interval excludes zero. Resampling the two
+  series on different dates destroys the pairing and inflates the interval; don't.
 - **Effective bets measures concentration, not independence.** `1 / Σ RC²` says how evenly the
   estimated risk is split; never describe it as a count of independent bets.
 - **The oracle in `tests/test_riskparity.py` was written independently of the solver it checks.**
@@ -52,7 +56,7 @@ preamble. **No test or self-check may touch the network**; live data belongs in 
 
 ## Reports and the single data date
 
-`README.md` quotes one live run on one data date (2026-11-06). Ten files in `reports/` are
+`README.md` quotes one live run on one data date (2026-11-06). Eleven files in `reports/` are
 tracked from that run, the sweep CSV included. If you refresh numbers, re-run **both** CLIs
 and update every figure in the README together. Mixing two data dates produces a comparison that cannot be right. Module
 self-checks write to a temp directory, never to `reports/`. If `git status` shows `reports/`
