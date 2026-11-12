@@ -19,6 +19,7 @@ import logging
 import pandas as pd
 import requests
 import yfinance as yf
+from pandas.tseries.holiday import GoodFriday, USMemorialDay
 
 from . import cache
 from .config import (
@@ -51,6 +52,15 @@ MAX_LATE_START_DAYS = 10
 # holidays that yfinance reports inconsistently across tickers). Anything longer
 # is a real hole and raises.
 MAX_INTERIOR_GAP_DAYS = 5
+
+# Scheduled US exchange holidays that can be the LAST business day of a calendar
+# month, which is the only place the rebalance calendar needs to know about
+# holidays at all. Worked through the NYSE schedule: Good Friday can land on
+# 29-31 March and Memorial Day on 31 May; every other holiday either cannot fall
+# in a month's final days or (New Year's Day on a Saturday) is not observed on
+# the preceding Friday. Without these, data ending Thursday 2024-03-28 looked
+# like an unfinished month and its final rebalance was dropped.
+MONTH_END_EXCHANGE_HOLIDAYS = (GoodFriday, USMemorialDay)
 
 
 class DataUnavailableError(RuntimeError):
@@ -243,6 +253,18 @@ def _parse_fred_csv(text: str, series_id: str) -> pd.Series:
     return series.sort_index().dropna()
 
 
+def _risk_free_cache_file(series_id: str) -> str:
+    """The cache entry for one FRED series.
+
+    The default series keeps ``RISK_FREE_CACHE_FILE``; any other gets its own
+    file. One shared file meant a request for a different series inside the
+    cache's lifetime was answered with whatever series had been fetched last.
+    """
+    if series_id == RISK_FREE_SERIES_ID:
+        return RISK_FREE_CACHE_FILE
+    return f"risk_free_{series_id}.csv"
+
+
 def fetch_risk_free(
     series_id: str = RISK_FREE_SERIES_ID,
     start: str = DATA_START_DATE,
@@ -264,8 +286,9 @@ def fetch_risk_free(
     not free, and omitting this leg is the most common way a risk-parity
     backtest gets oversold.
     """
-    if not refresh and cache.is_fresh(RISK_FREE_CACHE_FILE, RISK_FREE_CACHE_MAX_AGE_HOURS):
-        cached = cache.read_frame(RISK_FREE_CACHE_FILE)
+    cache_file = _risk_free_cache_file(series_id)
+    if not refresh and cache.is_fresh(cache_file, RISK_FREE_CACHE_MAX_AGE_HOURS):
+        cached = cache.read_frame(cache_file)
         if cached is not None and not cached.empty:
             log.info("Using cached risk-free series (%d rows).", len(cached))
             return _restrict(cached.iloc[:, 0].rename("risk_free"), start, None)
@@ -306,7 +329,7 @@ def fetch_risk_free(
 
     daily = (1.0 + annual) ** (1.0 / TRADING_DAYS_PER_YEAR) - 1.0
     daily = daily.rename("risk_free")
-    cache.write_frame(RISK_FREE_CACHE_FILE, daily.to_frame())
+    cache.write_frame(cache_file, daily.to_frame())
     log.info(
         "Risk-free: %d obs, %s to %s, %.2f%%-%.2f%% annualized.",
         len(daily), daily.index[0].date(), daily.index[-1].date(),
@@ -362,11 +385,19 @@ def daily_returns(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def _is_true_month_end(date: pd.Timestamp) -> bool:
-    """True if no business days remain in ``date``'s calendar month."""
+    """True if no trading days remain in ``date``'s calendar month.
+
+    Business days, less the exchange holidays that can close out a month (see
+    ``MONTH_END_EXCHANGE_HOLIDAYS``). An unscheduled closure at a month end is
+    not knowable from a calendar and is not handled.
+    """
     month_end = date + pd.offsets.MonthEnd(0)
     if month_end == date:
         return True
-    remaining = pd.bdate_range(date + pd.Timedelta(days=1), month_end)
+    following = date + pd.Timedelta(days=1)
+    remaining = pd.bdate_range(following, month_end)
+    for holiday in MONTH_END_EXCHANGE_HOLIDAYS:
+        remaining = remaining.difference(holiday.dates(following, month_end))
     return len(remaining) == 0
 
 

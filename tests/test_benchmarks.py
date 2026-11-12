@@ -21,7 +21,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import config  # noqa: E402
+from src import benchmarks, config  # noqa: E402
+from src.overlay import OverlayError, apply_overlay  # noqa: E402
 from src.benchmarks import (  # noqa: E402
     _tangency_weights,
     equal_weight,
@@ -232,6 +233,92 @@ def test_max_sharpe() -> None:
     )
 
 
+def test_max_sharpe_keeps_a_solver_failure_apart_from_a_missing_tangency() -> None:
+    # Regression: _tangency_weights returns None both when no sleeve has a
+    # positive trailing excess return (no tangency portfolio exists) and when
+    # cvxpy fails on a problem that has one. max_sharpe treated every None as
+    # the first, so a numerical failure was logged and counted as "no positive
+    # trailing excess return" and solver_failures stayed at 0.
+    print("max Sharpe, a solver failure against a missing tangency:")
+    returns = make_fake_returns()
+    clean = max_sharpe(returns)
+
+    real = benchmarks._tangency_weights
+    state = {"injected_at": None, "calls": 0, "previous": None}
+
+    def failing_once(mean_excess, cov):
+        # Fail the SECOND solvable rebalance, so there is a previous allocation
+        # to carry forward and the carry is checkable.
+        state["calls"] += 1
+        if state["injected_at"] is None and state["calls"] == 2:
+            state["injected_at"] = state["calls"]
+            return None
+        return real(mean_excess, cov)
+
+    benchmarks._tangency_weights = failing_once
+    try:
+        failed = max_sharpe(returns)
+    finally:
+        benchmarks._tangency_weights = real
+
+    check("the injection actually fired, on a rebalance that had a tangency portfolio",
+          state["injected_at"] == 2)
+    check("a failed tangency solve is counted as a solver failure",
+          failed.meta["solver_failures"] == clean.meta["solver_failures"] + 1)
+    check("...and NOT as a rebalance with no positive excess return",
+          failed.meta["tangency_fallbacks"] == clean.meta["tangency_fallbacks"])
+
+    changed = np.flatnonzero(
+        np.abs(failed.weights.to_numpy() - clean.weights.to_numpy()).max(axis=1) > 1e-12
+    )
+    check("exactly one rebalance differs from the clean run", len(changed) == 1)
+    row = int(changed[0])
+    check("...and it carries the previous allocation forward rather than substituting "
+          "minimum variance",
+          row > 0 and np.allclose(failed.weights.iloc[row], failed.weights.iloc[row - 1]))
+    check_is_valid_result(failed, returns)
+
+    # A failure on the very first rebalance has nothing to carry forward. A
+    # daily drift is added so that rebalance certainly has a positive trailing
+    # excess return, i.e. it is the tangency problem that is being failed.
+    benchmarks._tangency_weights = lambda mean_excess, cov: None
+    try:
+        max_sharpe(returns + 0.002)
+    except RuntimeError as exc:
+        check("a failure with no previous allocation raises, naming the problem",
+              "tangency" in str(exc))
+    else:
+        raise AssertionError("FAILED: a first-rebalance solver failure did not raise")
+    finally:
+        benchmarks._tangency_weights = real
+
+
+def test_the_held_book_names_a_nan_weight() -> None:
+    # Regression: a NaN row sums to NaN, and `NaN > tolerance` is False, so it
+    # passed the sum-to-one check and surfaced in the accrual loop as "the held
+    # book lost all of its equity" -- an error about the returns, for a fault in
+    # the weights.
+    print("the held book, on a NaN weight:")
+    returns = make_fake_returns()
+    weights = pd.DataFrame(
+        [[0.25] * 4, [np.nan, 0.5, 0.25, 0.25]],
+        index=[returns.index[0], returns.index[30]],
+        columns=returns.columns,
+    )
+    try:
+        apply_overlay(returns.iloc[1:], weights, 1.0, 0.0)
+    except OverlayError as exc:
+        check("a NaN target weight raises an error about the weights",
+              "weights contain NaN" in str(exc))
+        check("...not one about the book losing its equity", "equity" not in str(exc))
+    else:
+        raise AssertionError("FAILED: a NaN weight did not raise")
+
+    whole = weights.fillna(0.0)
+    check("the same frame with the NaN filled accrues normally",
+          len(apply_overlay(returns.iloc[1:], whole, 1.0, 0.0)) == len(returns) - 1)
+
+
 def test_max_sharpe_on_random_covariances() -> None:
     """The max-Sharpe solver's bar, on covariances the fixtures never produce."""
     print("max Sharpe solver, 50 random PSD covariances:")
@@ -290,6 +377,8 @@ if __name__ == "__main__":
     test_sixty_forty()
     test_naive_risk_parity()
     test_max_sharpe()
+    test_max_sharpe_keeps_a_solver_failure_apart_from_a_missing_tangency()
+    test_the_held_book_names_a_nan_weight()
     test_max_sharpe_on_random_covariances()
     test_benchmarks_are_comparable()
     print(f"\n{_checks} checks passed")
