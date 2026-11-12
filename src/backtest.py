@@ -152,8 +152,9 @@ def run_backtest(
     -----
     The returned ``returns`` series starts the day *after* the first rebalance,
     not on it: the first allocation is decided at that day's close and cannot
-    have earned that day's move. The contract's
-    ``returns.index[0] >= weights.index[0]`` check is satisfied strictly.
+    have earned that day's move. That is the contract's own check --
+    ``BacktestResult.validate`` requires ``returns.index[0] > weights.index[0]``,
+    strictly.
     """
     if not isinstance(returns, pd.DataFrame):
         raise TypeError("run_backtest needs a DataFrame of daily asset returns")
@@ -405,17 +406,20 @@ def _build_meta(
         "covariance_repair_dates": _flagged_dates(diagnostics.index, diagnostics["cov_repaired"]),
         # Read "0 ill-conditioned" as "nothing pathological", NOT as evidence
         # that the matrices are well conditioned -- at COV_SHRINKAGE = 0.10 this
-        # flag is very nearly unreachable, and that is a property of the
-        # shrinkage rather than of the data. Shrinking maps rho -> 0.9*rho, which
-        # caps the shrunk *correlation* matrix's condition number at
+        # flag is hard to reach on realistic sleeves, and that is a property of
+        # the shrinkage rather than of the data. Shrinking maps rho -> 0.9*rho,
+        # which caps the shrunk *correlation* matrix's condition number at
         # (1 + (N-1)(1-d)) / d = 37 for four sleeves -- measured 37.00 at rho = 1
         # exactly, where the unshrunk matrix is 3.2e32. The covariance then adds
-        # only the variance spread, so reaching MAX_CONDITION_NUMBER = 1e8 needs
-        # a volatility ratio of about 1,600:1 between two sleeves (measured:
-        # 1,000:1 gives 2.1e7, 10,000:1 gives 2.1e9). Over 20,000 random
-        # covariances with realistic vols (3%-45%) the worst was 1,183 -- five
-        # orders below the bar. The informative fields are the condition numbers
-        # themselves, which is why the median is reported next to the max.
+        # only the variance spread (measured: a 1,000:1 volatility ratio between
+        # two sleeves gives 2.1e7, 10,000:1 gives 2.1e9, so it grows with the
+        # square of the ratio). On that scaling MAX_CONDITION_NUMBER = 10,000
+        # needs a ratio of roughly 20:1, where these ETFs differ by about 4:1.
+        # Over 20,000 random covariances with realistic vols (3%-45%) the worst
+        # was 1,183 -- about 8.5x below the bar; see the constant's comment in
+        # config.py for why it is 10,000 and not higher. The informative fields
+        # are the condition numbers themselves, which is why the median is
+        # reported next to the max.
         "ill_conditioned_rebalances": ill_conditioned,
         "ill_conditioned_dates": _flagged_dates(diagnostics.index, diagnostics["ill_conditioned"]),
         # -- overlay ----------------------------------------------------------

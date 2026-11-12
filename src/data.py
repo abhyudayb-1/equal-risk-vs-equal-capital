@@ -343,9 +343,13 @@ def align_risk_free(risk_free: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
 
     Forward-fill only, and only across holidays: a rate is known from its
     publication date onward, so carrying the last print forward is correct while
-    back-filling would leak a future rate into a past decision. Any leading days
-    before the first FRED print are filled with the first available rate, which
-    is the only non-look-ahead choice available.
+    back-filling would leak a future rate into a past decision.
+
+    The one exception is any leading days before the first FRED print. There is
+    no earlier rate to carry forward, so they take the first available one --
+    which *is* a back-fill, and so does use a rate published later. It is logged
+    as a warning rather than done silently. DTB3 starts in 1954, so the live
+    pipeline never reaches it; a shortened or substituted series can.
     """
     aligned = risk_free.reindex(index.union(risk_free.index)).ffill().reindex(index)
     if aligned.isna().any():

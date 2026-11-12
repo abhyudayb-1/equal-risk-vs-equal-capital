@@ -231,10 +231,13 @@ def charge_costs(
 ) -> pd.Series:
     """``returns`` with ``cost_rate`` charged on each rebalance's traded fraction.
 
-    The charge lands on the **first return day at or after** the rebalance date,
-    which is the first period the new book is held -- the same alignment the
-    engine accrues on. A rebalance after the last return day is dropped rather
-    than charged against nothing.
+    The charge lands on the **first return day at or after** the rebalance date
+    -- for a rebalance on a trading day, that day itself. The trade is made at
+    that day's close, so its cost comes out of that day's closing equity; the
+    new book it buys starts earning the *next* day, under the engine's one-day
+    rule. (The cost is paid when the trade is made, not when the new book first
+    earns.) A rebalance after the last return day is dropped rather than charged
+    against nothing.
 
     ``traded`` is per unit of equity. For a levered book pass
     ``turnover(..., leverage=...)``, which already measures the trade on the

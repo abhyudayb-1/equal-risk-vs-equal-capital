@@ -25,9 +25,10 @@ fast enough that the whole file runs in seconds.
   one for no reason.
 
 * **Costs land on the right day and only ever subtract.** The charge for a trade
-  at the close of ``d`` hits the first return day at or after ``d`` -- the first
-  period the new book is held -- which is the same alignment the engine accrues
-  on. Checked by placing one trade and finding the single day that moved.
+  at the close of ``d`` hits the first return day at or after ``d`` -- ``d``
+  itself, the day the trade is made and paid for. The new book starts earning
+  the day after, under the engine's one-day rule. Checked by placing one trade
+  and finding the single day that moved.
 
 * **The breakeven is a crossing, not a report of one.** It is verified from both
   sides: ERC leads just below it and does not just above. Plus the two degenerate
@@ -364,8 +365,7 @@ def test_costs_land_on_the_right_day_and_only_subtract() -> None:
     charged = charge_costs(returns, traded, 0.004)
     moved = (charged - returns).abs() > 0
     check("one trade moves exactly one day", int(moved.sum()) == 1)
-    check("...the rebalance day itself, which is the first period the new "
-          "book is held",
+    check("...the rebalance day itself, when the trade is made and paid for",
           charged.index[moved.to_numpy()][0] == index[9])
     check("and it subtracts rate * traded fraction, exactly",
           _close(returns.iloc[9] - charged.iloc[9], 0.25 * 0.004))
