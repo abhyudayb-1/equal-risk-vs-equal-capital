@@ -650,6 +650,11 @@ def _hold_between_rebalances(
             )
         targets = _in_force_before(weights, index, "weights").to_numpy(dtype="float64")
         weight_period = _decision_positions(weights.index, index, "weights")
+        # Checked before the sum: a NaN row sums to NaN, `NaN > tolerance` is
+        # False, and the row used to pass both checks below and surface in the
+        # accrual loop as "the held book lost all of its equity".
+        if not np.all(np.isfinite(targets)):
+            raise OverlayError("weights contain NaN or inf")
         row_sums = targets.sum(axis=1)
         worst = float(np.max(np.abs(row_sums - 1.0)))
         if worst > _WEIGHT_SUM_TOLERANCE:

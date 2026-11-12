@@ -29,7 +29,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import config  # noqa: E402
+from src import config, data  # noqa: E402
 from src.data import (  # noqa: E402
     DataUnavailableError,
     _is_true_month_end,
@@ -111,6 +111,29 @@ def test_rebalance_calendar() -> None:
     check("2024-12-31 is a month end", _is_true_month_end(pd.Timestamp("2024-12-31")))
     check("a Friday before a weekend month-end counts",
           _is_true_month_end(pd.Timestamp("2024-08-30")))
+
+    # Regression: "no BUSINESS days remain" is not "no TRADING days remain". When
+    # the month's last business day is an exchange holiday, data ending on the
+    # real last trading day looked like an unfinished month and its rebalance
+    # was dropped.
+    for day, holiday in (
+        ("2024-03-28", "Good Friday 2024-03-29"),
+        ("2018-03-29", "Good Friday 2018-03-30"),
+        ("2021-05-28", "Memorial Day 2021-05-31"),
+    ):
+        check(f"{day} is a month end: only {holiday} follows it",
+              _is_true_month_end(pd.Timestamp(day)))
+    holiday_end = month_end_rebalance_dates(_prices(end="2024-03-28").index, 0)
+    check("data ending the Thursday before a month-end Good Friday keeps that rebalance",
+          holiday_end[-1] == pd.Timestamp("2024-03-28"))
+    # The holidays must not make an ordinary mid-month day pass, nor the day
+    # before a holiday that still has trading days after it in the month.
+    check("the Wednesday before that Good Friday is still not a month end",
+          not _is_true_month_end(pd.Timestamp("2024-03-27")))
+    check("the Friday before a Memorial Day that is NOT the 31st is not a month end",
+          not _is_true_month_end(pd.Timestamp("2024-05-24")))
+    check("a Thursday with an ordinary Friday left in the month is not a month end",
+          not _is_true_month_end(pd.Timestamp("2025-05-29")))
 
     check("opting out keeps the stub",
           month_end_rebalance_dates(frame.index, 0, drop_partial_final_month=False)[-1]
@@ -221,7 +244,58 @@ def test_risk_free_alignment() -> None:
           float(filled.loc["2010-06-01"]) == 0.05 / 252)
 
 
+def test_risk_free_cache_is_per_series() -> None:
+    # Regression: every FRED series shared one cache file, so asking for a
+    # second series while the first was still fresh returned the first one's
+    # data under the second one's name. Offline: the cache and the HTTP call
+    # are both replaced, so nothing here touches the disk or the network.
+    print("risk-free cache:")
+    store: dict[str, pd.DataFrame] = {}
+    requested: list[str] = []
+
+    class _Response:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+    levels = {config.RISK_FREE_SERIES_ID: "5.00", "OTHER": "1.00"}
+
+    def fake_get(url, **kwargs):
+        series = next(s for s in levels if url.endswith(f"id={s}"))
+        requested.append(series)
+        return _Response(
+            f"observation_date,{series}\n2010-01-04,{levels[series]}\n2010-01-05,{levels[series]}\n"
+        )
+
+    real = (data.cache.is_fresh, data.cache.read_frame, data.cache.write_frame,
+            data.requests.get)
+    data.cache.is_fresh = lambda name, max_age_hours: name in store
+    data.cache.read_frame = lambda name: store.get(name)
+    data.cache.write_frame = lambda name, frame: store.__setitem__(name, frame.copy())
+    data.requests.get = fake_get
+    try:
+        default = data.fetch_risk_free(start="2010-01-04")
+        other = data.fetch_risk_free(series_id="OTHER", start="2010-01-04")
+        default_again = data.fetch_risk_free(start="2010-01-04")
+        other_again = data.fetch_risk_free(series_id="OTHER", start="2010-01-04")
+    finally:
+        (data.cache.is_fresh, data.cache.read_frame, data.cache.write_frame,
+         data.requests.get) = real
+
+    check("a second series is fetched, not answered from the first one's cache",
+          requested == [config.RISK_FREE_SERIES_ID, "OTHER"])
+    check("...so the two series carry their own rates",
+          float(other.iloc[0]) < float(default.iloc[0]))
+    check("each series is then served from its own cache entry",
+          default_again.equals(default) and other_again.equals(other))
+    check("the default series keeps its existing cache file",
+          data.RISK_FREE_CACHE_FILE in store and len(store) == 2)
+
+
 if __name__ == "__main__":
+    test_risk_free_cache_is_per_series()
     test_windowing()
     test_rebalance_calendar()
     test_returns_and_guard()

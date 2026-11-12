@@ -88,6 +88,7 @@ from src.comparison import (  # noqa: E402
     matched_target_vol,
 )
 from src.config import (  # noqa: E402
+    COV_WARMUP_TRADING_DAYS,
     MIN_MATCHABLE_VOL,
     TARGET_VOL,
     TRADING_DAYS_PER_YEAR,
@@ -651,6 +652,42 @@ def test_compare_rules_rejects_bad_inputs() -> None:
     )
 
 
+def test_a_non_default_warmup_moves_every_rule_together() -> None:
+    # Regression: compare_rules handed warmup_trading_days to the engine and
+    # built the four benchmarks at the config default, so any other value put
+    # them on a different calendar and the run died with a bare KeyError.
+    print("a non-default warm-up:")
+    returns, risk_free = fixture_inputs()
+    warmup = COV_WARMUP_TRADING_DAYS // 2
+    comp = compare_rules(returns, risk_free, warmup_trading_days=warmup)
+
+    check("the comparison builds at half the default warm-up",
+          list(comp.series.columns) == list(COLUMN_ORDER))
+    check("...and it really is a longer window than the default run's",
+          comp.n_observations > fixture_comparison().n_observations)
+    first = comp.rule_results[ERC_UNLEVERED].weights.index[0]
+    check("every rule with its own weights starts on the engine's first rebalance",
+          all(r.weights.index[0] == first for r in comp.rule_results.values()))
+    check("no column carries a NaN from a rule that started late",
+          not comp.series.isna().to_numpy().any())
+
+    # Break it: a benchmark that ignores the warm-up it is given, which is what
+    # every one of them effectively did. It must surface as a ComparisonError
+    # naming the calendar, not as a KeyError from an index lookup.
+    real = comparison.sixty_forty
+    comparison.sixty_forty = lambda *args, warmup_trading_days=None, **kwargs: real(
+        *args, **kwargs
+    )
+    try:
+        expect_raises(
+            "a rule left on the default warm-up is a ComparisonError, not a KeyError",
+            ComparisonError,
+            lambda: compare_rules(returns, risk_free, warmup_trading_days=warmup),
+        )
+    finally:
+        comparison.sixty_forty = real
+
+
 # ---------------------------------------------------------------------------
 # The printed report -- what a reader actually sees
 # ---------------------------------------------------------------------------
@@ -704,6 +741,7 @@ if __name__ == "__main__":
 
     test_build_series_rejects_inputs_that_cannot_be_compared()
     test_compare_rules_rejects_bad_inputs()
+    test_a_non_default_warmup_moves_every_rule_together()
 
     test_report_states_what_the_table_cannot_say_for_itself()
 

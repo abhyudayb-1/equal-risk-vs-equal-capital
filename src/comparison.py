@@ -408,21 +408,42 @@ def compare_rules(
 
     benchmarks = {
         EQUAL_CAPITAL: equal_weight(
-            sleeve_returns, cov_estimator=estimate_covariance, strategy=EQUAL_CAPITAL
+            sleeve_returns,
+            cov_estimator=estimate_covariance,
+            strategy=EQUAL_CAPITAL,
+            warmup_trading_days=warmup_trading_days,
         ),
         NAIVE_INV_VOL: naive_risk_parity(
-            sleeve_returns, cov_estimator=estimate_covariance, strategy=NAIVE_INV_VOL
+            sleeve_returns,
+            cov_estimator=estimate_covariance,
+            strategy=NAIVE_INV_VOL,
+            warmup_trading_days=warmup_trading_days,
         ),
         SIXTY_FORTY: sixty_forty(
-            sleeve_returns, cov_estimator=estimate_covariance, strategy=SIXTY_FORTY
+            sleeve_returns,
+            cov_estimator=estimate_covariance,
+            strategy=SIXTY_FORTY,
+            warmup_trading_days=warmup_trading_days,
         ),
         MAX_SHARPE: max_sharpe(
             sleeve_returns,
             cov_estimator=estimate_covariance,
             annual_risk_free_rate=annual_risk_free_rate,
             strategy=MAX_SHARPE,
+            warmup_trading_days=warmup_trading_days,
         ),
     }
+    # Every rule takes the warm-up together. The benchmarks used to be built at
+    # the config default whatever the engine was given, so a non-default warm-up
+    # put them on a different calendar and the volatility match below died with
+    # a bare KeyError. Checked here, by name, so a calendar mismatch from any
+    # other cause is a ComparisonError that says which rule disagrees.
+    for name, result in benchmarks.items():
+        if not result.returns.index.equals(engine.returns.index):
+            raise ComparisonError(
+                f"{name}'s return calendar differs from the engine's; "
+                "a comparison across different calendars is not a fair one"
+            )
     for result in (engine, *benchmarks.values()):
         result.validate()
 

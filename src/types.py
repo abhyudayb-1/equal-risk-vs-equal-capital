@@ -111,6 +111,10 @@ class BacktestResult:
             raise ContractViolation("weights and risk_contributions must share an index")
         if not w.index.equals(self.leverage.index):
             raise ContractViolation("leverage must share the rebalance index of weights")
+        # Before anything below reads w.index[0]: a result with no rebalance at
+        # all used to escape as a bare IndexError rather than as a violation.
+        if len(w) == 0:
+            raise ContractViolation("weights is empty; a result needs at least one rebalance")
 
         for name, frame in (("weights", w), ("risk_contributions", rc)):
             if not isinstance(frame.index, pd.DatetimeIndex):

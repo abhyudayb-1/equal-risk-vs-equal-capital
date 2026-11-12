@@ -274,6 +274,7 @@ def sixty_forty(
     universe: tuple[str, ...] | list[str] | None = None,
     cov_estimator: CovEstimator | None = None,
     strategy: str = "60/40",
+    warmup_trading_days: int = COV_WARMUP_TRADING_DAYS,
 ) -> BacktestResult:
     """The institutional default: 60% equities, 40% nominal bonds, 0% elsewhere.
 
@@ -298,6 +299,10 @@ def sixty_forty(
     ``universe`` (default: every column in ``returns``) rather than dropped, so
     this result has the same shape as the engine's and the two can go into one
     weight chart without reindexing.
+
+    ``warmup_trading_days`` is forwarded for the same reason
+    :func:`equal_weight` forwards it: a comparison that moves the engine's
+    warm-up has to move every rule's, or the rules sit on different calendars.
     """
     weights = dict(weights or SIXTY_FORTY_WEIGHTS)
     columns = list(universe if universe is not None else returns.columns)
@@ -309,7 +314,11 @@ def sixty_forty(
         )
 
     return fixed_weight(
-        returns, {t: weights.get(t, 0.0) for t in columns}, strategy, cov_estimator
+        returns,
+        {t: weights.get(t, 0.0) for t in columns},
+        strategy,
+        cov_estimator,
+        warmup_trading_days=warmup_trading_days,
     )
 
 
@@ -458,11 +467,14 @@ def max_sharpe(
 
     Notes
     -----
-    Two states are counted in ``meta`` rather than hidden. ``tangency_fallbacks``
-    is the number of rebalances with no positive trailing excess return anywhere
-    in the universe, where minimum variance is substituted; ``solver_failures``
-    is the number where cvxpy itself did not converge and the previous
-    allocation was carried forward.
+    Two states are counted in ``meta`` rather than hidden, and they are kept
+    apart. ``tangency_fallbacks`` is the number of rebalances with no positive
+    trailing excess return anywhere in the universe, where minimum variance is
+    substituted -- an economic state. ``solver_failures`` is the number where
+    cvxpy itself did not converge, on either problem, and the previous
+    allocation was carried forward -- a numerical one. (They used to share a
+    counter: a tangency solve that failed *with* a positive excess return
+    available was logged and counted as "no positive trailing excess return".)
     """
     if returns.empty:
         raise ValueError("cannot backtest an empty return frame")
@@ -489,26 +501,34 @@ def max_sharpe(
             window.to_numpy(dtype="float64").mean(axis=0) - daily_rf
         ) * TRADING_DAYS_PER_YEAR
 
-        w = _tangency_weights(mean_excess, cov)
-        if w is None:
+        # Decided HERE, from the means, rather than inferred from
+        # _tangency_weights returning None: it returns None both when no
+        # tangency portfolio exists and when cvxpy fails to find one that does,
+        # and those are different events with different counters.
+        has_tangency = bool((mean_excess > 0).any())
+        if has_tangency:
+            w = _tangency_weights(mean_excess, cov)
+        else:
             # No long-only portfolio has a positive expected excess return over
             # the window. Minimum variance is the defensible substitute: it is
             # the one point on the frontier that does not depend on the means.
             w = _min_variance_weights(cov)
-            if w is None:
-                failures += 1
-                if previous is None:
-                    raise RuntimeError(
-                        f"cvxpy failed on the first rebalance ({date.date()}) with no "
-                        "previous allocation to carry forward"
-                    )
-                log.warning("cvxpy did not converge at %s; carrying the previous "
-                            "allocation forward.", date.date())
-                w = previous
-            else:
+            if w is not None:
                 fallbacks += 1
                 log.info("No positive trailing excess return at %s; using minimum "
                          "variance.", date.date())
+
+        if w is None:
+            failures += 1
+            problem = "tangency" if has_tangency else "minimum-variance"
+            if previous is None:
+                raise RuntimeError(
+                    f"cvxpy failed on the {problem} problem at the first rebalance "
+                    f"({date.date()}) with no previous allocation to carry forward"
+                )
+            log.warning("cvxpy did not converge on the %s problem at %s; carrying "
+                        "the previous allocation forward.", problem, date.date())
+            w = previous
 
         w = _clean_weights(w)
         previous = w

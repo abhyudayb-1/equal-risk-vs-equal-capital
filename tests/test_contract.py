@@ -138,6 +138,16 @@ def test_contract() -> None:
         ),
     )
 
+    # Regression: with no rebalance at all, validate() reached w.index[0] and
+    # escaped as a bare IndexError instead of a ContractViolation.
+    expect_violation(
+        "rejects a result with no rebalances, as a violation rather than an IndexError",
+        lambda: BacktestResult(
+            result.weights.iloc[:0], result.risk_contributions.iloc[:0],
+            result.leverage.iloc[:0], result.returns, result.meta,
+        ),
+    )
+
     dead_leverage = result.leverage.copy()
     dead_leverage.iloc[3] = 0.0
     expect_violation(
